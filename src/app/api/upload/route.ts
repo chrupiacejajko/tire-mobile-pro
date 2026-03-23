@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     const fileName = `orders/${orderId}/${Date.now()}.${ext}`;
 
     const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('photos')
+      .from('lib')
       .upload(fileName, file, { contentType: file.type });
 
     if (uploadError) {
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get public URL
-    const { data: urlData } = supabase.storage.from('photos').getPublicUrl(fileName);
+    const { data: urlData } = supabase.storage.from('lib').getPublicUrl(fileName);
     const publicUrl = urlData.publicUrl;
 
     // Append to order's photos array
