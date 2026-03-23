@@ -41,16 +41,33 @@ export async function register() {
         let stored = 0;
 
         for (const vehicle of result.vehicles) {
-          const speed = vehicle.speed ?? 0;
-          const status = speed > 5 ? 'driving' : speed === 0 ? 'working' : 'online';
+          const speed = vehicle.speed; // keep null if unknown
+          const status = speed !== null && speed > 5 ? 'driving'
+                       : speed !== null && speed <= 5 ? 'parking'
+                       : 'online'; // null speed = GPS fix but no speed data
 
-          const { data: dbVehicle } = await supabase
-            .from('vehicles')
-            .select('id')
-            .or(`plate_number.eq.${vehicle.plate},satis_device_id.eq.${vehicle.satisId}`)
-            .single();
+          // Normalize plate: uppercase, strip spaces/dashes for matching
+          const plateParts = [
+            vehicle.plate,
+            vehicle.plate.replace(/\s+/g, ''),
+            vehicle.plate.toUpperCase(),
+            vehicle.plate.toUpperCase().replace(/\s+/g, ''),
+          ];
 
-          if (!dbVehicle) continue;
+          let dbVehicle: { id: string } | null = null;
+          for (const plate of [...new Set(plateParts)]) {
+            const { data } = await supabase
+              .from('vehicles')
+              .select('id')
+              .or(`plate_number.eq.${plate},satis_device_id.eq.${vehicle.satisId}`)
+              .single();
+            if (data) { dbVehicle = data; break; }
+          }
+
+          if (!dbVehicle) {
+            console.warn(`[SatisGPS] Vehicle not found in DB: plate="${vehicle.plate}" satisId="${vehicle.satisId}"`);
+            continue;
+          }
 
           const { data: assignment } = await supabase
             .from('vehicle_assignments')
@@ -65,7 +82,7 @@ export async function register() {
             lat: vehicle.lat,
             lng: vehicle.lng,
             status,
-            speed: vehicle.speed ?? 0,
+            speed: vehicle.speed ?? null,
             direction: vehicle.direction ?? null,
             rpm: vehicle.rpm ?? null,
             driving_time: vehicle.drivingTime ?? null,

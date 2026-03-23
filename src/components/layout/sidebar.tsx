@@ -28,6 +28,7 @@ import {
   Zap,
   Menu,
   X,
+  Route,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,7 @@ const mainMenu = [
   { name: 'Zlecenia', href: '/orders', icon: ClipboardList },
   { name: 'Kalendarz', href: '/calendar', icon: Calendar },
   { name: 'Mapa', href: '/map', icon: MapPin },
+  { name: 'Planowanie', href: '/planner', icon: Route },
   { name: 'Klienci', href: '/clients', icon: Users },
   { name: 'Pracownicy', href: '/employees', icon: UserCog },
   { name: 'Flota', href: '/fleet', icon: Truck },
