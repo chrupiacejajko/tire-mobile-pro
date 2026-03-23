@@ -24,6 +24,7 @@ import {
   Plus,
   Package,
   Handshake,
+  Zap,
   Menu,
   X,
 } from 'lucide-react';
@@ -41,6 +42,7 @@ const mainMenu = [
   { name: 'Magazyn', href: '/warehouse', icon: Package },
   { name: 'Podwykonawcy', href: '/subcontractors', icon: Handshake },
   { name: 'Usługi', href: '/services', icon: Wrench },
+  { name: 'Integracje', href: '/integrations', icon: Zap },
   { name: 'Raporty', href: '/reports', icon: BarChart3 },
 ];
 
