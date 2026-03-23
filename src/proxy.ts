@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // Redirect / to /dashboard
   if (request.nextUrl.pathname === '/') {
     const url = request.nextUrl.clone();

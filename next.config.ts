@@ -1,10 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable instrumentation hook for background Satis GPS polling
-  experimental: {
-    instrumentationHook: true,
-  },
+  // instrumentation.ts is enabled by default in Next.js 16+
 };
 
 export default nextConfig;
