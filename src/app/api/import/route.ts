@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { autoRefreshToken: false, persistSession: false } }
-);
+import { getAdminClient } from '@/lib/supabase/admin';
 
 // POST /api/import?type=clients - Import CSV data
 export async function POST(request: NextRequest) {
+  const supabase = getAdminClient();
   try {
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type') || 'clients';

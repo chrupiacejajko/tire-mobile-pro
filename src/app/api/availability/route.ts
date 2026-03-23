@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { autoRefreshToken: false, persistSession: false } }
-);
+import { getAdminClient } from '@/lib/supabase/admin';
 
 // GET /api/availability?date=2024-03-25&region=Warszawa
 // Returns available time slots for a given date
 export async function GET(request: NextRequest) {
+  const supabase = getAdminClient();
   const { searchParams } = new URL(request.url);
   const date = searchParams.get('date');
   const region = searchParams.get('region');

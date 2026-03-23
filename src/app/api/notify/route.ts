@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { autoRefreshToken: false, persistSession: false } }
-);
+import { getAdminClient } from '@/lib/supabase/admin';
 
 // POST /api/notify - Send notification to client (SMS/Email)
 // In production, integrate with SMS gateway (e.g., SMSAPI.pl, Twilio) and email service (e.g., Resend, SendGrid)
 export async function POST(request: NextRequest) {
+  const supabase = getAdminClient();
   try {
     const body = await request.json();
     const { order_id, template_name, channel } = body; // channel: 'sms' | 'email'
@@ -103,6 +98,7 @@ export async function POST(request: NextRequest) {
 
 // GET /api/notify/templates - List all notification templates
 export async function GET() {
+  const supabase = getAdminClient();
   const { data, error } = await supabase
     .from('notification_templates')
     .select('*')

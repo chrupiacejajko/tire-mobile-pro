@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { autoRefreshToken: false, persistSession: false } }
-);
+import { getAdminClient } from '@/lib/supabase/admin';
 
 // GET /api/orders - List orders with optional filters
 export async function GET(request: NextRequest) {
+  const supabase = getAdminClient();
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status');
   const date = searchParams.get('date');
@@ -32,6 +27,7 @@ export async function GET(request: NextRequest) {
 
 // POST /api/orders - Create a new order (for Smifybot)
 export async function POST(request: NextRequest) {
+  const supabase = getAdminClient();
   try {
     const body = await request.json();
     const { client_name, client_phone, address, city, scheduled_date, scheduled_time, service_names, notes } = body;

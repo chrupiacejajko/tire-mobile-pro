@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { autoRefreshToken: false, persistSession: false } }
-);
+import { getAdminClient } from '@/lib/supabase/admin';
 
 // POST /api/gps - Receive GPS location updates from Satis GPS
 // Matches vehicles by plate_number or satis_device_id
 // Then finds the currently assigned employee to that vehicle
 export async function POST(request: NextRequest) {
+  const supabase = getAdminClient();
   try {
     const body = await request.json();
     const updates = Array.isArray(body) ? body : [body];
@@ -76,6 +71,7 @@ export async function POST(request: NextRequest) {
 
 // GET /api/gps - Get latest GPS positions for all vehicles
 export async function GET() {
+  const supabase = getAdminClient();
   // Get latest location per vehicle from employee_locations
   const { data: locations } = await supabase
     .from('employee_locations')
