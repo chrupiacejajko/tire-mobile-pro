@@ -166,8 +166,10 @@ function StopCard({ stop, isLast }: { stop: Stop; isLast: boolean }) {
 
         {stop.services.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
-            {stop.services.map((s: string, i: number) => (
-              <span key={i} className="text-[10px] bg-white border border-gray-200 rounded-md px-1.5 py-0.5 text-gray-600">{s}</span>
+            {stop.services.map((s: any, i: number) => (
+              <span key={i} className="text-[10px] bg-white border border-gray-200 rounded-md px-1.5 py-0.5 text-gray-600">
+                {typeof s === 'string' ? s : s?.name ?? JSON.stringify(s)}
+              </span>
             ))}
           </div>
         )}
