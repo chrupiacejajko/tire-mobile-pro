@@ -16,9 +16,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Plus, Search, Filter, Clock, MapPin, ChevronRight, ClipboardList,
+  Plus, Search, Clock, MapPin, ChevronRight, ClipboardList,
   CheckCircle2, Truck, XCircle, ArrowRight, Calendar, User, Phone,
-  DollarSign, Play, Square, Timer, Wrench,
+  Play, Square, Timer, Wrench, Navigation, Zap, Star,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { OrderStatus, OrderPriority, Client, Service } from '@/lib/types';
@@ -70,6 +70,19 @@ interface WorkLog {
   notes: string | null;
 }
 
+interface EmployeeSuggestion {
+  id: string;
+  name: string;
+  vehicle_info: string | null;
+  order_count: number;
+  dist_km: number | null;
+  skills_match: boolean;
+  nearest_job: { address: string; time: string; client: string | null } | null;
+  day_route: { id: string; address: string; time: string; client: string | null }[];
+  is_online: boolean;
+  gps_status: string | null;
+}
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -87,6 +100,11 @@ export default function OrdersPage() {
   const [timerSec, setTimerSec] = useState(0);
   const [workLoading, setWorkLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Employee suggestions
+  const [empSuggestions, setEmpSuggestions] = useState<EmployeeSuggestion[]>([]);
+  const [loadingEmpSugg, setLoadingEmpSugg] = useState(false);
+  const [assigningEmp, setAssigningEmp] = useState<string | null>(null);
 
   // New order form
   const [form, setForm] = useState({
@@ -121,9 +139,46 @@ export default function OrdersPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedOrder) { setWorkLogs([]); setActiveLog(null); return; }
+    if (!selectedOrder) { setWorkLogs([]); setActiveLog(null); setEmpSuggestions([]); return; }
     fetchWorkLogs(selectedOrder.id);
+    // Fetch employee suggestions for unassigned orders
+    if (!selectedOrder.employee_id) {
+      setLoadingEmpSugg(true);
+      fetch(`/api/orders/suggest-employees?order_id=${selectedOrder.id}`)
+        .then(r => r.json())
+        .then(d => setEmpSuggestions(d.suggestions ?? []))
+        .catch(() => setEmpSuggestions([]))
+        .finally(() => setLoadingEmpSugg(false));
+    } else {
+      setEmpSuggestions([]);
+    }
   }, [selectedOrder, fetchWorkLogs]);
+
+  const assignEmployee = async (empId: string) => {
+    if (!selectedOrder) return;
+    setAssigningEmp(empId);
+    await supabase.from('orders').update({
+      employee_id: empId,
+      status: selectedOrder.status === 'new' ? 'assigned' : selectedOrder.status,
+    }).eq('id', selectedOrder.id);
+    setAssigningEmp(null);
+    setEmpSuggestions([]);
+    fetchData();
+    setSelectedOrder({ ...selectedOrder, employee_id: empId, status: selectedOrder.status === 'new' ? 'assigned' : selectedOrder.status });
+  };
+
+  const buildRouteUrl = (emp: EmployeeSuggestion, orderAddress: string) => {
+    const stops = [
+      ...emp.day_route.map(o => o.address),
+      orderAddress,
+    ].filter(Boolean).map(a => encodeURIComponent(a));
+    if (stops.length === 1) {
+      return `https://www.google.com/maps/search/?api=1&query=${stops[0]}`;
+    }
+    const dest = stops[stops.length - 1];
+    const waypoints = stops.slice(0, -1).join('|');
+    return `https://www.google.com/maps/dir/?api=1&destination=${dest}&waypoints=${waypoints}`;
+  };
 
   // Live timer tick when there's an active log
   useEffect(() => {
@@ -473,6 +528,120 @@ export default function OrdersPage() {
                           </div>
                         )}
                       </div>
+
+                      {/* Employee Suggestion */}
+                      {!selectedOrder.employee_id && (
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1">
+                            <Zap className="h-3 w-3 text-amber-500" /> Sugestia przydzielenia
+                          </p>
+                          {loadingEmpSugg ? (
+                            <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                              <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+                              Analizuję dostępność...
+                            </div>
+                          ) : empSuggestions.length === 0 ? (
+                            <p className="text-xs text-gray-400">Brak aktywnych pracowników</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {empSuggestions.map((emp, i) => (
+                                <motion.div
+                                  key={emp.id}
+                                  initial={{ opacity: 0, y: 6 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: i * 0.05 }}
+                                  className={`rounded-xl border p-3 space-y-2 ${i === 0 ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {i === 0 && <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />}
+                                      <p className="text-sm font-semibold text-gray-900 truncate">{emp.name}</p>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      {emp.is_online && (
+                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" title="Online" />
+                                      )}
+                                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${emp.skills_match ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                        {emp.skills_match ? '✓ Umiej.' : '✗ Umiej.'}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-3 text-[11px] text-gray-500">
+                                    <span className="flex items-center gap-1">
+                                      <ClipboardList className="h-3 w-3" />
+                                      {emp.order_count} zleceń dziś
+                                    </span>
+                                    {emp.dist_km !== null && (
+                                      <span className="flex items-center gap-1">
+                                        <MapPin className="h-3 w-3" />
+                                        ~{emp.dist_km} km
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {emp.nearest_job && (
+                                    <p className="text-[10px] text-gray-400 truncate">
+                                      Najbliższe: {emp.nearest_job.time} · {emp.nearest_job.client || emp.nearest_job.address}
+                                    </p>
+                                  )}
+
+                                  {emp.vehicle_info && (
+                                    <p className="text-[10px] text-gray-400 truncate">
+                                      🚗 {emp.vehicle_info}
+                                    </p>
+                                  )}
+
+                                  <div className="flex gap-1.5 pt-1">
+                                    <Button
+                                      size="sm"
+                                      disabled={assigningEmp === emp.id}
+                                      className={`flex-1 rounded-lg h-7 text-xs gap-1 ${i === 0 ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+                                      onClick={() => assignEmployee(emp.id)}
+                                    >
+                                      {assigningEmp === emp.id ? (
+                                        <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                      ) : (
+                                        <><User className="h-3 w-3" /> Przypisz</>
+                                      )}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="rounded-lg h-7 text-xs px-2 gap-1"
+                                      onClick={() => window.open(buildRouteUrl(emp, selectedOrder.address), '_blank')}
+                                      title="Otwórz trasę dnia w Google Maps"
+                                    >
+                                      <Navigation className="h-3 w-3" />
+                                      Trasa
+                                    </Button>
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Assigned employee info */}
+                      {selectedOrder.employee_id && selectedOrder.employee && (
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1">
+                            <User className="h-3 w-3" /> Przydzielony pracownik
+                          </p>
+                          <div className="flex items-center justify-between rounded-xl bg-blue-50 border border-blue-100 px-3 py-2">
+                            <p className="text-sm font-medium text-blue-800">{selectedOrder.employee.user.full_name}</p>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="rounded-lg h-7 text-xs px-2 gap-1 border-blue-200 text-blue-600"
+                              onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedOrder.address)}`, '_blank')}
+                            >
+                              <Navigation className="h-3 w-3" /> Nawiguj
+                            </Button>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Status Actions */}
                       <div className="pt-2 space-y-2">
