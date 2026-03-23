@@ -66,8 +66,8 @@ export function Sidebar() {
       {/* Logo */}
       <div className="px-5 py-4 border-b border-gray-100">
         <div className="flex items-center gap-2.5">
-          <img src="/logo.png" alt="RouteTire" className="h-9 w-9 rounded-xl object-contain" />
-          <span className="text-[15px] font-bold tracking-tight text-gray-900">
+          <img src="/favicon.png" alt="RouteTire" className="h-8 w-8 object-contain" />
+          <span className="text-[15px] font-bold tracking-tight text-gray-800">
             Route<span className="text-orange-500">Tire</span>
           </span>
         </div>
