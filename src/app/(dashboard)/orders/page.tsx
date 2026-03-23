@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Topbar } from '@/components/layout/topbar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,7 +18,7 @@ import {
 import {
   Plus, Search, Filter, Clock, MapPin, ChevronRight, ClipboardList,
   CheckCircle2, Truck, XCircle, ArrowRight, Calendar, User, Phone,
-  DollarSign,
+  DollarSign, Play, Square, Timer, Wrench,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { OrderStatus, OrderPriority, Client, Service } from '@/lib/types';
@@ -56,9 +56,18 @@ interface OrderRow {
   services: { service_id: string; name: string; price: number; quantity: number }[];
   total_price: number;
   notes: string | null;
+  required_skills?: string[] | null;
   created_at: string;
   client?: { name: string; phone: string };
   employee?: { user: { full_name: string } } | null;
+}
+
+interface WorkLog {
+  id: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_minutes: number | null;
+  notes: string | null;
 }
 
 export default function OrdersPage() {
@@ -71,6 +80,13 @@ export default function OrdersPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderRow | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Work logs
+  const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
+  const [activeLog, setActiveLog] = useState<WorkLog | null>(null);
+  const [timerSec, setTimerSec] = useState(0);
+  const [workLoading, setWorkLoading] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // New order form
   const [form, setForm] = useState({
@@ -95,6 +111,53 @@ export default function OrdersPage() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const fetchWorkLogs = useCallback(async (orderId: string) => {
+    const res = await fetch(`/api/work-logs?order_id=${orderId}`);
+    if (!res.ok) return;
+    const json = await res.json();
+    setWorkLogs(json.logs || []);
+    setActiveLog(json.active_log || null);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedOrder) { setWorkLogs([]); setActiveLog(null); return; }
+    fetchWorkLogs(selectedOrder.id);
+  }, [selectedOrder, fetchWorkLogs]);
+
+  // Live timer tick when there's an active log
+  useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (activeLog) {
+      const calc = () => Math.floor((Date.now() - new Date(activeLog.started_at).getTime()) / 1000);
+      setTimerSec(calc());
+      timerRef.current = setInterval(() => setTimerSec(calc()), 1000);
+    } else {
+      setTimerSec(0);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [activeLog]);
+
+  const handleWorkTimer = async (action: 'start' | 'stop') => {
+    if (!selectedOrder) return;
+    setWorkLoading(true);
+    await fetch('/api/work-logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_id: selectedOrder.id, action }),
+    });
+    await fetchWorkLogs(selectedOrder.id);
+    setWorkLoading(false);
+  };
+
+  const fmtTimer = (sec: number) => {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    return h > 0
+      ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+      : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -349,6 +412,67 @@ export default function OrdersPage() {
                           <p className="text-sm text-gray-600 bg-gray-50 rounded-xl p-3">{selectedOrder.notes}</p>
                         </div>
                       )}
+
+                      {/* Required Skills */}
+                      {(selectedOrder.required_skills ?? []).length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1">
+                            <Wrench className="h-3 w-3" /> Wymagane umiejętności
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {(selectedOrder.required_skills ?? []).map((skill) => (
+                              <span key={skill} className="text-[11px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-lg font-medium">
+                                {skill}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Work Time Tracker */}
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1">
+                          <Timer className="h-3 w-3" /> Czas pracy
+                        </p>
+                        <div className={`rounded-xl p-3 flex items-center justify-between ${activeLog ? 'bg-emerald-50 border border-emerald-200' : 'bg-gray-50'}`}>
+                          <div>
+                            <p className={`text-2xl font-mono font-bold tabular-nums ${activeLog ? 'text-emerald-700' : 'text-gray-600'}`}>
+                              {activeLog ? fmtTimer(timerSec) : (() => {
+                                const total = workLogs.reduce((s, l) => s + (l.duration_minutes ?? 0), 0);
+                                return total > 0 ? `${Math.floor(total / 60)}h ${total % 60}m` : '00:00';
+                              })()}
+                            </p>
+                            <p className="text-[10px] text-gray-400 mt-0.5">
+                              {activeLog ? 'Timer aktywny' : workLogs.length > 0 ? `${workLogs.filter(l => l.ended_at).length} wpisów` : 'Brak wpisów'}
+                            </p>
+                          </div>
+                          {activeLog ? (
+                            <Button size="sm" disabled={workLoading}
+                              className="rounded-xl h-9 px-3 bg-red-500 hover:bg-red-600 text-white gap-1.5"
+                              onClick={() => handleWorkTimer('stop')}>
+                              <Square className="h-3.5 w-3.5 fill-current" /> Stop
+                            </Button>
+                          ) : (
+                            <Button size="sm" disabled={workLoading || selectedOrder.status === 'completed' || selectedOrder.status === 'cancelled'}
+                              className="rounded-xl h-9 px-3 bg-emerald-500 hover:bg-emerald-600 text-white gap-1.5"
+                              onClick={() => handleWorkTimer('start')}>
+                              <Play className="h-3.5 w-3.5 fill-current" /> Start
+                            </Button>
+                          )}
+                        </div>
+
+                        {/* Log history */}
+                        {workLogs.filter(l => l.ended_at).length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {workLogs.filter(l => l.ended_at).slice(0, 3).map((log) => (
+                              <div key={log.id} className="flex items-center justify-between text-[11px] text-gray-500 px-1">
+                                <span>{new Date(log.started_at).toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit' })} – {new Date(log.ended_at!).toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit' })}</span>
+                                <span className="font-medium text-gray-700">{log.duration_minutes} min</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
 
                       {/* Status Actions */}
                       <div className="pt-2 space-y-2">

@@ -1,10 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Wrench, Calendar, Clock, MapPin, Phone, User, ChevronRight, ChevronLeft, Check, Car, Sun, Sunrise, Sunset } from 'lucide-react';
+import {
+  Wrench, Calendar, Clock, MapPin, Phone, User, ChevronRight, ChevronLeft,
+  Check, Car, Sun, Sunrise, Sunset, Plus, Trash2, Zap, ShoppingBag,
+  AlertCircle, Loader2, Star,
+} from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 interface ServiceOption {
   id: string;
   name: string;
@@ -14,12 +19,13 @@ interface ServiceOption {
   category: string;
 }
 
-interface TimeSlot {
-  time: string;
-  available: boolean;
+interface Vehicle {
+  id: string;
+  label: string;
+  serviceIds: string[];
 }
 
-interface TimeWindow {
+interface SmartWindow {
   id: string;
   label: string;
   start: string;
@@ -27,9 +33,35 @@ interface TimeWindow {
   icon: string;
   available: boolean;
   employees_available: number;
+  smart_pick: boolean;
+  proximity_km: number | null;
+  proximity_hint: string | null;
 }
 
-const steps = ['Usługi', 'Termin', 'Dane', 'Potwierdzenie'];
+// ─── Upsell logic ─────────────────────────────────────────────────────────────
+const UPSELL_MAP: Record<string, string[]> = {
+  'wymiana opon':     ['wyważanie', 'worki na opony', 'przechowywanie'],
+  'wymiana kół':      ['wyważanie', 'worki na opony'],
+  'naprawa':          ['wymiana zaworu', 'plombowanie'],
+  'wyważanie':        ['geometria'],
+};
+
+function getUpsellIds(services: ServiceOption[], selectedIds: Set<string>): ServiceOption[] {
+  const selectedNames = services.filter(s => selectedIds.has(s.id)).map(s => s.name.toLowerCase());
+  const hints = new Set<string>();
+  for (const [trigger, suggests] of Object.entries(UPSELL_MAP)) {
+    if (selectedNames.some(n => n.includes(trigger))) {
+      suggests.forEach(s => hints.add(s));
+    }
+  }
+  return services.filter(s =>
+    !selectedIds.has(s.id) &&
+    Array.from(hints).some(h => s.name.toLowerCase().includes(h))
+  ).slice(0, 3);
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const STEPS = ['Usługi', 'Adres', 'Termin', 'Dane', 'Potwierdzenie'];
 
 const WINDOW_ICONS: Record<string, React.ElementType> = {
   morning: Sunrise,
@@ -37,288 +69,536 @@ const WINDOW_ICONS: Record<string, React.ElementType> = {
   evening: Sunset,
 };
 
-export default function BookingPage() {
-  const [step, setStep] = useState(0);
-  const [services, setServices] = useState<ServiceOption[]>([]);
-  const [selectedServices, setSelectedServices] = useState<string[]>([]);
-  const [selectedDate, setSelectedDate] = useState('');
-  const [selectedTime, setSelectedTime] = useState('');
-  const [selectedWindow, setSelectedWindow] = useState('');
-  const [bookingMode, setBookingMode] = useState<'windows' | 'slots'>('windows');
-  const [form, setForm] = useState({ name: '', phone: '', address: '', city: '', notes: '' });
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [orderId, setOrderId] = useState('');
+const WINDOW_LABELS: Record<string, { label: string; start: string; end: string }> = {
+  morning:   { label: 'Rano',        start: '08:00', end: '12:00' },
+  afternoon: { label: 'Południe',    start: '12:00', end: '16:00' },
+  evening:   { label: 'Po południu', start: '16:00', end: '20:00' },
+};
 
-  const supabase = createClient();
-
-  useEffect(() => {
-    supabase.from('services').select('*').eq('is_active', true).order('category, name')
-      .then(({ data }) => { if (data) setServices(data as ServiceOption[]); });
-  }, []);
-
-  const totalPrice = services.filter(s => selectedServices.includes(s.id)).reduce((sum, s) => sum + Number(s.price), 0);
-  const totalDuration = services.filter(s => selectedServices.includes(s.id)).reduce((sum, s) => sum + s.duration_minutes, 0);
-
-  // Fetch real availability from API
-  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
-  const [timeWindows, setTimeWindows] = useState<TimeWindow[]>([]);
-  const [loadingSlots, setLoadingSlots] = useState(false);
-
-  useEffect(() => {
-    if (!selectedDate) return;
-    setLoadingSlots(true);
-    setSelectedTime('');
-    setSelectedWindow('');
-
-    // Fetch both windows and slots in parallel
-    Promise.all([
-      fetch(`/api/availability?date=${selectedDate}&mode=windows`).then(r => r.json()),
-      fetch(`/api/availability?date=${selectedDate}&mode=slots`).then(r => r.json()),
-    ]).then(([winData, slotData]) => {
-      if (winData.windows) setTimeWindows(winData.windows);
-      if (slotData.all_slots) {
-        setTimeSlots(slotData.all_slots);
-      } else {
-        const slots: TimeSlot[] = [];
-        for (let h = 7; h <= 17; h++) {
-          for (const m of [0, 30]) {
-            slots.push({ time: `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`, available: true });
-          }
-        }
-        setTimeSlots(slots);
-      }
-      setLoadingSlots(false);
-    }).catch(() => setLoadingSlots(false));
-  }, [selectedDate]);
-
-  // Generate next 14 days
-  const dates: { date: string; day: string; dayNum: number; month: string }[] = [];
-  for (let i = 1; i <= 14; i++) {
+// ─── Helper ───────────────────────────────────────────────────────────────────
+function nextDays(n: number) {
+  const out: { date: string; day: string; dayNum: number; month: string }[] = [];
+  for (let i = 0; out.length < n; i++) {
     const d = new Date();
     d.setDate(d.getDate() + i);
-    if (d.getDay() === 0) continue; // Skip Sundays
-    dates.push({
+    if (d.getDay() === 0) continue;
+    out.push({
       date: d.toISOString().split('T')[0],
       day: d.toLocaleDateString('pl', { weekday: 'short' }),
       dayNum: d.getDate(),
       month: d.toLocaleDateString('pl', { month: 'short' }),
     });
   }
+  return out;
+}
 
+// ─── Main component ───────────────────────────────────────────────────────────
+export default function BookingPage() {
+  const supabase = createClient();
+  const [step, setStep] = useState(0);
+  const [services, setServices] = useState<ServiceOption[]>([]);
+
+  // Step 0 — vehicles + services
+  const [vehicles, setVehicles] = useState<Vehicle[]>([{ id: '1', label: 'Pojazd 1', serviceIds: [] }]);
+  const [activeVehicle, setActiveVehicle] = useState(0);
+
+  // Step 1 — address
+  const [address, setAddress] = useState('');
+  const [city, setCity] = useState('');
+  const [geocoding, setGeocoding] = useState(false);
+  const [clientLat, setClientLat] = useState<number | null>(null);
+  const [clientLng, setClientLng] = useState<number | null>(null);
+
+  // Step 2 — date / window
+  const [selectedDate, setSelectedDate] = useState('');
+  const [smartWindows, setSmartWindows] = useState<SmartWindow[]>([]);
+  const [loadingWindows, setLoadingWindows] = useState(false);
+  const [selectedWindow, setSelectedWindow] = useState('');
+  const [bookingMode, setBookingMode] = useState<'windows' | 'slots'>('windows');
+  const [slots, setSlots] = useState<{ time: string; available: boolean }[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState('');
+
+  // Step 3 — contact
+  const [form, setForm] = useState({ name: '', phone: '', notes: '' });
+
+  // Submission
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [orderId, setOrderId] = useState('');
+
+  const geocodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dates = nextDays(14);
+
+  // Load services
+  useEffect(() => {
+    supabase.from('services').select('*').eq('is_active', true).order('category, name')
+      .then(({ data }) => { if (data) setServices(data as ServiceOption[]); });
+  }, []);
+
+  // ── Geocode address when it changes (debounced 800ms) ─────────────────
+  useEffect(() => {
+    if (geocodeTimer.current) clearTimeout(geocodeTimer.current);
+    if (!address || !city) { setClientLat(null); setClientLng(null); return; }
+    geocodeTimer.current = setTimeout(async () => {
+      setGeocoding(true);
+      try {
+        const res = await fetch(`/api/geocode?address=${encodeURIComponent(`${address}, ${city}`)}`);
+        const data = await res.json();
+        if (data.lat && data.lng) { setClientLat(data.lat); setClientLng(data.lng); }
+      } catch { /* silent */ }
+      setGeocoding(false);
+    }, 800);
+  }, [address, city]);
+
+  // ── Fetch smart windows when date or location changes ─────────────────
+  useEffect(() => {
+    if (!selectedDate) return;
+    setLoadingWindows(true);
+    setSelectedWindow('');
+    setSelectedSlot('');
+
+    const params = new URLSearchParams({ date: selectedDate });
+    if (clientLat !== null) params.set('lat', String(clientLat));
+    if (clientLng !== null) params.set('lng', String(clientLng));
+
+    Promise.all([
+      fetch(`/api/availability/smart?${params}`).then(r => r.json()),
+      fetch(`/api/availability?date=${selectedDate}&mode=slots`).then(r => r.json()),
+    ]).then(([smart, slotData]) => {
+      if (smart.windows) setSmartWindows(smart.windows);
+      if (slotData.all_slots) setSlots(slotData.all_slots);
+    }).finally(() => setLoadingWindows(false));
+  }, [selectedDate, clientLat, clientLng]);
+
+  // ── Derived values ─────────────────────────────────────────────────────
+  const allSelectedIds = new Set(vehicles.flatMap(v => v.serviceIds));
+  const totalPrice = services.filter(s => allSelectedIds.has(s.id))
+    .reduce((sum, s) => sum + Number(s.price) * vehicles.filter(v => v.serviceIds.includes(s.id)).length, 0);
+  const totalDuration = services.filter(s => allSelectedIds.has(s.id))
+    .reduce((sum, s) => sum + s.duration_minutes * vehicles.filter(v => v.serviceIds.includes(s.id)).length, 0);
+  const upsells = getUpsellIds(services, allSelectedIds);
+
+  const displayWindow = selectedWindow ? WINDOW_LABELS[selectedWindow] : null;
+  const displayTime = bookingMode === 'windows' && displayWindow
+    ? `${displayWindow.start}–${displayWindow.end}`
+    : selectedSlot;
+
+  const canProceed = () => {
+    if (step === 0) return vehicles.some(v => v.serviceIds.length > 0);
+    if (step === 1) return !!address && !!city;
+    if (step === 2) {
+      if (!selectedDate) return false;
+      return bookingMode === 'windows' ? !!selectedWindow : !!selectedSlot;
+    }
+    if (step === 3) return !!form.name && !!form.phone;
+    return true;
+  };
+
+  // ── Vehicle helpers ────────────────────────────────────────────────────
+  const addVehicle = () => {
+    const n = vehicles.length + 1;
+    setVehicles([...vehicles, { id: String(n), label: `Pojazd ${n}`, serviceIds: [] }]);
+    setActiveVehicle(vehicles.length);
+  };
+
+  const removeVehicle = (idx: number) => {
+    if (vehicles.length === 1) return;
+    const next = vehicles.filter((_, i) => i !== idx);
+    setVehicles(next);
+    setActiveVehicle(Math.min(activeVehicle, next.length - 1));
+  };
+
+  const toggleService = (svcId: string) => {
+    setVehicles(vs => vs.map((v, i) => {
+      if (i !== activeVehicle) return v;
+      return {
+        ...v,
+        serviceIds: v.serviceIds.includes(svcId)
+          ? v.serviceIds.filter(id => id !== svcId)
+          : [...v.serviceIds, svcId],
+      };
+    }));
+  };
+
+  const addUpsell = (svcId: string) => {
+    setVehicles(vs => vs.map((v, i) => {
+      if (i !== activeVehicle) return v;
+      if (v.serviceIds.includes(svcId)) return v;
+      return { ...v, serviceIds: [...v.serviceIds, svcId] };
+    }));
+  };
+
+  // ── Submit ─────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     setSubmitting(true);
-    const selectedServiceNames = services.filter(s => selectedServices.includes(s.id)).map(s => s.name);
-
+    const vehiclesPayload = vehicles.filter(v => v.serviceIds.length > 0).map(v => ({
+      label: v.label,
+      service_ids: v.serviceIds,
+    }));
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         client_name: form.name,
         client_phone: form.phone,
-        address: form.address,
-        city: form.city,
+        address,
+        city,
         scheduled_date: selectedDate,
-        scheduled_time: bookingMode === 'slots' ? selectedTime : (timeWindows.find(w => w.id === selectedWindow)?.start || '08:00'),
-        time_window: bookingMode === 'windows' ? (selectedWindow || null) : null,
-        service_names: selectedServiceNames,
-        notes: form.notes || `Rezerwacja online: ${form.name}`,
+        scheduled_time: bookingMode === 'slots' ? selectedSlot : undefined,
+        time_window: bookingMode === 'windows' ? selectedWindow : undefined,
+        vehicles: vehiclesPayload,
+        notes: form.notes || undefined,
+        priority: 'normal',
       }),
     });
-
     const data = await res.json();
     setSubmitting(false);
-    if (data.success) {
-      setOrderId(data.order_id);
-      setSuccess(true);
-    }
+    if (data.success) { setOrderId(data.order_id); setSuccess(true); }
   };
 
-  const canProceed = () => {
-    if (step === 0) return selectedServices.length > 0;
-    if (step === 1) {
-      if (!selectedDate) return false;
-      if (bookingMode === 'windows') return !!selectedWindow;
-      return !!selectedTime;
-    }
-    if (step === 2) return form.name && form.phone;
-    return true;
-  };
-
-  // Display value for selected time
-  const displayTime = bookingMode === 'windows'
-    ? (timeWindows.find(w => w.id === selectedWindow)
-        ? `${timeWindows.find(w => w.id === selectedWindow)!.start}–${timeWindows.find(w => w.id === selectedWindow)!.end}`
-        : '')
-    : selectedTime;
-
+  // ─────────────────────────────────────────────────────────────────────────
+  // Success screen
   if (success) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 flex items-center justify-center px-4">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900/80 backdrop-blur-xl p-8 text-center"
-        >
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20">
-            <Check className="h-8 w-8 text-emerald-400" />
+        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+          className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900/80 backdrop-blur-xl p-8 text-center">
+          <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/20">
+            <Check className="h-10 w-10 text-emerald-400" />
           </div>
-          <h2 className="text-xl font-bold text-white mb-2">Rezerwacja potwierdzona!</h2>
-          <p className="text-gray-400 mb-6">
-            Twoje zlecenie zostało utworzone. Skontaktujemy się z Tobą w celu potwierdzenia.
+          <h2 className="text-2xl font-bold text-white mb-2">Rezerwacja przyjęta!</h2>
+          <p className="text-gray-400 mb-6 text-sm">
+            Potwierdzimy termin telefonicznie. Przygotuj pojazd i będziemy u Ciebie punktualnie.
           </p>
-          <div className="rounded-xl bg-gray-800/50 p-4 text-left space-y-2 mb-6">
+          <div className="rounded-xl bg-gray-800/50 p-4 text-left space-y-2.5 mb-6">
             <p className="text-sm text-gray-300"><Calendar className="h-4 w-4 inline mr-2 text-gray-500" />{selectedDate}</p>
-            <p className="text-sm text-gray-300"><Clock className="h-4 w-4 inline mr-2 text-gray-500" />{displayTime}</p>
-            <p className="text-sm text-gray-300"><User className="h-4 w-4 inline mr-2 text-gray-500" />{form.name}</p>
-            <p className="text-sm text-white font-bold mt-2">Kwota: {totalPrice} zł</p>
+            {displayWindow && <p className="text-sm text-gray-300"><Clock className="h-4 w-4 inline mr-2 text-gray-500" />{displayWindow.label}: {displayWindow.start}–{displayWindow.end}</p>}
+            <p className="text-sm text-gray-300"><MapPin className="h-4 w-4 inline mr-2 text-gray-500" />{address}, {city}</p>
+            <p className="text-sm text-gray-300"><User className="h-4 w-4 inline mr-2 text-gray-500" />{form.name} · {form.phone}</p>
+            <div className="border-t border-gray-700 pt-2 mt-2">
+              {vehicles.filter(v => v.serviceIds.length > 0).map((v, i) => (
+                <p key={i} className="text-xs text-gray-400">
+                  <Car className="h-3 w-3 inline mr-1" />{v.label}: {v.serviceIds.map(id => services.find(s => s.id === id)?.name).filter(Boolean).join(', ')}
+                </p>
+              ))}
+            </div>
+            <p className="text-base font-bold text-orange-400 pt-1">Łącznie: {totalPrice} zł</p>
           </div>
-          <p className="text-xs text-gray-500">Nr zlecenia: {orderId?.slice(0, 8)}</p>
+          <p className="text-xs text-gray-600">Nr zlecenia: {orderId?.slice(0, 8).toUpperCase()}</p>
         </motion.div>
       </div>
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950">
       {/* Header */}
-      <div className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-xl">
-        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 shadow-lg">
-            <Wrench className="h-5 w-5 text-white" />
-          </div>
+      <div className="border-b border-gray-800 bg-gray-900/60 backdrop-blur-xl sticky top-0 z-10">
+        <div className="max-w-2xl mx-auto px-4 py-3.5 flex items-center gap-3">
+          <img src="/logo-full.png" alt="RouteTire" className="h-9 w-9 object-contain rounded-xl" />
           <div>
-            <h1 className="text-lg font-bold text-white">RouteTire</h1>
-            <p className="text-xs text-gray-400">Rezerwacja online</p>
+            <h1 className="text-base font-bold text-white leading-tight">Route<span className="text-orange-500">Tire</span></h1>
+            <p className="text-[11px] text-gray-500">Rezerwacja online</p>
           </div>
+          {totalPrice > 0 && (
+            <div className="ml-auto text-right">
+              <p className="text-xs text-gray-400">{totalDuration} min</p>
+              <p className="text-sm font-bold text-orange-400">{totalPrice} zł</p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Progress steps */}
       <div className="max-w-2xl mx-auto px-4 py-6">
-        <div className="flex items-center justify-between mb-8">
-          {steps.map((s, i) => (
-            <div key={s} className="flex items-center gap-2">
-              <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold transition-all ${
-                i <= step ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-500'
+        {/* Progress */}
+        <div className="flex items-center mb-8 gap-1">
+          {STEPS.map((s, i) => (
+            <div key={s} className="flex items-center flex-1 last:flex-none">
+              <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold transition-all ${
+                i < step ? 'bg-orange-500 text-white' : i === step ? 'bg-orange-500/20 border-2 border-orange-500 text-orange-400' : 'bg-gray-800 text-gray-600'
               }`}>
-                {i < step ? <Check className="h-4 w-4" /> : i + 1}
+                {i < step ? <Check className="h-3.5 w-3.5" /> : i + 1}
               </div>
-              <span className={`text-sm font-medium hidden sm:block ${i <= step ? 'text-white' : 'text-gray-500'}`}>{s}</span>
-              {i < steps.length - 1 && <div className={`w-8 sm:w-16 h-0.5 ${i < step ? 'bg-orange-500' : 'bg-gray-800'}`} />}
+              <span className={`text-[10px] font-medium ml-1 hidden sm:block ${i <= step ? 'text-white' : 'text-gray-600'}`}>{s}</span>
+              {i < STEPS.length - 1 && <div className={`flex-1 h-px mx-2 ${i < step ? 'bg-orange-500' : 'bg-gray-800'}`} />}
             </div>
           ))}
         </div>
 
         <AnimatePresence mode="wait">
-          {/* Step 0: Select Services */}
+          {/* ── Step 0: Services + Multi-vehicle ─────────────────────────── */}
           {step === 0 && (
-            <motion.div key="services" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-3">
-              <h2 className="text-xl font-bold text-white mb-4">Wybierz usługi</h2>
-              {services.map(s => (
-                <label key={s.id}
-                  className={`flex items-center gap-4 rounded-xl border p-4 cursor-pointer transition-all ${
-                    selectedServices.includes(s.id) ? 'border-orange-500 bg-orange-500/10' : 'border-gray-800 bg-gray-900/50 hover:border-gray-700'
-                  }`}
-                >
-                  <input type="checkbox" className="hidden" checked={selectedServices.includes(s.id)}
-                    onChange={e => {
-                      if (e.target.checked) setSelectedServices([...selectedServices, s.id]);
-                      else setSelectedServices(selectedServices.filter(id => id !== s.id));
-                    }}
-                  />
-                  <div className={`flex h-5 w-5 items-center justify-center rounded-md border-2 ${
-                    selectedServices.includes(s.id) ? 'bg-orange-500 border-orange-500' : 'border-gray-600'
-                  }`}>
-                    {selectedServices.includes(s.id) && <Check className="h-3 w-3 text-white" />}
+            <motion.div key="step0" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-5">
+              <div>
+                <h2 className="text-xl font-bold text-white">Wybierz usługi</h2>
+                <p className="text-sm text-gray-400 mt-1">Możesz dodać kilka pojazdów do jednej wizyty.</p>
+              </div>
+
+              {/* Vehicle tabs */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {vehicles.map((v, idx) => (
+                  <button key={v.id} type="button"
+                    onClick={() => setActiveVehicle(idx)}
+                    className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-medium transition-all ${
+                      activeVehicle === idx ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <Car className="h-3.5 w-3.5" />
+                    {v.label}
+                    {v.serviceIds.length > 0 && (
+                      <span className={`text-[10px] rounded-full px-1 ${activeVehicle === idx ? 'bg-white/20' : 'bg-orange-500/20 text-orange-400'}`}>
+                        {v.serviceIds.length}
+                      </span>
+                    )}
+                    {vehicles.length > 1 && (
+                      <span onClick={e => { e.stopPropagation(); removeVehicle(idx); }}
+                        className="ml-0.5 text-gray-400 hover:text-red-400 transition-colors cursor-pointer">
+                        ×
+                      </span>
+                    )}
+                  </button>
+                ))}
+                <button type="button" onClick={addVehicle}
+                  className="flex items-center gap-1 rounded-xl px-3 py-1.5 text-sm text-gray-500 border border-dashed border-gray-700 hover:border-orange-500 hover:text-orange-400 transition-all">
+                  <Plus className="h-3.5 w-3.5" /> Dodaj pojazd
+                </button>
+              </div>
+
+              {/* Vehicle label input */}
+              <div>
+                <input
+                  value={vehicles[activeVehicle]?.label ?? ''}
+                  onChange={e => setVehicles(vs => vs.map((v, i) => i === activeVehicle ? { ...v, label: e.target.value } : v))}
+                  placeholder={`Pojazd ${activeVehicle + 1} (np. Ford Focus, BMW X5)`}
+                  className="w-full rounded-xl border border-gray-700 bg-gray-800/40 py-2.5 px-3.5 text-sm text-white placeholder-gray-600 outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/20"
+                />
+              </div>
+
+              {/* Services by category */}
+              {(() => {
+                const categories = [...new Set(services.map(s => s.category))];
+                return categories.map(cat => (
+                  <div key={cat}>
+                    <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 mb-2">{cat}</p>
+                    <div className="space-y-2">
+                      {services.filter(s => s.category === cat).map(svc => {
+                        const checked = vehicles[activeVehicle]?.serviceIds.includes(svc.id) ?? false;
+                        return (
+                          <label key={svc.id}
+                            className={`flex items-center gap-4 rounded-xl border p-3.5 cursor-pointer transition-all ${
+                              checked ? 'border-orange-500 bg-orange-500/10' : 'border-gray-800 bg-gray-900/50 hover:border-gray-700'
+                            }`}
+                          >
+                            <input type="checkbox" className="hidden" checked={checked} onChange={() => toggleService(svc.id)} />
+                            <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-all ${
+                              checked ? 'bg-orange-500 border-orange-500' : 'border-gray-600'
+                            }`}>
+                              {checked && <Check className="h-3 w-3 text-white" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-white">{svc.name}</p>
+                              {svc.description && <p className="text-xs text-gray-500 truncate mt-0.5">{svc.description}</p>}
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-sm font-bold text-white">{Number(svc.price)} zł</p>
+                              <p className="text-[10px] text-gray-600">{svc.duration_minutes} min</p>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-white">{s.name}</p>
-                    {s.description && <p className="text-xs text-gray-400 mt-0.5">{s.description}</p>}
+                ));
+              })()}
+
+              {/* Upsell suggestions */}
+              {upsells.length > 0 && (
+                <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Star className="h-4 w-4 text-yellow-400" />
+                    <p className="text-sm font-semibold text-yellow-400">Klienci też zamawiają</p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-white">{Number(s.price)} zł</p>
-                    <p className="text-xs text-gray-500">{s.duration_minutes} min</p>
+                  <div className="space-y-2">
+                    {upsells.map(svc => (
+                      <div key={svc.id} className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-white">{svc.name}</p>
+                          <p className="text-xs text-gray-500">{svc.duration_minutes} min · {Number(svc.price)} zł</p>
+                        </div>
+                        <button type="button" onClick={() => addUpsell(svc.id)}
+                          className="flex items-center gap-1 rounded-lg bg-yellow-500/20 text-yellow-400 px-3 py-1 text-xs font-medium hover:bg-yellow-500/30 transition-colors">
+                          <Plus className="h-3 w-3" /> Dodaj
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                </label>
-              ))}
-              {selectedServices.length > 0 && (
-                <div className="rounded-xl bg-gray-800/50 p-3 flex justify-between">
-                  <span className="text-sm text-gray-400">Razem: {totalDuration} min</span>
+                </div>
+              )}
+
+              {/* Summary bar */}
+              {allSelectedIds.size > 0 && (
+                <div className="rounded-xl bg-gray-800/60 p-3 flex items-center justify-between">
+                  <div className="text-sm text-gray-400">
+                    {vehicles.filter(v => v.serviceIds.length > 0).length} pojazd{vehicles.filter(v => v.serviceIds.length > 0).length > 1 ? 'y' : ''} · {allSelectedIds.size} usług{allSelectedIds.size > 1 ? 'i' : 'a'} · {totalDuration} min
+                  </div>
                   <span className="text-sm font-bold text-white">{totalPrice} zł</span>
                 </div>
               )}
             </motion.div>
           )}
 
-          {/* Step 1: Select Date & Time */}
+          {/* ── Step 1: Address ────────────────────────────────────────── */}
           {step === 1 && (
-            <motion.div key="datetime" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-              <h2 className="text-xl font-bold text-white mb-4">Wybierz termin</h2>
+            <motion.div key="step1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-5">
               <div>
-                <p className="text-sm text-gray-400 mb-3">Data</p>
+                <h2 className="text-xl font-bold text-white">Twoja lokalizacja</h2>
+                <p className="text-sm text-gray-400 mt-1">
+                  Dzięki adresowi dobierzemy termin, gdy pracownik będzie blisko Ciebie — skróci to czas oczekiwania i dojazdu.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Ulica i numer *</label>
+                  <div className="relative">
+                    <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                    <input
+                      type="text"
+                      value={address}
+                      onChange={e => setAddress(e.target.value)}
+                      placeholder="ul. Marszałkowska 15"
+                      className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Miasto *</label>
+                  <div className="relative">
+                    <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                    <input
+                      type="text"
+                      value={city}
+                      onChange={e => setCity(e.target.value)}
+                      placeholder="Warszawa"
+                      className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Geocode status */}
+              {geocoding && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Szukam lokalizacji...
+                </div>
+              )}
+              {clientLat && !geocoding && (
+                <div className="flex items-center gap-2 text-sm text-emerald-500">
+                  <Check className="h-4 w-4" /> Lokalizacja znaleziona — dobierzemy dla Ciebie najlepszy termin
+                </div>
+              )}
+              {address && city && !clientLat && !geocoding && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <AlertCircle className="h-4 w-4" /> Nie udało się zlokalizować adresu — możesz kontynuować
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* ── Step 2: Date & Smart Windows ──────────────────────────── */}
+          {step === 2 && (
+            <motion.div key="step2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
+              <div>
+                <h2 className="text-xl font-bold text-white">Wybierz termin</h2>
+                {clientLat && (
+                  <p className="text-sm text-emerald-500 mt-1 flex items-center gap-1.5">
+                    <Zap className="h-3.5 w-3.5" /> Terminy dopasowane do Twojej lokalizacji
+                  </p>
+                )}
+              </div>
+
+              {/* Date picker */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Data</p>
                 <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
                   {dates.map(d => (
                     <button key={d.date} type="button"
                       onClick={() => setSelectedDate(d.date)}
                       className={`rounded-xl p-2 text-center transition-all ${
-                        selectedDate === d.date ? 'bg-orange-500 text-white' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
+                        selectedDate === d.date ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
                       }`}
                     >
                       <p className="text-[10px] uppercase">{d.day}</p>
-                      <p className="text-lg font-bold">{d.dayNum}</p>
+                      <p className="text-lg font-bold leading-tight">{d.dayNum}</p>
                       <p className="text-[10px]">{d.month}</p>
                     </button>
                   ))}
                 </div>
               </div>
-              {selectedDate && !loadingSlots && (
+
+              {selectedDate && (
                 <>
                   {/* Mode toggle */}
                   <div className="flex rounded-xl bg-gray-800/50 p-1 gap-1">
-                    <button type="button"
-                      onClick={() => { setBookingMode('windows'); setSelectedTime(''); }}
-                      className={`flex-1 rounded-lg py-2 text-sm font-medium transition-all ${bookingMode === 'windows' ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
-                    >
-                      Okna czasowe
-                    </button>
-                    <button type="button"
-                      onClick={() => { setBookingMode('slots'); setSelectedWindow(''); }}
-                      className={`flex-1 rounded-lg py-2 text-sm font-medium transition-all ${bookingMode === 'slots' ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
-                    >
-                      Dokładna godzina
-                    </button>
+                    {(['windows', 'slots'] as const).map(mode => (
+                      <button key={mode} type="button"
+                        onClick={() => { setBookingMode(mode); setSelectedWindow(''); setSelectedSlot(''); }}
+                        className={`flex-1 rounded-lg py-2 text-sm font-medium transition-all ${bookingMode === mode ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        {mode === 'windows' ? 'Okno czasowe' : 'Dokładna godzina'}
+                      </button>
+                    ))}
                   </div>
 
-                  {/* Window mode */}
-                  {bookingMode === 'windows' && (
+                  {loadingWindows ? (
+                    <div className="flex items-center justify-center py-8 gap-3 text-sm text-gray-500">
+                      <Loader2 className="h-5 w-5 animate-spin text-orange-500" /> Sprawdzam dostępność...
+                    </div>
+                  ) : bookingMode === 'windows' ? (
                     <div className="space-y-3">
-                      <p className="text-sm text-gray-400">Preferowane okno czasowe</p>
-                      {timeWindows.length > 0 ? timeWindows.map(win => {
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Preferowane okno czasowe</p>
+                      {smartWindows.map(win => {
                         const WinIcon = WINDOW_ICONS[win.id] || Clock;
                         return (
                           <button key={win.id} type="button"
                             disabled={!win.available}
                             onClick={() => setSelectedWindow(win.id)}
                             className={`w-full flex items-center gap-4 rounded-xl border p-4 text-left transition-all ${
-                              !win.available ? 'border-gray-800 opacity-40 cursor-not-allowed' :
-                              selectedWindow === win.id ? 'border-orange-500 bg-orange-500/10' : 'border-gray-700 bg-gray-800/30 hover:border-gray-600'
+                              !win.available
+                                ? 'border-gray-800 opacity-40 cursor-not-allowed'
+                                : selectedWindow === win.id
+                                ? 'border-orange-500 bg-orange-500/10'
+                                : win.smart_pick
+                                ? 'border-emerald-500/40 bg-emerald-500/5 hover:border-emerald-500/60'
+                                : 'border-gray-700 bg-gray-800/30 hover:border-gray-600'
                             }`}
                           >
-                            <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${
-                              selectedWindow === win.id ? 'bg-orange-500' : 'bg-gray-800'
+                            <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${
+                              selectedWindow === win.id ? 'bg-orange-500' : win.smart_pick ? 'bg-emerald-500/20' : 'bg-gray-800'
                             }`}>
-                              <WinIcon className={`h-6 w-6 ${selectedWindow === win.id ? 'text-white' : 'text-gray-400'}`} />
+                              <WinIcon className={`h-6 w-6 ${selectedWindow === win.id ? 'text-white' : win.smart_pick ? 'text-emerald-400' : 'text-gray-400'}`} />
                             </div>
-                            <div className="flex-1">
-                              <p className="text-sm font-semibold text-white">{win.label}</p>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-semibold text-white">{win.label}</p>
+                                {win.smart_pick && (
+                                  <span className="flex items-center gap-1 text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-md">
+                                    <Zap className="h-2.5 w-2.5" /> Polecane
+                                  </span>
+                                )}
+                              </div>
                               <p className="text-xs text-gray-400">{win.start} – {win.end}</p>
+                              {win.proximity_hint && (
+                                <p className="text-[11px] text-emerald-400 mt-0.5">{win.proximity_hint}</p>
+                              )}
                             </div>
-                            <div className="text-right">
+                            <div className="text-right shrink-0">
                               {win.available ? (
                                 <>
                                   <p className="text-xs text-emerald-400 font-medium">Dostępne</p>
-                                  <p className="text-[10px] text-gray-500">{win.employees_available} pracownik{win.employees_available === 1 ? '' : win.employees_available < 5 ? 'ów' : 'ów'}</p>
+                                  <p className="text-[10px] text-gray-500">{win.employees_available} pracownik{win.employees_available === 1 ? '' : 'ów'}</p>
                                 </>
                               ) : (
                                 <p className="text-xs text-red-400">Zajęte</p>
@@ -326,46 +606,17 @@ export default function BookingPage() {
                             </div>
                           </button>
                         );
-                      }) : (
-                        <div className="space-y-3">
-                          {[
-                            { id: 'morning', label: 'Rano', start: '08:00', end: '12:00' },
-                            { id: 'afternoon', label: 'Południe', start: '12:00', end: '16:00' },
-                            { id: 'evening', label: 'Po południu', start: '16:00', end: '20:00' },
-                          ].map(win => {
-                            const WinIcon = WINDOW_ICONS[win.id] || Clock;
-                            return (
-                              <button key={win.id} type="button"
-                                onClick={() => setSelectedWindow(win.id)}
-                                className={`w-full flex items-center gap-4 rounded-xl border p-4 text-left transition-all ${
-                                  selectedWindow === win.id ? 'border-orange-500 bg-orange-500/10' : 'border-gray-700 bg-gray-800/30 hover:border-gray-600'
-                                }`}
-                              >
-                                <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${selectedWindow === win.id ? 'bg-orange-500' : 'bg-gray-800'}`}>
-                                  <WinIcon className={`h-6 w-6 ${selectedWindow === win.id ? 'text-white' : 'text-gray-400'}`} />
-                                </div>
-                                <div className="flex-1">
-                                  <p className="text-sm font-semibold text-white">{win.label}</p>
-                                  <p className="text-xs text-gray-400">{win.start} – {win.end}</p>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
+                      })}
                     </div>
-                  )}
-
-                  {/* Slot mode */}
-                  {bookingMode === 'slots' && (
+                  ) : (
                     <div>
-                      <p className="text-sm text-gray-400 mb-3">Godzina</p>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Godzina</p>
                       <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                        {timeSlots.filter(s => s.available).map(slot => (
+                        {slots.filter(s => s.available).map(slot => (
                           <button key={slot.time} type="button"
-                            onClick={() => setSelectedTime(slot.time)}
+                            onClick={() => setSelectedSlot(slot.time)}
                             className={`rounded-xl py-2 text-sm font-medium transition-all ${
-                              selectedTime === slot.time ? 'bg-orange-500 text-white' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
+                              selectedSlot === slot.time ? 'bg-orange-500 text-white' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
                             }`}
                           >
                             {slot.time}
@@ -376,32 +627,25 @@ export default function BookingPage() {
                   )}
                 </>
               )}
-              {selectedDate && loadingSlots && (
-                <div className="flex items-center justify-center py-8">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
-                  <span className="ml-3 text-sm text-gray-400">Sprawdzam dostępność...</span>
-                </div>
-              )}
             </motion.div>
           )}
 
-          {/* Step 2: Contact Info */}
-          {step === 2 && (
-            <motion.div key="contact" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
-              <h2 className="text-xl font-bold text-white mb-4">Twoje dane</h2>
+          {/* ── Step 3: Contact info ───────────────────────────────────── */}
+          {step === 3 && (
+            <motion.div key="step3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
+              <h2 className="text-xl font-bold text-white">Twoje dane</h2>
               {[
-                { label: 'Imię i nazwisko', key: 'name', icon: User, required: true },
-                { label: 'Telefon', key: 'phone', icon: Phone, required: true },
-                { label: 'Adres', key: 'address', icon: MapPin, required: false },
-                { label: 'Miasto', key: 'city', icon: MapPin, required: false },
+                { label: 'Imię i nazwisko', key: 'name', icon: User, type: 'text', required: true, placeholder: 'Jan Kowalski' },
+                { label: 'Telefon', key: 'phone', icon: Phone, type: 'tel', required: true, placeholder: '+48 600 000 000' },
               ].map(field => (
                 <div key={field.key}>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">{field.label} {field.required && '*'}</label>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">{field.label} *</label>
                   <div className="relative">
                     <field.icon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
                     <input
-                      type="text"
+                      type={field.type}
                       required={field.required}
+                      placeholder={field.placeholder}
                       value={(form as Record<string, string>)[field.key]}
                       onChange={e => setForm({ ...form, [field.key]: e.target.value })}
                       className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
@@ -410,61 +654,100 @@ export default function BookingPage() {
                 </div>
               ))}
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Uwagi</label>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Uwagi (opcjonalnie)</label>
                 <textarea
                   value={form.notes}
                   onChange={e => setForm({ ...form, notes: e.target.value })}
                   rows={3}
+                  placeholder="Np. rozmiar opon, marka pojazdu, dostęp do podwórza..."
                   className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 px-4 text-sm text-white placeholder-gray-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
-                  placeholder="Np. pojazd, rozmiar opon..."
                 />
               </div>
             </motion.div>
           )}
 
-          {/* Step 3: Confirmation */}
-          {step === 3 && (
-            <motion.div key="confirm" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-              <h2 className="text-xl font-bold text-white mb-4">Podsumowanie</h2>
-              <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-5 space-y-4">
+          {/* ── Step 4: Confirmation ───────────────────────────────────── */}
+          {step === 4 && (
+            <motion.div key="step4" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-5">
+              <h2 className="text-xl font-bold text-white">Podsumowanie</h2>
+
+              <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-5 space-y-4">
+                {/* Vehicles breakdown */}
                 <div>
-                  <p className="text-xs text-gray-500 uppercase mb-1">Usługi</p>
-                  {services.filter(s => selectedServices.includes(s.id)).map(s => (
-                    <div key={s.id} className="flex justify-between text-sm py-1">
-                      <span className="text-gray-300">{s.name}</span>
-                      <span className="text-white font-medium">{Number(s.price)} zł</span>
+                  <p className="text-[11px] text-gray-500 uppercase font-semibold mb-2">Pojazdy i usługi</p>
+                  {vehicles.filter(v => v.serviceIds.length > 0).map((v, i) => (
+                    <div key={i} className="mb-2">
+                      <p className="text-xs text-gray-400 font-medium flex items-center gap-1.5">
+                        <Car className="h-3 w-3 text-gray-500" />{v.label}
+                      </p>
+                      {v.serviceIds.map(id => {
+                        const svc = services.find(s => s.id === id);
+                        if (!svc) return null;
+                        return (
+                          <div key={id} className="flex justify-between text-sm py-0.5 pl-4">
+                            <span className="text-gray-300">{svc.name}</span>
+                            <span className="text-white">{Number(svc.price)} zł</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   ))}
-                  <div className="flex justify-between text-sm pt-2 mt-2 border-t border-gray-800 font-bold">
+                  <div className="flex justify-between text-sm pt-2 mt-1 border-t border-gray-800 font-bold">
                     <span className="text-white">Razem</span>
-                    <span className="text-orange-400">{totalPrice} zł</span>
+                    <span className="text-orange-400 text-base">{totalPrice} zł</span>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                  <div><p className="text-xs text-gray-500">Data</p><p className="text-sm text-white">{selectedDate}</p></div>
-                  <div><p className="text-xs text-gray-500">Godzina</p><p className="text-sm text-white">{displayTime}</p></div>
-                  <div><p className="text-xs text-gray-500">Klient</p><p className="text-sm text-white">{form.name}</p></div>
-                  <div><p className="text-xs text-gray-500">Telefon</p><p className="text-sm text-white">{form.phone}</p></div>
+
+                {/* Details grid */}
+                <div className="grid grid-cols-2 gap-3 pt-1 border-t border-gray-800">
+                  <div><p className="text-[11px] text-gray-500 uppercase">Data</p><p className="text-sm text-white font-medium">{selectedDate}</p></div>
+                  <div><p className="text-[11px] text-gray-500 uppercase">Okno</p><p className="text-sm text-white font-medium">{displayWindow ? `${displayWindow.label}: ${displayWindow.start}–${displayWindow.end}` : selectedSlot}</p></div>
+                  <div><p className="text-[11px] text-gray-500 uppercase">Adres</p><p className="text-sm text-white font-medium">{address}, {city}</p></div>
+                  <div><p className="text-[11px] text-gray-500 uppercase">Czas usługi</p><p className="text-sm text-white font-medium">{totalDuration} min</p></div>
+                  <div><p className="text-[11px] text-gray-500 uppercase">Klient</p><p className="text-sm text-white font-medium">{form.name}</p></div>
+                  <div><p className="text-[11px] text-gray-500 uppercase">Telefon</p><p className="text-sm text-white font-medium">{form.phone}</p></div>
                 </div>
               </div>
+
+              {/* Final upsell */}
+              {upsells.length > 0 && (
+                <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <ShoppingBag className="h-4 w-4 text-yellow-400" />
+                    <p className="text-sm font-semibold text-yellow-400">Chcesz dodać jeszcze coś?</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {upsells.map(svc => (
+                      <button key={svc.id} type="button" onClick={() => addUpsell(svc.id)}
+                        className="flex items-center gap-1.5 rounded-lg bg-yellow-500/10 text-yellow-300 border border-yellow-500/20 px-3 py-1.5 text-xs font-medium hover:bg-yellow-500/20 transition-colors">
+                        <Plus className="h-3 w-3" /> {svc.name} — {Number(svc.price)} zł
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-gray-600 text-center">
+                Rezerwując, akceptujesz warunki usługi. Potwierdzimy termin telefonicznie.
+              </p>
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Navigation */}
-        <div className="flex justify-between mt-8">
+        <div className="flex justify-between mt-8 pb-8">
           <button
             onClick={() => setStep(Math.max(0, step - 1))}
-            className={`flex items-center gap-2 text-sm font-medium transition-colors ${step === 0 ? 'text-gray-700' : 'text-gray-400 hover:text-white'}`}
             disabled={step === 0}
+            className="flex items-center gap-2 text-sm font-medium text-gray-400 hover:text-white transition-colors disabled:opacity-30 disabled:pointer-events-none"
           >
             <ChevronLeft className="h-4 w-4" /> Wstecz
           </button>
-          {step < 3 ? (
+          {step < 4 ? (
             <button
               onClick={() => setStep(step + 1)}
               disabled={!canProceed()}
-              className="flex items-center gap-2 rounded-xl bg-orange-500 px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-orange-600 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 rounded-xl bg-orange-500 px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-orange-600 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-orange-500/20"
             >
               Dalej <ChevronRight className="h-4 w-4" />
             </button>
@@ -472,9 +755,9 @@ export default function BookingPage() {
             <button
               onClick={handleSubmit}
               disabled={submitting}
-              className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg transition-all hover:from-emerald-600 hover:to-emerald-700 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg transition-all hover:from-emerald-600 hover:to-emerald-700 active:scale-95 disabled:opacity-50"
             >
-              {submitting ? 'Rezerwuję...' : 'Zarezerwuj'} <Check className="h-4 w-4" />
+              {submitting ? <><Loader2 className="h-4 w-4 animate-spin" /> Rezerwuję...</> : <><Check className="h-4 w-4" /> Zarezerwuj</>}
             </button>
           )}
         </div>
