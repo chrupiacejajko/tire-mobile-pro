@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Wrench, Calendar, Clock, MapPin, Phone, User, ChevronRight, ChevronLeft, Check, Car } from 'lucide-react';
+import { Wrench, Calendar, Clock, MapPin, Phone, User, ChevronRight, ChevronLeft, Check, Car, Sun, Sunrise, Sunset } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 interface ServiceOption {
@@ -19,7 +19,23 @@ interface TimeSlot {
   available: boolean;
 }
 
+interface TimeWindow {
+  id: string;
+  label: string;
+  start: string;
+  end: string;
+  icon: string;
+  available: boolean;
+  employees_available: number;
+}
+
 const steps = ['Usługi', 'Termin', 'Dane', 'Potwierdzenie'];
+
+const WINDOW_ICONS: Record<string, React.ElementType> = {
+  morning: Sunrise,
+  afternoon: Sun,
+  evening: Sunset,
+};
 
 export default function BookingPage() {
   const [step, setStep] = useState(0);
@@ -27,6 +43,8 @@ export default function BookingPage() {
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
+  const [selectedWindow, setSelectedWindow] = useState('');
+  const [bookingMode, setBookingMode] = useState<'windows' | 'slots'>('windows');
   const [form, setForm] = useState({ name: '', phone: '', address: '', city: '', notes: '' });
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -44,29 +62,34 @@ export default function BookingPage() {
 
   // Fetch real availability from API
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
+  const [timeWindows, setTimeWindows] = useState<TimeWindow[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
 
   useEffect(() => {
     if (!selectedDate) return;
     setLoadingSlots(true);
-    fetch(`/api/availability?date=${selectedDate}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.all_slots) {
-          setTimeSlots(data.all_slots);
-        } else {
-          // Fallback: generate all slots
-          const slots: TimeSlot[] = [];
-          for (let h = 7; h <= 17; h++) {
-            for (const m of [0, 30]) {
-              slots.push({ time: `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`, available: true });
-            }
+    setSelectedTime('');
+    setSelectedWindow('');
+
+    // Fetch both windows and slots in parallel
+    Promise.all([
+      fetch(`/api/availability?date=${selectedDate}&mode=windows`).then(r => r.json()),
+      fetch(`/api/availability?date=${selectedDate}&mode=slots`).then(r => r.json()),
+    ]).then(([winData, slotData]) => {
+      if (winData.windows) setTimeWindows(winData.windows);
+      if (slotData.all_slots) {
+        setTimeSlots(slotData.all_slots);
+      } else {
+        const slots: TimeSlot[] = [];
+        for (let h = 7; h <= 17; h++) {
+          for (const m of [0, 30]) {
+            slots.push({ time: `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`, available: true });
           }
-          setTimeSlots(slots);
         }
-        setLoadingSlots(false);
-      })
-      .catch(() => setLoadingSlots(false));
+        setTimeSlots(slots);
+      }
+      setLoadingSlots(false);
+    }).catch(() => setLoadingSlots(false));
   }, [selectedDate]);
 
   // Generate next 14 days
@@ -96,7 +119,8 @@ export default function BookingPage() {
         address: form.address,
         city: form.city,
         scheduled_date: selectedDate,
-        scheduled_time: selectedTime,
+        scheduled_time: bookingMode === 'slots' ? selectedTime : (timeWindows.find(w => w.id === selectedWindow)?.start || '08:00'),
+        time_window: bookingMode === 'windows' ? (timeWindows.find(w => w.id === selectedWindow) ? `${timeWindows.find(w => w.id === selectedWindow)!.start}-${timeWindows.find(w => w.id === selectedWindow)!.end}` : null) : null,
         service_names: selectedServiceNames,
         notes: form.notes || `Rezerwacja online: ${form.name}`,
       }),
@@ -112,10 +136,21 @@ export default function BookingPage() {
 
   const canProceed = () => {
     if (step === 0) return selectedServices.length > 0;
-    if (step === 1) return selectedDate && selectedTime;
+    if (step === 1) {
+      if (!selectedDate) return false;
+      if (bookingMode === 'windows') return !!selectedWindow;
+      return !!selectedTime;
+    }
     if (step === 2) return form.name && form.phone;
     return true;
   };
+
+  // Display value for selected time
+  const displayTime = bookingMode === 'windows'
+    ? (timeWindows.find(w => w.id === selectedWindow)
+        ? `${timeWindows.find(w => w.id === selectedWindow)!.start}–${timeWindows.find(w => w.id === selectedWindow)!.end}`
+        : '')
+    : selectedTime;
 
   if (success) {
     return (
@@ -134,7 +169,7 @@ export default function BookingPage() {
           </p>
           <div className="rounded-xl bg-gray-800/50 p-4 text-left space-y-2 mb-6">
             <p className="text-sm text-gray-300"><Calendar className="h-4 w-4 inline mr-2 text-gray-500" />{selectedDate}</p>
-            <p className="text-sm text-gray-300"><Clock className="h-4 w-4 inline mr-2 text-gray-500" />{selectedTime}</p>
+            <p className="text-sm text-gray-300"><Clock className="h-4 w-4 inline mr-2 text-gray-500" />{displayTime}</p>
             <p className="text-sm text-gray-300"><User className="h-4 w-4 inline mr-2 text-gray-500" />{form.name}</p>
             <p className="text-sm text-white font-bold mt-2">Kwota: {totalPrice} zł</p>
           </div>
@@ -237,21 +272,114 @@ export default function BookingPage() {
                   ))}
                 </div>
               </div>
-              {selectedDate && (
-                <div>
-                  <p className="text-sm text-gray-400 mb-3">Godzina</p>
-                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                    {timeSlots.map(slot => (
-                      <button key={slot.time} type="button"
-                        onClick={() => setSelectedTime(slot.time)}
-                        className={`rounded-xl py-2 text-sm font-medium transition-all ${
-                          selectedTime === slot.time ? 'bg-orange-500 text-white' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
-                        }`}
-                      >
-                        {slot.time}
-                      </button>
-                    ))}
+              {selectedDate && !loadingSlots && (
+                <>
+                  {/* Mode toggle */}
+                  <div className="flex rounded-xl bg-gray-800/50 p-1 gap-1">
+                    <button type="button"
+                      onClick={() => { setBookingMode('windows'); setSelectedTime(''); }}
+                      className={`flex-1 rounded-lg py-2 text-sm font-medium transition-all ${bookingMode === 'windows' ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      Okna czasowe
+                    </button>
+                    <button type="button"
+                      onClick={() => { setBookingMode('slots'); setSelectedWindow(''); }}
+                      className={`flex-1 rounded-lg py-2 text-sm font-medium transition-all ${bookingMode === 'slots' ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      Dokładna godzina
+                    </button>
                   </div>
+
+                  {/* Window mode */}
+                  {bookingMode === 'windows' && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-gray-400">Preferowane okno czasowe</p>
+                      {timeWindows.length > 0 ? timeWindows.map(win => {
+                        const WinIcon = WINDOW_ICONS[win.id] || Clock;
+                        return (
+                          <button key={win.id} type="button"
+                            disabled={!win.available}
+                            onClick={() => setSelectedWindow(win.id)}
+                            className={`w-full flex items-center gap-4 rounded-xl border p-4 text-left transition-all ${
+                              !win.available ? 'border-gray-800 opacity-40 cursor-not-allowed' :
+                              selectedWindow === win.id ? 'border-orange-500 bg-orange-500/10' : 'border-gray-700 bg-gray-800/30 hover:border-gray-600'
+                            }`}
+                          >
+                            <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${
+                              selectedWindow === win.id ? 'bg-orange-500' : 'bg-gray-800'
+                            }`}>
+                              <WinIcon className={`h-6 w-6 ${selectedWindow === win.id ? 'text-white' : 'text-gray-400'}`} />
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-white">{win.label}</p>
+                              <p className="text-xs text-gray-400">{win.start} – {win.end}</p>
+                            </div>
+                            <div className="text-right">
+                              {win.available ? (
+                                <>
+                                  <p className="text-xs text-emerald-400 font-medium">Dostępne</p>
+                                  <p className="text-[10px] text-gray-500">{win.employees_available} pracownik{win.employees_available === 1 ? '' : win.employees_available < 5 ? 'ów' : 'ów'}</p>
+                                </>
+                              ) : (
+                                <p className="text-xs text-red-400">Zajęte</p>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      }) : (
+                        <div className="space-y-3">
+                          {[
+                            { id: 'morning', label: 'Rano', start: '08:00', end: '12:00' },
+                            { id: 'afternoon', label: 'Południe', start: '12:00', end: '16:00' },
+                            { id: 'evening', label: 'Po południu', start: '16:00', end: '20:00' },
+                          ].map(win => {
+                            const WinIcon = WINDOW_ICONS[win.id] || Clock;
+                            return (
+                              <button key={win.id} type="button"
+                                onClick={() => setSelectedWindow(win.id)}
+                                className={`w-full flex items-center gap-4 rounded-xl border p-4 text-left transition-all ${
+                                  selectedWindow === win.id ? 'border-orange-500 bg-orange-500/10' : 'border-gray-700 bg-gray-800/30 hover:border-gray-600'
+                                }`}
+                              >
+                                <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${selectedWindow === win.id ? 'bg-orange-500' : 'bg-gray-800'}`}>
+                                  <WinIcon className={`h-6 w-6 ${selectedWindow === win.id ? 'text-white' : 'text-gray-400'}`} />
+                                </div>
+                                <div className="flex-1">
+                                  <p className="text-sm font-semibold text-white">{win.label}</p>
+                                  <p className="text-xs text-gray-400">{win.start} – {win.end}</p>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Slot mode */}
+                  {bookingMode === 'slots' && (
+                    <div>
+                      <p className="text-sm text-gray-400 mb-3">Godzina</p>
+                      <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                        {timeSlots.filter(s => s.available).map(slot => (
+                          <button key={slot.time} type="button"
+                            onClick={() => setSelectedTime(slot.time)}
+                            className={`rounded-xl py-2 text-sm font-medium transition-all ${
+                              selectedTime === slot.time ? 'bg-orange-500 text-white' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
+                            }`}
+                          >
+                            {slot.time}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+              {selectedDate && loadingSlots && (
+                <div className="flex items-center justify-center py-8">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
+                  <span className="ml-3 text-sm text-gray-400">Sprawdzam dostępność...</span>
                 </div>
               )}
             </motion.div>
@@ -314,7 +442,7 @@ export default function BookingPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-2">
                   <div><p className="text-xs text-gray-500">Data</p><p className="text-sm text-white">{selectedDate}</p></div>
-                  <div><p className="text-xs text-gray-500">Godzina</p><p className="text-sm text-white">{selectedTime}</p></div>
+                  <div><p className="text-xs text-gray-500">Godzina</p><p className="text-sm text-white">{displayTime}</p></div>
                   <div><p className="text-xs text-gray-500">Klient</p><p className="text-sm text-white">{form.name}</p></div>
                   <div><p className="text-xs text-gray-500">Telefon</p><p className="text-sm text-white">{form.phone}</p></div>
                 </div>
