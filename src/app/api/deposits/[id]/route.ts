@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 
 /** PATCH /api/deposits/[id] — update status or details */
-export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = getAdminClient();
+  const { id } = await params;
   try {
     const body = await request.json();
     const { status, storage_location, notes, picked_up_date, expected_pickup, storage_price } = body;
@@ -19,7 +20,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     const { data, error } = await supabase
       .from('tire_deposits')
       .update(update)
-      .eq('id', params.id)
+      .eq('id', id)
       .select('*, client:clients(name, phone)')
       .single();
 
@@ -31,9 +32,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 }
 
 /** DELETE /api/deposits/[id] */
-export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = getAdminClient();
-  const { error } = await supabase.from('tire_deposits').delete().eq('id', params.id);
+  const { id } = await params;
+  const { error } = await supabase.from('tire_deposits').delete().eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   return NextResponse.json({ success: true });
 }
