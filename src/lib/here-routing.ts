@@ -171,13 +171,12 @@ export async function buildRoutePolyline(
 }
 
 /**
- * geoScore based on real road distance (replaces Haversine-based version in geo.ts).
+ * geoScore based on real road distance — skala ogólnopolska.
+ *
+ * Używa ciągłej formuły: każde 10km = -1 pkt (max 25, min 0).
+ * Dzięki temu Łódź→Warszawa (120km) = 13 pkt > Poznań→Warszawa (300km) = 0 pkt.
+ * Przy starych progach (<35km = 0) obydwa miasta dostawały 0 i wygrywał region.
  */
 export function geoScoreFromKm(distKm: number): number {
-  if (distKm < 4)  return 25;
-  if (distKm < 9)  return 20;
-  if (distKm < 15) return 15;
-  if (distKm < 25) return 10;
-  if (distKm < 40) return 5;
-  return 0;
+  return Math.max(0, Math.round(25 - distKm / 10));
 }

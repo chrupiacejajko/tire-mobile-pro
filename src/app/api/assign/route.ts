@@ -140,8 +140,11 @@ export async function POST(request: NextRequest) {
       for (const emp of employees) {
         let score = 0;
 
-        // ── Region match (+10) ────────────────────────────────────────
-        if (order.region_id && emp.region_id === order.region_id) score += 10;
+        // ── Region match (+5, tiebreaker only) ───────────────────────
+        // Mały bonus — dystans GPS ma zawsze wiekszy priorytet niz region.
+        // Przy starej wartosci +10 bus z Poznania wygrywał z busem z Łodzi
+        // o zlecenie z Warszawy, bo obydwa miały 0 pkt geo (progi były za małe).
+        if (order.region_id && emp.region_id === order.region_id) score += 5;
 
         // ── Geo scoring: real road distance from GPS to order ─────────
         if (orderLat !== null && orderLng !== null) {
