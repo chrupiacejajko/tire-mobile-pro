@@ -14,7 +14,7 @@ interface TopbarProps {
 
 export function Topbar({ title, subtitle, icon, actions }: TopbarProps) {
   return (
-    <header className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
+    <header className="flex items-center justify-between border-b border-gray-100 bg-white px-4 pl-16 lg:pl-6 py-4">
       <div className="flex items-center gap-3">
         {icon && (
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">

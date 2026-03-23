@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
@@ -10,6 +10,18 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "RouteTire - Panel Zarządzania",
   description: "System zarządzania wulkanizacją mobilną",
+  icons: {
+    icon: [{ url: '/logo.png' }],
+    apple: [{ url: '/logo.png' }],
+    shortcut: [{ url: '/logo.png' }],
+  },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: '#f97316',
 };
 
 export default function RootLayout({

@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { Sidebar } from '@/components/layout/sidebar';
+import { MobileNav } from '@/components/layout/mobile-nav';
 
 export default function DashboardLayout({
   children,
@@ -26,9 +27,10 @@ export default function DashboardLayout({
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto bg-gray-50">
+      <main className="flex-1 overflow-y-auto bg-gray-50 pb-20 lg:pb-0">
         {children}
       </main>
+      <MobileNav />
     </div>
   );
 }

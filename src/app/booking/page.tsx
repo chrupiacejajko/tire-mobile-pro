@@ -270,20 +270,43 @@ export default function BookingPage() {
           <p className="text-gray-400 mb-6 text-sm">
             Potwierdzimy termin telefonicznie. Przygotuj pojazd i będziemy u Ciebie punktualnie.
           </p>
-          <div className="rounded-xl bg-gray-800/50 p-4 text-left space-y-2.5 mb-6">
-            <p className="text-sm text-gray-300"><Calendar className="h-4 w-4 inline mr-2 text-gray-500" />{selectedDate}</p>
-            {displayWindow && <p className="text-sm text-gray-300"><Clock className="h-4 w-4 inline mr-2 text-gray-500" />{displayWindow.label}: {displayWindow.start}–{displayWindow.end}</p>}
-            <p className="text-sm text-gray-300"><MapPin className="h-4 w-4 inline mr-2 text-gray-500" />{address}, {city}</p>
-            <p className="text-sm text-gray-300"><User className="h-4 w-4 inline mr-2 text-gray-500" />{form.name} · {form.phone}</p>
-            <div className="border-t border-gray-700 pt-2 mt-2">
+          <motion.div
+            className="rounded-xl bg-gray-800/50 p-4 text-left space-y-2.5 mb-6"
+            initial="hidden"
+            animate="visible"
+            variants={{ visible: { transition: { staggerChildren: 0.08 } } }}
+          >
+            {[
+              <><Calendar className="h-4 w-4 inline mr-2 text-gray-500" />{selectedDate}</>,
+              displayWindow ? <><Clock className="h-4 w-4 inline mr-2 text-gray-500" />{displayWindow.label}: {displayWindow.start}–{displayWindow.end}</> : null,
+              <><MapPin className="h-4 w-4 inline mr-2 text-gray-500" />{address}, {city}</>,
+              <><User className="h-4 w-4 inline mr-2 text-gray-500" />{form.name} · {form.phone}</>,
+            ].filter(Boolean).map((content, i) => (
+              <motion.p
+                key={i}
+                className="text-sm text-gray-300"
+                variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
+              >
+                {content}
+              </motion.p>
+            ))}
+            <motion.div
+              className="border-t border-gray-700 pt-2 mt-2"
+              variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
+            >
               {vehicles.filter(v => v.serviceIds.length > 0).map((v, i) => (
                 <p key={i} className="text-xs text-gray-400">
                   <Car className="h-3 w-3 inline mr-1" />{v.label}: {v.serviceIds.map(id => services.find(s => s.id === id)?.name).filter(Boolean).join(', ')}
                 </p>
               ))}
-            </div>
-            <p className="text-base font-bold text-orange-400 pt-1">Łącznie: {totalPrice} zł</p>
-          </div>
+            </motion.div>
+            <motion.p
+              className="text-base font-bold text-orange-400 pt-1"
+              variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
+            >
+              Łącznie: {totalPrice} zł
+            </motion.p>
+          </motion.div>
           <p className="text-xs text-gray-600">Nr zlecenia: {orderId?.slice(0, 8).toUpperCase()}</p>
         </motion.div>
       </div>
@@ -299,7 +322,7 @@ export default function BookingPage() {
           <img src="/logo-full.png" alt="RouteTire" className="h-9 w-9 object-contain rounded-xl" />
           <div>
             <h1 className="text-base font-bold text-white leading-tight">Route<span className="text-orange-500">Tire</span></h1>
-            <p className="text-[11px] text-gray-500">Rezerwacja online</p>
+            <p className="text-[11px] text-gray-500">⭐ 4.9 · Ponad 2 000 rezerwacji</p>
           </div>
           {totalPrice > 0 && (
             <div className="ml-auto text-right">
@@ -308,6 +331,16 @@ export default function BookingPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-1 bg-gray-800/50">
+        <motion.div
+          className="h-full bg-gradient-to-r from-orange-500 to-orange-400"
+          initial={{ width: 0 }}
+          animate={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
+          transition={{ duration: 0.4, ease: 'easeOut' }}
+        />
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6">
@@ -597,7 +630,11 @@ export default function BookingPage() {
                             <div className="text-right shrink-0">
                               {win.available ? (
                                 <>
-                                  <p className="text-xs text-emerald-400 font-medium">Dostępne</p>
+                                  {win.employees_available === 1 ? (
+                                    <p className="text-xs text-red-400 font-semibold">Ostatnie miejsce!</p>
+                                  ) : (
+                                    <p className="text-xs text-emerald-400 font-medium">Dostępne</p>
+                                  )}
                                   <p className="text-[10px] text-gray-500">{win.employees_available} pracownik{win.employees_available === 1 ? '' : 'ów'}</p>
                                 </>
                               ) : (
@@ -714,7 +751,7 @@ export default function BookingPage() {
                 <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4">
                   <div className="flex items-center gap-2 mb-3">
                     <ShoppingBag className="h-4 w-4 text-yellow-400" />
-                    <p className="text-sm font-semibold text-yellow-400">Chcesz dodać jeszcze coś?</p>
+                    <p className="text-sm font-semibold text-yellow-400">Nie przegap — większość klientów dodaje:</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {upsells.map(svc => (
@@ -757,7 +794,7 @@ export default function BookingPage() {
               disabled={submitting}
               className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg transition-all hover:from-emerald-600 hover:to-emerald-700 active:scale-95 disabled:opacity-50"
             >
-              {submitting ? <><Loader2 className="h-4 w-4 animate-spin" /> Rezerwuję...</> : <><Check className="h-4 w-4" /> Zarezerwuj</>}
+              {submitting ? <><Loader2 className="h-4 w-4 animate-spin" /> Rezerwuję...</> : <><Check className="h-4 w-4" /> Zarezerwuj bezpłatnie</>}
             </button>
           )}
         </div>
