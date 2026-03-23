@@ -397,7 +397,27 @@ export default function OrdersPage() {
           <DialogHeader><DialogTitle>Nowe zlecenie</DialogTitle></DialogHeader>
           <form onSubmit={handleCreateOrder} className="space-y-4">
             <div className="space-y-2">
-              <Label>Klient</Label>
+              <div className="flex items-center justify-between">
+                <Label>Klient</Label>
+                <button type="button" className="text-xs text-blue-500 hover:text-blue-600 font-medium"
+                  onClick={() => {
+                    const name = prompt('Imię i nazwisko / Firma:');
+                    const phone = prompt('Telefon:');
+                    const address = prompt('Adres:');
+                    const city = prompt('Miasto:');
+                    if (name && phone && address && city) {
+                      supabase.from('clients').insert({ name, phone, address, city, vehicles: [] }).select('id').single()
+                        .then(({ data: newClient }) => {
+                          if (newClient) {
+                            setClients([...clients, { id: newClient.id, name, phone, address, city } as any]);
+                            setForm({ ...form, client_id: newClient.id, address: `${address}, ${city}` });
+                          }
+                        });
+                    }
+                  }}>
+                  + Nowy klient
+                </button>
+              </div>
               <Select value={form.client_id} onValueChange={v => {
                 const client = clients.find(c => c.id === v);
                 setForm({ ...form, client_id: v ?? '', address: client ? `${client.address}, ${client.city}` : '' });
