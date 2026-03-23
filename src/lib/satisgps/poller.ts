@@ -160,7 +160,72 @@ async function relogin(): Promise<string | null> {
 }
 
 /**
+ * Extract JSON state from Satis GPS HTML page source.
+ * Vehicle markers are embedded directly in the initial GET response HTML.
+ */
+function extractStateFromHtml(html: string): any | null {
+  // The map state JSON is embedded in the HTML as part of a larger JS/state object
+  // Look for the JSON blob containing both "Markers" and "CurrentZoom"
+  const patterns = [
+    /(\{"id":[^{]*"Markers"\s*:\s*\[[\s\S]*?"CurrentZoom"\s*:\s*\d+[\s\S]*?\})\s*(?:,|\}|<)/,
+    /(\{[^{]*"Markers"\s*:\s*\[[\s\S]{10,}?"CurrentZoom"[\s\S]*?\})\s*(?:",|<\/)/,
+    /"State"\s*:\s*(\{[^{}]*"Markers"\s*:\s*\[[\s\S]*?\})\s*(?:,|\})/,
+  ];
+
+  for (const pattern of patterns) {
+    const m = html.match(pattern);
+    if (m?.[1]) {
+      try {
+        // Unescape unicode escapes from HTML encoding
+        const unescaped = m[1].replace(/\\u([0-9a-fA-F]{4})/g, (_, h) =>
+          String.fromCharCode(parseInt(h, 16))
+        );
+        const parsed = JSON.parse(unescaped);
+        if (parsed?.Markers?.length > 0) return parsed;
+      } catch {}
+    }
+  }
+
+  // Broader search: find any JSON fragment with Markers array
+  const markerIdx = html.indexOf('"Markers":[{');
+  if (markerIdx > 0) {
+    // Walk back to find the opening brace of the containing object
+    let start = markerIdx;
+    let depth = 0;
+    for (let i = markerIdx; i >= 0; i--) {
+      if (html[i] === '}') depth++;
+      if (html[i] === '{') {
+        if (depth === 0) { start = i; break; }
+        depth--;
+      }
+    }
+    // Walk forward to find matching closing brace
+    let end = markerIdx;
+    depth = 0;
+    for (let i = start; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      if (html[i] === '}') {
+        depth--;
+        if (depth === 0) { end = i + 1; break; }
+      }
+    }
+    try {
+      const fragment = html.slice(start, end);
+      const unescaped = fragment.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) =>
+        String.fromCharCode(parseInt(h, 16))
+      );
+      const parsed = JSON.parse(unescaped);
+      if (parsed?.Markers?.length > 0) return parsed;
+    } catch {}
+  }
+
+  return null;
+}
+
+/**
  * Main polling function — fetches all vehicle positions from Satis GPS
+ * Primary method: GET page HTML (vehicle markers are embedded in initial page load)
+ * Fallback: POST with various page state keys
  */
 export async function pollSatisGPS(retryOnExpiry = true): Promise<PollResult> {
   const cookie = process.env.SATISGPS_COOKIE;
@@ -169,45 +234,64 @@ export async function pollSatisGPS(retryOnExpiry = true): Promise<PollResult> {
     return { ok: false, vehicles: [], error: 'SATISGPS_COOKIE env var not set. Skopiuj cookie z DevTools.' };
   }
 
-  // Detect current page state key dynamically (changes per session: S2, S7, S9, S12...)
-  const pageStateKey = await detectPageStateKey(cookie);
-
-  const HEADERS = {
-    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+  const BASE_HEADERS = {
     'cookie': cookie,
-    'accept': '*/*',
-    'accept-language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7',
-    'origin': 'https://satisgps.com',
-    'referer': BASE_URL,
     'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-origin',
-    'priority': 'u=1, i',
+    'accept-language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7',
+    'referer': BASE_URL,
   };
 
-  // Try !!internalTick first (what the browser actually sends for periodic refresh)
-  const tickBody = buildTickBody(pageStateKey);
-  const body = buildRefreshBody(pageStateKey);
-
   try {
-    // First attempt: !!internalTick (browser's native periodic refresh)
-    const tickRes = await fetch(BASE_URL, { method: 'POST', headers: HEADERS, body: tickBody });
-    if (tickRes.ok && !tickRes.redirected) {
-      const tickText = await tickRes.text();
-      let tickJson: any = null;
-      try { tickJson = JSON.parse(tickText); } catch {}
-      if (tickJson) {
-        const tickState = extractMapState(tickJson);
-        if (tickState) {
-          const vehicles = parseMapState(tickState);
-          if (vehicles.length > 0) {
-            console.log(`[SatisGPS] ✓ internalTick got ${vehicles.length} vehicles (key=${pageStateKey})`);
-            return { ok: true, vehicles, raw: tickState };
-          }
+    // PRIMARY METHOD: GET the page — vehicle markers are in the initial HTML
+    const getRes = await fetch(BASE_URL, {
+      headers: { ...BASE_HEADERS, 'accept': 'text/html,application/xhtml+xml' },
+    });
+
+    if (getRes.status === 302 || getRes.redirected) {
+      if (retryOnExpiry) {
+        console.log('[SatisGPS] Session expired, attempting re-login...');
+        const newCookie = await relogin();
+        if (newCookie) {
+          process.env.SATISGPS_COOKIE = newCookie;
+          return pollSatisGPS(false);
         }
       }
+      return {
+        ok: false, vehicles: [], sessionExpired: true, statusCode: 302,
+        error: 'Sesja Satis GPS wygasła. Zaktualizuj SATISGPS_COOKIE w Railway.',
+      };
     }
+
+    if (getRes.ok) {
+      const html = await getRes.text();
+      const mapState = extractStateFromHtml(html);
+      if (mapState) {
+        const vehicles = parseMapState(mapState);
+        if (vehicles.length > 0) {
+          console.log(`[SatisGPS] ✓ GET HTML got ${vehicles.length} vehicles`);
+          return { ok: true, vehicles, raw: mapState };
+        }
+      }
+      // If no vehicles found in HTML, they may all be offline — return empty ok
+      if (html.includes('__PAGESTATE_KEY')) {
+        console.log('[SatisGPS] GET OK but no active vehicles in HTML (all offline?)');
+        return { ok: true, vehicles: [] };
+      }
+    }
+
+    // FALLBACK: POST with dynamic page state key detection
+    const pageStateKey = await detectPageStateKey(cookie);
+    const HEADERS = {
+      'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'accept': '*/*',
+      'origin': 'https://satisgps.com',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'priority': 'u=1, i',
+      ...BASE_HEADERS,
+    };
+    const body = buildRefreshBody(pageStateKey);
 
     // Second attempt: !!internalrefresh (our original method)
     const res = await fetch(BASE_URL, {
