@@ -34,6 +34,43 @@ export interface PollResult {
 }
 
 /**
+ * Detect the current __PAGESTATE_KEY by GETting the tracking page HTML.
+ * Satis GPS changes this key per session (S2, S7, S9, S12, etc.)
+ */
+async function detectPageStateKey(cookie: string): Promise<string> {
+  try {
+    const res = await fetch(BASE_URL, {
+      headers: {
+        'cookie': cookie,
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+        'accept': 'text/html,application/xhtml+xml',
+      },
+    });
+    const html = await res.text();
+    // Look for hidden input: <input type="hidden" name="__PAGESTATE_KEY" value="S9" />
+    const match = html.match(/__PAGESTATE_KEY['":\s]+([A-Z]\d+)/);
+    if (match) {
+      console.log(`[SatisGPS] Detected page state key: ${match[1]}`);
+      return match[1];
+    }
+  } catch {
+    // fall through to default
+  }
+  return 'S2';
+}
+
+/**
+ * Build POST body using !!internalTick on masterTimer (what browser actually sends for periodic refresh)
+ */
+function buildTickBody(pageStateKey: string): string {
+  const ajaxEventParams = JSON.stringify({
+    controlID: '_0.masterTimer',
+    eventName: '!!internalTick',
+  });
+  return `__PAGESTATE_KEY=${pageStateKey}&ajaxEventParams=${encodeURIComponent(ajaxEventParams)}&_=`;
+}
+
+/**
  * Build the exact POST body used by Satis GPS panel for map refresh
  * Reverse-engineered from: __PAGESTATE_KEY=S2&ajaxEventParams={...}!!internalrefresh
  */
@@ -132,24 +169,50 @@ export async function pollSatisGPS(retryOnExpiry = true): Promise<PollResult> {
     return { ok: false, vehicles: [], error: 'SATISGPS_COOKIE env var not set. Skopiuj cookie z DevTools.' };
   }
 
-  const body = buildRefreshBody('S2');
+  // Detect current page state key dynamically (changes per session: S2, S7, S9, S12...)
+  const pageStateKey = await detectPageStateKey(cookie);
+
+  const HEADERS = {
+    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+    'cookie': cookie,
+    'accept': '*/*',
+    'accept-language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7',
+    'origin': 'https://satisgps.com',
+    'referer': BASE_URL,
+    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-origin',
+    'priority': 'u=1, i',
+  };
+
+  // Try !!internalTick first (what the browser actually sends for periodic refresh)
+  const tickBody = buildTickBody(pageStateKey);
+  const body = buildRefreshBody(pageStateKey);
 
   try {
+    // First attempt: !!internalTick (browser's native periodic refresh)
+    const tickRes = await fetch(BASE_URL, { method: 'POST', headers: HEADERS, body: tickBody });
+    if (tickRes.ok && !tickRes.redirected) {
+      const tickText = await tickRes.text();
+      let tickJson: any = null;
+      try { tickJson = JSON.parse(tickText); } catch {}
+      if (tickJson) {
+        const tickState = extractMapState(tickJson);
+        if (tickState) {
+          const vehicles = parseMapState(tickState);
+          if (vehicles.length > 0) {
+            console.log(`[SatisGPS] ✓ internalTick got ${vehicles.length} vehicles (key=${pageStateKey})`);
+            return { ok: true, vehicles, raw: tickState };
+          }
+        }
+      }
+    }
+
+    // Second attempt: !!internalrefresh (our original method)
     const res = await fetch(BASE_URL, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'cookie': cookie,
-        'accept': '*/*',
-        'accept-language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7',
-        'origin': 'https://satisgps.com',
-        'referer': BASE_URL,
-        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-origin',
-        'priority': 'u=1, i',
-      },
+      headers: HEADERS,
       body,
     });
 
@@ -214,30 +277,26 @@ export async function pollSatisGPS(retryOnExpiry = true): Promise<PollResult> {
 
     const mapState = extractMapState(json);
     if (!mapState) {
-      // Response OK but no map state — might be a different page state key
-      // Try with S7
+      // Response OK but no map state — try other page state keys as fallback
       if (retryOnExpiry) {
-        const body7 = buildRefreshBody('S7');
-        const res7 = await fetch(BASE_URL, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'cookie': cookie,
-            'accept': '*/*',
-            'origin': 'https://satisgps.com',
-            'referer': BASE_URL,
-            'user-agent': 'Mozilla/5.0',
-          },
-          body: body7,
-        });
-        const text7 = await res7.text();
-        let json7: any = null;
-        try { json7 = JSON.parse(text7); } catch {}
-        if (json7) {
-          const state7 = extractMapState(json7);
-          if (state7) {
-            return { ok: true, vehicles: parseMapState(state7), raw: json7 };
-          }
+        const fallbackKeys = ['S1','S3','S4','S5','S6','S7','S8','S9','S10','S11','S12','S15','S20']
+          .filter(k => k !== pageStateKey);
+        for (const key of fallbackKeys) {
+          const fb = buildRefreshBody(key);
+          try {
+            const r = await fetch(BASE_URL, { method: 'POST', headers: HEADERS, body: fb });
+            if (!r.ok) continue;
+            const t = await r.text();
+            let j: any = null;
+            try { j = JSON.parse(t); } catch {}
+            if (j) {
+              const s = extractMapState(j);
+              if (s) {
+                console.log(`[SatisGPS] ✓ Found map state with fallback key ${key}`);
+                return { ok: true, vehicles: parseMapState(s), raw: j };
+              }
+            }
+          } catch {}
         }
       }
 
