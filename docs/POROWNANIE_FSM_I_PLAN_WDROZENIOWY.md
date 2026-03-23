@@ -8,39 +8,56 @@
 
 ### Tabela funkcji
 
-| Funkcja | RouteTire (obecny stan) | GeoTask (Globema) | Comarch FSM | Synchroteam | IBPM FSM |
-|---|---|---|---|---|---|
-| **Optymalizacja tras** | ❌ Brak geo-optymalizacji | ✅ Google Maps, AI | ✅ AI + lokalizacja | ✅ GPS routing | ✅ Algorytmy optymalizacji |
-| **Mapa live dyspozytora** | ✅ Leaflet + GPS | ✅ Google Maps | ✅ Real-time | ✅ GPS tracking | ✅ Real-time |
-| **Okna czasowe (np. 8-12)** | ❌ Sloty 30-min | ✅ Okna czasowe | ✅ SLA windows | ✅ Time windows | ✅ Okna |
-| **Priorytety zleceń** | ✅ 4 poziomy | ✅ Priorytety | ✅ SLA + priorytety | ✅ Priorytety | ✅ VIP/priorytety |
-| **Auto-przydzielanie** | ⚠️ Region + balans | ✅ Smart assign | ✅ AI matching | ✅ Auto-dispatch | ✅ Auto-assign |
-| **Aplikacja mobilna** | ⚠️ Web responsive | ✅ Native iOS/Android | ✅ Native + offline | ✅ Native | ✅ Native |
-| **Rezerwacja online** | ✅ 4-krokowy wizard | ❌ Brak | ❌ Portal klienta | ⚠️ Basic | ❌ Brak |
-| **Multi-auto booking** | ❌ Jedno auto | ❌ N/A | ❌ N/A | ❌ N/A | ❌ N/A |
-| **Upselling** | ❌ Brak | ❌ Brak | ❌ Brak | ❌ Brak | ❌ Brak |
-| **Depozyty opon** | ⚠️ Tylko jako usługa | ❌ Brak (ogólny FSM) | ❌ Brak | ❌ Brak | ❌ Brak |
-| **Czas pracy** | ⚠️ Tylko GPS | ✅ Czas na zadaniu | ✅ Raporty + SLA | ✅ Time tracking | ✅ Raporty |
-| **Rotacja pojazdów** | ✅ Vehicle assignments | ⚠️ Basic fleet | ✅ Fleet mgmt | ⚠️ Basic | ⚠️ Basic |
-| **SMS/Email** | ✅ Templates ready | ✅ Powiadomienia | ✅ Omnichannel | ✅ SMS | ✅ Email |
-| **Raporty/analityka** | ✅ KPI + CSV | ✅ BI analytics | ✅ Zaawansowane BI | ✅ Reports | ✅ Reports |
-| **Tryb offline** | ❌ Brak | ✅ Offline mode | ✅ Full offline | ✅ Offline | ⚠️ Partial |
-| **Magazyn/inwentarz** | ✅ Pełny CRUD | ⚠️ Basic | ✅ Integracja ERP | ⚠️ Parts tracking | ⚠️ Basic |
-| **Branżowe (wulkanizacja)** | ✅ Dedykowane | ❌ Ogólny FSM | ❌ Ogólny FSM | ❌ Ogólny FSM | ❌ Ogólny FSM |
+| Funkcja | RouteTire (obecny) | GeoTask | Comarch FSM | Synchroteam | Fieldcode | Frontu |
+|---|---|---|---|---|---|---|
+| **Optymalizacja tras** | ❌ Brak geo | ✅ Google Maps AI | ✅ AI + geo | ✅ Tylko Premium | ✅ W cenie (25€) | ⚠️ Basic |
+| **Mapa live dyspozytora** | ✅ Leaflet+GPS | ✅ Google Maps | ✅ Real-time | ✅ GPS tracking | ✅ Live map | ✅ GPS |
+| **Okna czasowe (8-12)** | ❌ Sloty 30-min | ✅ Okna czasowe | ✅ SLA windows | ✅ Time windows | ✅ Windows | ⚠️ Basic |
+| **Priorytety zleceń** | ✅ 4 poziomy | ✅ Priorytety | ✅ SLA + priorytety | ✅ Priorytety | ✅ Auto-prioritize | ✅ |
+| **Auto-przydzielanie** | ⚠️ Region+balans | ✅ Smart assign (3 tryby) | ✅ AI matching | ✅ Auto-dispatch | ✅ Zero-Touch | ⚠️ Manual |
+| **Aplikacja mobilna** | ⚠️ Web responsive | ✅ Native iOS/Android | ✅ Native+offline | ✅ Native+offline | ✅ Native | ✅ Native |
+| **Rezerwacja online** | ✅ 4-krok wizard | ❌ Brak | ❌ Portal klienta | ❌ Brak | ✅ Customer portal | ❌ Brak |
+| **Multi-auto booking** | ❌ Jedno auto | ❌ N/A | ❌ N/A | ❌ N/A | ❌ N/A | ❌ N/A |
+| **Upselling** | ❌ Brak | ❌ Brak | ❌ Brak | ❌ Brak | ❌ Brak | ❌ Brak |
+| **Depozyty opon** | ⚠️ Tylko usługa | ❌ Brak | ❌ Brak | ❌ Brak | ❌ Brak | ❌ Brak |
+| **Czas pracy** | ⚠️ Tylko GPS | ✅ Czas na zadaniu | ✅ Raporty+SLA | ✅ Timesheets | ✅ Time tracking | ❌ Brak |
+| **Rotacja pojazdów** | ✅ Vehicle assign | ⚠️ Basic fleet | ✅ Fleet mgmt | ⚠️ Basic | ⚠️ Basic | ⚠️ Basic |
+| **SMS/Email** | ✅ Templates | ✅ Powiadomienia | ✅ Omnichannel | ✅ SMS | ✅ Multi-channel | ✅ |
+| **Raporty/analityka** | ✅ KPI + CSV | ✅ BI analytics | ✅ Zaawansowane BI | ✅ Reports | ✅ BI+forecasting | ✅ Reports |
+| **Tryb offline** | ❌ Brak | ✅ Offline mode | ✅ Full offline | ✅ Offline | ✅ Offline | ✅ Offline |
+| **Fakturowanie** | ❌ Brak | ❌ Brak | ✅ Integracja ERP | ✅ Wbudowane | ❌ Brak | ❌ Brak |
+| **Magazyn/inwentarz** | ✅ Pełny CRUD | ⚠️ Sprzęt | ✅ ERP | ✅ Parts tracking | ❌ Brak | ⚠️ Basic |
+| **Voice AI** | ❌ Brak | ✅ AI voice input | ❌ Brak | ❌ Brak | ✅ Voice AI agent | ❌ Brak |
+| **Branżowe (wulkan.)** | ✅ Dedykowane | ❌ Ogólny FSM | ❌ Ogólny FSM | ❌ Ogólny FSM | ❌ Ogólny FSM | ❌ Ogólny |
+| **Polski język/support** | ✅ PL | ✅ PL (Globema) | ✅ PL (Comarch) | ❌ EN/FR | ❌ EN/DE | ⚠️ Partial |
 
 ### Porównanie kosztów
 
 | Rozwiązanie | Koszt miesięczny | Model |
 |---|---|---|
-| **RouteTire** | ~30 USD (~120 PLN) | Supabase 25$ + Railway ~5$ |
-| **GeoTask** | Wycena indywidualna (est. 1000-5000+ PLN/mies.) | Per-user, wdrożenie od 15+ pojazdów |
-| **Comarch FSM** | Wycena indywidualna (est. 3000-10000+ PLN/mies.) | Enterprise, wdrożenie + subskrypcja |
-| **Synchroteam** | ~22-64 USD/user/mies. (~100-280 PLN/user) | Per-user SaaS |
-| **Fieldworker** | ~29 USD/user/mies. (~125 PLN/user) | Per-user SaaS |
-| **Konkurencja z rozmowy** | ~2000 PLN/mies. netto (3000 pierwotnie) | Dedykowany development |
+| **RouteTire** | ~30 USD (~120 PLN) | Supabase 25$ + Railway ~5$ | Flat, bez limitu userów |
+| **GeoTask** | Wycena indywidualna (est. 2000-5000+ PLN) | SaaS lub on-premise | Od 15+ pojazdów, płatny trial |
+| **Comarch FSM** | ~50 USD/user/mies. (est. 3000-10000+ PLN) | Enterprise subskrypcja | Wdrożenie + utrzymanie |
+| **Synchroteam** | Standard: 39 USD/user, Premium: 64 USD/user | Per-user SaaS | Route optim. tylko w Premium! |
+| **Fieldcode** | **25 EUR/user/mies.** (route optim. w cenie!) | Per-user SaaS | 90-dni free trial, najlepszy value |
+| **Frontu** | ~20 EUR/mies. (darmowa wersja dostępna!) | Flat/per-user | Najtańszy, ale basic |
+| **Booksy** | 29.99 USD/mies. + 20$/dodatkowy member | Flat + per-member | Tylko booking, nie FSM |
+| **Konkurencja z rozmowy** | ~2000 PLN netto (pierwotnie 3000) | Dedykowany dev | Custom development |
 
-> Przy 5 pracownikach: Synchroteam = 500-1400 PLN/mies., GeoTask = est. 2000+ PLN/mies.
-> RouteTire = stała opłata ~120 PLN/mies. niezależnie od liczby użytkowników.
+### Kalkulacja kosztów przy 5 pracownikach:
+
+| Rozwiązanie | Koszt/mies. (5 userów) | Roczny koszt |
+|---|---|---|
+| **RouteTire** | **~120 PLN** | **~1 440 PLN** |
+| Frontu | ~100 EUR (~440 PLN) | ~5 280 PLN |
+| Fieldcode | 125 EUR (~550 PLN) | ~6 600 PLN |
+| Booksy (samo booking) | ~180 USD (~780 PLN) | ~9 360 PLN |
+| Synchroteam Standard | 195 USD (~850 PLN) | ~10 200 PLN |
+| Synchroteam Premium | 320 USD (~1 400 PLN) | ~16 800 PLN |
+| GeoTask | est. 2000-5000 PLN | est. 24 000-60 000 PLN |
+| Comarch FSM | est. 3000-10000 PLN | est. 36 000-120 000 PLN |
+
+> RouteTire jest **4-100x tańszy** od konkurencji przy 5 pracownikach.
 
 ### Przewagi RouteTire
 
@@ -299,16 +316,45 @@ Fazy 1, 3 i 5 mogą startować równolegle (niezależne od siebie).
 
 ---
 
-## 5. ŹRÓDŁA
+## 5. KLUCZOWE WNIOSKI DLA ROZMOWY Z KLIENTEM
+
+### Argumenty sprzedażowe RouteTire vs GeoTask:
+1. **Cena**: 120 PLN/mies. vs est. 2000+ PLN/mies. - oszczędność ~24 000 PLN/rok
+2. **Rezerwacja online**: GeoTask tego NIE ma - musieliby dalej używać Booksy osobno
+3. **Depozyty opon**: Żaden FSM na rynku tego nie oferuje - to unikalna przewaga
+4. **Upselling**: Automatyczne proponowanie dodatkowych usług - brak w jakimkolwiek FSM
+5. **Brak vendor lock-in**: Własny kod, pełna kontrola, dane w EU (Supabase)
+
+### Co trzeba szybko dorobić żeby nie stracić klienta:
+1. Optymalizacja tras (Faza 1) - bo to jest powód dla którego patrzy na GeoTask
+2. Widok trasy kierowcy na mapie - "kto jest po drodze"
+3. Okna czasowe - "przyjedziemy między 8 a 12"
+
+### Ryzyko:
+- Bez optymalizacji tras RouteTire to "ładny kalendarz" (cytat klienta: "to tam chuj, nie?")
+- Klient porównuje z GeoTask KONKRETNIE pod kątem optymalizacji
+- "Chłopaki" (konkurencja) robią to za 2000 PLN/mies. - trzeba być lepszym
+
+---
+
+## 6. ŹRÓDŁA
 
 - [GeoTask (Globema)](https://geotask.globema.com/)
+- [GeoTask - rozwiązanie](https://geotask.globema.com/solution/)
+- [GeoTask - web app dyspozytora](https://geotask.globema.com/solution/web-app-for-dispatchers/)
 - [GeoTask FAQ](https://mobilnypracownik.pl/faq-najczestsze-pytania/)
+- [GeoTask na Capterra](https://www.capterra.com/p/251525/GeoTask/)
 - [Comarch FSM](https://www.comarch.pl/field-service-management/)
 - [Comarch FSM Mobile](https://www.comarch.pl/field-service-management/aplikacja-mobilna-comarch-fsm/)
+- [Comarch FSM na SelectHub](https://www.selecthub.com/p/field-service-software/comarch-fsm/)
 - [Synchroteam Pricing](https://www.synchroteam.com/pricing.php)
+- [Fieldcode Pricing](https://fieldcode.com/en/pricing-plans)
+- [Fieldcode Route Planning](https://fieldcode.com/en/features/field-service-route-planning-software)
+- [Frontu (Tasker)](https://frontu.com/)
+- [Booksy Pricing](https://biz.booksy.com/en-us/pricing)
+- [Satis GPS](https://www.satisgps.com/en/)
 - [SAP FSM](https://www.sap.com/poland/products/scm/field-service-management.html)
 - [IBPM FSM](https://fsm.ibpm.pl/)
-- [Fieldworker](https://orbis-software.pl/integracje/fieldworker)
 - [Porównanie 7 FSM (Wello)](https://pl.wello.solutions/7-najlepszych-programow-do-zarzadzania-serwisem-terenowym-fsm-recenzje-ekspertow-i-porownanie/)
-- [GeoTask na Capterra](https://www.capterra.com/p/251525/GeoTask/)
 - [Pirios - 10 powodów FSM](https://pirios.com/blog/10-powodow-dla-ktorych-warto-wybrac-system-fsm/)
+- [PwC - optymalizacja FSM](https://www.pwc.pl/pl/uslugi/customer-technology/field-service-management.html)
