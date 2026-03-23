@@ -38,6 +38,19 @@ interface SmartWindow {
   proximity_hint: string | null;
 }
 
+// ─── HERE Autocomplete types ──────────────────────────────────────────────────
+interface HereSuggestion {
+  id: string;
+  title: string;
+  address: {
+    label?: string;
+    street?: string;
+    houseNumber?: string;
+    city?: string;
+    postalCode?: string;
+  };
+}
+
 // ─── Upsell logic ─────────────────────────────────────────────────────────────
 const UPSELL_MAP: Record<string, string[]> = {
   'wymiana opon':     ['wyważanie', 'worki na opony', 'przechowywanie'],
@@ -109,6 +122,14 @@ export default function BookingPage() {
   const [clientLat, setClientLat] = useState<number | null>(null);
   const [clientLng, setClientLng] = useState<number | null>(null);
 
+  // HERE Autocomplete
+  const [suggestions, setSuggestions] = useState<HereSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [lookingUp, setLookingUp] = useState(false);
+  const coordsFromAutocomplete = useRef(false);
+  const addressRef = useRef<HTMLDivElement>(null);
+  const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Step 2 — date / window
   const [selectedDate, setSelectedDate] = useState('');
   const [smartWindows, setSmartWindows] = useState<SmartWindow[]>([]);
@@ -135,8 +156,50 @@ export default function BookingPage() {
       .then(({ data }) => { if (data) setServices(data as ServiceOption[]); });
   }, []);
 
-  // ── Geocode address when it changes (debounced 800ms) ─────────────────
+  // ── Close autocomplete on click outside ───────────────────────────────
   useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (addressRef.current && !addressRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // ── HERE Autocomplete fetch (debounced 300ms) ──────────────────────────
+  const fetchSuggestions = useCallback((q: string) => {
+    if (suggestTimer.current) clearTimeout(suggestTimer.current);
+    suggestTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/here-autocomplete?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        setSuggestions(data.items ?? []);
+        setShowSuggestions(true);
+      } catch { /* silent */ }
+    }, 300);
+  }, []);
+
+  // ── Select suggestion → lookup coords ─────────────────────────────────
+  const selectSuggestion = useCallback(async (s: HereSuggestion) => {
+    setShowSuggestions(false);
+    setSuggestions([]);
+    const street = [s.address.street, s.address.houseNumber].filter(Boolean).join(' ');
+    coordsFromAutocomplete.current = true;
+    setAddress(street);
+    setCity(s.address.city ?? '');
+    setLookingUp(true);
+    try {
+      const res = await fetch(`/api/here-lookup?id=${encodeURIComponent(s.id)}`);
+      const data = await res.json();
+      if (data.lat && data.lng) { setClientLat(data.lat); setClientLng(data.lng); }
+    } catch { /* silent */ }
+    setLookingUp(false);
+  }, []);
+
+  // ── Geocode address when it changes (debounced 800ms, fallback) ────────
+  useEffect(() => {
+    if (coordsFromAutocomplete.current) { coordsFromAutocomplete.current = false; return; }
     if (geocodeTimer.current) clearTimeout(geocodeTimer.current);
     if (!address || !city) { setClientLat(null); setClientLng(null); return; }
     geocodeTimer.current = setTimeout(async () => {
@@ -495,17 +558,57 @@ export default function BookingPage() {
               </div>
 
               <div className="space-y-3">
-                <div>
+                <div ref={addressRef}>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Ulica i numer *</label>
                   <div className="relative">
-                    <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                    <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500 pointer-events-none" />
                     <input
                       type="text"
                       value={address}
-                      onChange={e => setAddress(e.target.value)}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setAddress(val);
+                        setClientLat(null);
+                        setClientLng(null);
+                        if (val.length >= 3) fetchSuggestions(val);
+                        else { setSuggestions([]); setShowSuggestions(false); }
+                      }}
+                      onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
                       placeholder="ul. Marszałkowska 15"
-                      className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+                      className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 pl-10 pr-10 text-sm text-white placeholder-gray-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+                      autoComplete="off"
                     />
+                    {lookingUp && (
+                      <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-orange-400" />
+                    )}
+
+                    <AnimatePresence>
+                      {showSuggestions && suggestions.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute z-50 w-full mt-1 rounded-xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden"
+                        >
+                          {suggestions.map((s, i) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onMouseDown={e => { e.preventDefault(); selectSuggestion(s); }}
+                              className={`w-full px-4 py-3 text-left hover:bg-gray-800 transition-colors ${i < suggestions.length - 1 ? 'border-b border-gray-800' : ''}`}
+                            >
+                              <p className="text-sm text-white font-medium">
+                                {[s.address.street, s.address.houseNumber].filter(Boolean).join(' ') || s.title}
+                              </p>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                {[s.address.postalCode, s.address.city].filter(Boolean).join(' ')}
+                              </p>
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
 
@@ -516,7 +619,7 @@ export default function BookingPage() {
                     <input
                       type="text"
                       value={city}
-                      onChange={e => setCity(e.target.value)}
+                      onChange={e => { setCity(e.target.value); setClientLat(null); setClientLng(null); }}
                       placeholder="Warszawa"
                       className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
                     />
