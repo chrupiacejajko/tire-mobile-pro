@@ -144,7 +144,19 @@ export default function DashboardPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+  useEffect(() => {
+    fetchDashboard();
+
+    // Realtime — auto-update when any order changes
+    const channel = supabase
+      .channel('dashboard-orders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchDashboard();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [fetchDashboard]);
 
   const maxWeekly = Math.max(...weeklyData.map(d => d.count), 1);
 
@@ -161,7 +173,15 @@ export default function DashboardPage() {
         title="Dashboard"
         subtitle="Witaj z powrotem w RouteTire"
         icon={<LayoutDashboard className="h-5 w-5" />}
-        actions={<Button variant="outline" className="h-9 rounded-xl text-sm gap-2"><Download className="h-4 w-4" /> Eksport</Button>}
+        actions={
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Live
+            </span>
+            <Button variant="outline" className="h-9 rounded-xl text-sm gap-2"><Download className="h-4 w-4" /> Eksport</Button>
+          </div>
+        }
       />
       <div className="p-6 space-y-6">
         {/* Stat Cards */}

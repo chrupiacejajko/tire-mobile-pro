@@ -25,11 +25,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'No unassigned orders', assigned: 0 });
     }
 
-    // Get active employees
+    // Get active employees (with skills for matching)
     const { data: employees } = await supabase
       .from('employees')
       .select('id, region_id, skills, hourly_rate, working_hours')
       .eq('is_active', true);
+
+    // Get required skills per order
+    const orderIdsForSkills = (unassigned || []).map(o => o.id);
+    const { data: ordersWithSkills } = await supabase
+      .from('orders')
+      .select('id, required_skills')
+      .in('id', orderIdsForSkills);
+    const orderSkillsMap = new Map<string, string[]>();
+    for (const o of ordersWithSkills || []) {
+      orderSkillsMap.set(o.id, (o as any).required_skills ?? []);
+    }
 
     if (!employees || employees.length === 0) {
       return NextResponse.json({ error: 'No active employees available' }, { status: 400 });
@@ -139,6 +150,21 @@ export async function POST(request: NextRequest) {
 
       for (const emp of employees) {
         let score = 0;
+
+        // ── Skills matching ───────────────────────────────────────────
+        // +20 pts all skills match, -50 if missing required skill
+        const requiredSkills: string[] = orderSkillsMap.get(order.id) ?? [];
+        const empSkills: string[] = (emp as any).skills ?? [];
+        if (requiredSkills.length > 0) {
+          const hasAll = requiredSkills.every(s => empSkills.includes(s));
+          const hasNone = !requiredSkills.some(s => empSkills.includes(s));
+          if (hasAll) {
+            score += 20;
+          } else if (hasNone) {
+            score -= 50; // heavily discourage assigning without required skills
+          }
+          // partial match — no bonus/penalty
+        }
 
         // ── Region match (+5, tiebreaker only) ───────────────────────
         // Mały bonus — dystans GPS ma zawsze wiekszy priorytet niz region.

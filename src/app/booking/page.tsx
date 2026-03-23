@@ -120,7 +120,7 @@ export default function BookingPage() {
         city: form.city,
         scheduled_date: selectedDate,
         scheduled_time: bookingMode === 'slots' ? selectedTime : (timeWindows.find(w => w.id === selectedWindow)?.start || '08:00'),
-        time_window: bookingMode === 'windows' ? (timeWindows.find(w => w.id === selectedWindow) ? `${timeWindows.find(w => w.id === selectedWindow)!.start}-${timeWindows.find(w => w.id === selectedWindow)!.end}` : null) : null,
+        time_window: bookingMode === 'windows' ? (selectedWindow || null) : null,
         service_names: selectedServiceNames,
         notes: form.notes || `Rezerwacja online: ${form.name}`,
       }),

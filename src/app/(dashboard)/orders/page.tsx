@@ -76,7 +76,7 @@ export default function OrdersPage() {
   const [form, setForm] = useState({
     client_id: '', scheduled_date: '', scheduled_time_start: '08:00',
     scheduled_time_end: '09:00', address: '', priority: 'normal' as OrderPriority,
-    notes: '', service_ids: [] as string[],
+    notes: '', service_ids: [] as string[], required_skills: [] as string[],
   });
 
   const supabase = createClient();
@@ -121,11 +121,12 @@ export default function OrdersPage() {
       services: selectedServices.map(s => ({ service_id: s.id, name: s.name, price: Number(s.price), quantity: 1 })),
       total_price: totalPrice,
       notes: form.notes || null,
+      required_skills: form.required_skills.length > 0 ? form.required_skills : null,
     });
 
     setSaving(false);
     setDialogOpen(false);
-    setForm({ client_id: '', scheduled_date: '', scheduled_time_start: '08:00', scheduled_time_end: '09:00', address: '', priority: 'normal', notes: '', service_ids: [] });
+    setForm({ client_id: '', scheduled_date: '', scheduled_time_start: '08:00', scheduled_time_end: '09:00', address: '', priority: 'normal', notes: '', service_ids: [], required_skills: [] });
     fetchData();
   };
 
@@ -480,6 +481,35 @@ export default function OrdersPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            {/* Required skills */}
+            <div className="space-y-2">
+              <Label>Wymagane umiejętności / sprzęt</Label>
+              <div className="flex flex-wrap gap-2">
+                {['wymiana opon', 'wyważanie', 'naprawa', 'PKW', 'LKW', 'motocykl', 'elektryczny', 'ciężarowy'].map(skill => (
+                  <button
+                    key={skill}
+                    type="button"
+                    onClick={() => {
+                      if (form.required_skills.includes(skill)) {
+                        setForm({ ...form, required_skills: form.required_skills.filter(s => s !== skill) });
+                      } else {
+                        setForm({ ...form, required_skills: [...form.required_skills, skill] });
+                      }
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                      form.required_skills.includes(skill)
+                        ? 'bg-orange-500 text-white border-orange-500'
+                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-orange-300'
+                    }`}
+                  >
+                    {skill}
+                  </button>
+                ))}
+              </div>
+              {form.required_skills.length > 0 && (
+                <p className="text-xs text-orange-600">Auto-assign uwzględni wymagane umiejętności</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Notatki</Label>
