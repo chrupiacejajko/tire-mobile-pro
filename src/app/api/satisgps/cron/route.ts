@@ -70,6 +70,10 @@ export async function GET(request: NextRequest) {
       lat: vehicle.lat,
       lng: vehicle.lng,
       status,
+      speed: vehicle.speed ?? 0,
+      direction: vehicle.direction ?? null,
+      rpm: vehicle.rpm ?? null,
+      driving_time: vehicle.drivingTime ?? null,
       timestamp: new Date().toISOString(),
     });
 
