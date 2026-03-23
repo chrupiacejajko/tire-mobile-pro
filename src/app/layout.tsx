@@ -8,7 +8,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "TireMobilePro - Panel Zarządzania",
+  title: "RouteTire - Panel Zarządzania",
   description: "System zarządzania wulkanizacją mobilną",
 };
 

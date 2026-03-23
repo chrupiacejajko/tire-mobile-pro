@@ -149,11 +149,11 @@ export default function BookingPage() {
       {/* Header */}
       <div className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-xl">
         <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 shadow-lg">
             <Wrench className="h-5 w-5 text-white" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-white">TireMobilePro</h1>
+            <h1 className="text-lg font-bold text-white">RouteTire</h1>
             <p className="text-xs text-gray-400">Rezerwacja online</p>
           </div>
         </div>
@@ -165,12 +165,12 @@ export default function BookingPage() {
           {steps.map((s, i) => (
             <div key={s} className="flex items-center gap-2">
               <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold transition-all ${
-                i <= step ? 'bg-blue-500 text-white' : 'bg-gray-800 text-gray-500'
+                i <= step ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-500'
               }`}>
                 {i < step ? <Check className="h-4 w-4" /> : i + 1}
               </div>
               <span className={`text-sm font-medium hidden sm:block ${i <= step ? 'text-white' : 'text-gray-500'}`}>{s}</span>
-              {i < steps.length - 1 && <div className={`w-8 sm:w-16 h-0.5 ${i < step ? 'bg-blue-500' : 'bg-gray-800'}`} />}
+              {i < steps.length - 1 && <div className={`w-8 sm:w-16 h-0.5 ${i < step ? 'bg-orange-500' : 'bg-gray-800'}`} />}
             </div>
           ))}
         </div>
@@ -183,7 +183,7 @@ export default function BookingPage() {
               {services.map(s => (
                 <label key={s.id}
                   className={`flex items-center gap-4 rounded-xl border p-4 cursor-pointer transition-all ${
-                    selectedServices.includes(s.id) ? 'border-blue-500 bg-blue-500/10' : 'border-gray-800 bg-gray-900/50 hover:border-gray-700'
+                    selectedServices.includes(s.id) ? 'border-orange-500 bg-orange-500/10' : 'border-gray-800 bg-gray-900/50 hover:border-gray-700'
                   }`}
                 >
                   <input type="checkbox" className="hidden" checked={selectedServices.includes(s.id)}
@@ -193,7 +193,7 @@ export default function BookingPage() {
                     }}
                   />
                   <div className={`flex h-5 w-5 items-center justify-center rounded-md border-2 ${
-                    selectedServices.includes(s.id) ? 'bg-blue-500 border-blue-500' : 'border-gray-600'
+                    selectedServices.includes(s.id) ? 'bg-orange-500 border-orange-500' : 'border-gray-600'
                   }`}>
                     {selectedServices.includes(s.id) && <Check className="h-3 w-3 text-white" />}
                   </div>
@@ -227,7 +227,7 @@ export default function BookingPage() {
                     <button key={d.date} type="button"
                       onClick={() => setSelectedDate(d.date)}
                       className={`rounded-xl p-2 text-center transition-all ${
-                        selectedDate === d.date ? 'bg-blue-500 text-white' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
+                        selectedDate === d.date ? 'bg-orange-500 text-white' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
                       }`}
                     >
                       <p className="text-[10px] uppercase">{d.day}</p>
@@ -245,7 +245,7 @@ export default function BookingPage() {
                       <button key={slot.time} type="button"
                         onClick={() => setSelectedTime(slot.time)}
                         className={`rounded-xl py-2 text-sm font-medium transition-all ${
-                          selectedTime === slot.time ? 'bg-blue-500 text-white' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
+                          selectedTime === slot.time ? 'bg-orange-500 text-white' : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800 hover:text-white'
                         }`}
                       >
                         {slot.time}
@@ -276,7 +276,7 @@ export default function BookingPage() {
                       required={field.required}
                       value={(form as Record<string, string>)[field.key]}
                       onChange={e => setForm({ ...form, [field.key]: e.target.value })}
-                      className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                      className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
                     />
                   </div>
                 </div>
@@ -287,7 +287,7 @@ export default function BookingPage() {
                   value={form.notes}
                   onChange={e => setForm({ ...form, notes: e.target.value })}
                   rows={3}
-                  className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 px-4 text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                  className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 px-4 text-sm text-white placeholder-gray-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
                   placeholder="Np. pojazd, rozmiar opon..."
                 />
               </div>
@@ -309,7 +309,7 @@ export default function BookingPage() {
                   ))}
                   <div className="flex justify-between text-sm pt-2 mt-2 border-t border-gray-800 font-bold">
                     <span className="text-white">Razem</span>
-                    <span className="text-blue-400">{totalPrice} zł</span>
+                    <span className="text-orange-400">{totalPrice} zł</span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-2">
@@ -336,7 +336,7 @@ export default function BookingPage() {
             <button
               onClick={() => setStep(step + 1)}
               disabled={!canProceed()}
-              className="flex items-center gap-2 rounded-xl bg-blue-500 px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 rounded-xl bg-orange-500 px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-orange-600 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               Dalej <ChevronRight className="h-4 w-4" />
             </button>

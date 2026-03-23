@@ -159,7 +159,7 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-50/50">
       <Topbar
         title="Dashboard"
-        subtitle="Witaj z powrotem w TireMobilePro"
+        subtitle="Witaj z powrotem w RouteTire"
         icon={<LayoutDashboard className="h-5 w-5" />}
         actions={<Button variant="outline" className="h-9 rounded-xl text-sm gap-2"><Download className="h-4 w-4" /> Eksport</Button>}
       />

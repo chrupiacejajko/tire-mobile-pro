@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
       `https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=1&countrycodes=pl`,
       {
         headers: {
-          'User-Agent': 'TireMobilePro/1.0',
+          'User-Agent': 'RouteTire/1.0',
         },
       }
     );

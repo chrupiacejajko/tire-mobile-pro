@@ -66,11 +66,9 @@ export function Sidebar() {
       {/* Logo */}
       <div className="px-5 py-4 border-b border-gray-100">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 shadow-sm">
-            <Wrench className="h-4.5 w-4.5 text-white" />
-          </div>
+          <img src="/logo.png" alt="RouteTire" className="h-9 w-9 rounded-xl object-contain" />
           <span className="text-[15px] font-bold tracking-tight text-gray-900">
-            TireMobile<span className="text-blue-600">Pro</span>
+            Route<span className="text-orange-500">Tire</span>
           </span>
         </div>
       </div>
@@ -110,7 +108,7 @@ export function Sidebar() {
                   className={cn(
                     'flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors relative',
                     isActive
-                      ? 'text-blue-700'
+                      ? 'text-orange-700'
                       : 'text-gray-600 hover:text-gray-900'
                   )}
                   whileHover={{ x: 2 }}
@@ -118,12 +116,12 @@ export function Sidebar() {
                 >
                   {isActive && (
                     <motion.div
-                      className="absolute inset-0 rounded-xl bg-blue-50"
+                      className="absolute inset-0 rounded-xl bg-orange-50"
                       layoutId="activeNav"
                       transition={{ type: 'spring', stiffness: 350, damping: 30 }}
                     />
                   )}
-                  <item.icon className={cn('h-[18px] w-[18px] relative z-10', isActive ? 'text-blue-600' : 'text-gray-400')} />
+                  <item.icon className={cn('h-[18px] w-[18px] relative z-10', isActive ? 'text-orange-600' : 'text-gray-400')} />
                   <span className="relative z-10">{item.name}</span>
                 </motion.div>
               </Link>
@@ -184,7 +182,7 @@ export function Sidebar() {
       {/* User */}
       <div className="border-t border-gray-100 px-3 py-3">
         <div className="flex items-center gap-3 rounded-xl px-3 py-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white text-sm font-bold shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white text-sm font-bold shadow-sm">
             {user?.full_name?.charAt(0)?.toUpperCase() || 'A'}
           </div>
           <div className="flex-1 min-w-0">
