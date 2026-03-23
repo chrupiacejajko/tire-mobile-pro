@@ -322,7 +322,10 @@ export default function BookingPage() {
           <img src="/logo-full.png" alt="RouteTire" className="h-9 w-9 object-contain rounded-xl" />
           <div>
             <h1 className="text-base font-bold text-white leading-tight">Route<span className="text-orange-500">Tire</span></h1>
-            <p className="text-[11px] text-gray-500">⭐ 4.9 · Ponad 2 000 rezerwacji</p>
+            <p className="text-[11px] text-gray-500 flex items-center gap-1">
+              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+              <span>4.9 · Ponad 2 000 rezerwacji</span>
+            </p>
           </div>
           {totalPrice > 0 && (
             <div className="ml-auto text-right">
