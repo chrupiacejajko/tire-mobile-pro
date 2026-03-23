@@ -1,3 +1,7 @@
+-- Make employee_id nullable (vehicles can be tracked without an assigned driver)
+ALTER TABLE public.employee_locations
+  ALTER COLUMN employee_id DROP NOT NULL;
+
 -- Add vehicle tracking detail columns to employee_locations
 ALTER TABLE public.employee_locations
   ADD COLUMN IF NOT EXISTS vehicle_id UUID REFERENCES public.vehicles(id) ON DELETE SET NULL,
