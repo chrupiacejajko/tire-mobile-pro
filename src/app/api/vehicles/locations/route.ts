@@ -21,7 +21,7 @@ export async function GET() {
       // Latest location
       const { data: loc } = await supabase
         .from('employee_locations')
-        .select('lat, lng, status, speed, direction, rpm, driving_time, timestamp, employee_id')
+        .select('lat, lng, status, speed, direction, rpm, driving_time, location_address, timestamp, employee_id')
         .eq('vehicle_id', vehicle.id)
         .order('timestamp', { ascending: false })
         .limit(1)
@@ -44,6 +44,7 @@ export async function GET() {
         direction: loc?.direction ?? null,
         rpm: loc?.rpm ?? null,
         driving_time: loc?.driving_time ?? null,
+        location_address: loc?.location_address ?? null,
         last_update: loc?.timestamp ?? null,
         driver_name: (assignment?.employee as any)?.user?.full_name ?? null,
       };

@@ -17,7 +17,7 @@ export async function register() {
       return;
     }
 
-    console.log('[SatisGPS] Starting automatic polling every 60 seconds...');
+    console.log('[SatisGPS] Starting automatic polling every 30 seconds...');
 
     // Small delay on startup to let the app fully initialize
     await new Promise((resolve) => setTimeout(resolve, 10_000));
@@ -69,6 +69,7 @@ export async function register() {
             direction: vehicle.direction ?? null,
             rpm: vehicle.rpm ?? null,
             driving_time: vehicle.drivingTime ?? null,
+            location_address: vehicle.location ?? null,
             timestamp: new Date().toISOString(),
           });
 
@@ -84,7 +85,7 @@ export async function register() {
     // First poll immediately
     runPoll();
 
-    // Then every 60 seconds
-    setInterval(runPoll, 60_000);
+    // Then every 30 seconds (matching Satis GPS refresh rate)
+    setInterval(runPoll, 30_000);
   }
 }
