@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 export async function proxy(request: NextRequest) {
-  const hostname = request.headers.get('host') ?? '';
+  const hostname = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? '';
   const { pathname } = request.nextUrl;
 
   // booking.routetire.pl → rewrite to /booking
