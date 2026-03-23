@@ -172,49 +172,32 @@ function extractStateFromHtml(html: string): any | null {
     /"State"\s*:\s*(\{[^{}]*"Markers"\s*:\s*\[[\s\S]*?\})\s*(?:,|\})/,
   ];
 
-  for (const pattern of patterns) {
-    const m = html.match(pattern);
-    if (m?.[1]) {
-      try {
-        // Unescape unicode escapes from HTML encoding
-        const unescaped = m[1].replace(/\\u([0-9a-fA-F]{4})/g, (_, h) =>
-          String.fromCharCode(parseInt(h, 16))
-        );
-        const parsed = JSON.parse(unescaped);
-        if (parsed?.Markers?.length > 0) return parsed;
-      } catch {}
-    }
-  }
-
-  // Broader search: find any JSON fragment with Markers array
+  // Primary: brace-counting extraction — finds the JSON object containing Markers
   const markerIdx = html.indexOf('"Markers":[{');
   if (markerIdx > 0) {
-    // Walk back to find the opening brace of the containing object
+    // Walk backward to find the opening { of the containing object
     let start = markerIdx;
     let depth = 0;
     for (let i = markerIdx; i >= 0; i--) {
       if (html[i] === '}') depth++;
-      if (html[i] === '{') {
+      else if (html[i] === '{') {
         if (depth === 0) { start = i; break; }
         depth--;
       }
     }
-    // Walk forward to find matching closing brace
-    let end = markerIdx;
+    // Walk forward to find the matching closing }
+    let end = start;
     depth = 0;
     for (let i = start; i < html.length; i++) {
       if (html[i] === '{') depth++;
-      if (html[i] === '}') {
+      else if (html[i] === '}') {
         depth--;
         if (depth === 0) { end = i + 1; break; }
       }
     }
     try {
-      const fragment = html.slice(start, end);
-      const unescaped = fragment.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) =>
-        String.fromCharCode(parseInt(h, 16))
-      );
-      const parsed = JSON.parse(unescaped);
+      // JSON.parse handles \uXXXX escapes natively — do NOT pre-unescape
+      const parsed = JSON.parse(html.slice(start, end));
       if (parsed?.Markers?.length > 0) return parsed;
     } catch {}
   }
