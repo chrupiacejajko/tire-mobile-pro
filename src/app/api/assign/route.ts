@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
-import { haversineKm, geoScore, insertionCostKm } from '@/lib/geo';
+import { haversineKm, insertionCostKm } from '@/lib/geo';
+import { getRouteInfo, geoScoreFromKm } from '@/lib/here-routing';
 
 // POST /api/assign - Auto-assign unassigned orders to best available employees
-// Algorithm: Haversine geo-distance + region match + route insertion cost + workload balance
+// Algorithm: HERE real road distance (+ traffic ETA) + region match + route insertion + workload
 export async function POST(request: NextRequest) {
   const supabase = getAdminClient();
   try {
@@ -54,12 +55,10 @@ export async function POST(request: NextRequest) {
     const gpsMap = new Map<string, { lat: number; lng: number }>();
     const seenKeys = new Set<string>();
     for (const pos of (recentPositions || [])) {
-      // Try direct employee_id first
       if (pos.employee_id && !seenKeys.has('e:' + pos.employee_id) && pos.lat && pos.lng) {
         seenKeys.add('e:' + pos.employee_id);
         gpsMap.set(pos.employee_id, { lat: pos.lat, lng: pos.lng });
       }
-      // Try via vehicle assignment
       if (pos.vehicle_id && !seenKeys.has('v:' + pos.vehicle_id) && pos.lat && pos.lng) {
         seenKeys.add('v:' + pos.vehicle_id);
         const empId = vehicleToEmployee.get(pos.vehicle_id);
@@ -96,10 +95,38 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    let assigned = 0;
-    const results: { order_id: string; employee_id: string; distance_km?: number; score: number }[] = [];
+    // ── Pre-fetch HERE distances: all (employee GPS → order location) pairs ──
+    // Collect unique pairs to batch-resolve before scoring loop
+    type RouteCacheKey = string;
+    const routeCache = new Map<RouteCacheKey, { distance_km: number; duration_minutes: number }>();
 
-    for (const order of unassigned) {
+    const fetchPairs: { empId: string; orderIdx: number; empLat: number; empLng: number; orderLat: number; orderLng: number }[] = [];
+    for (const [i, order] of unassigned.entries()) {
+      const orderClient = (order as any).client;
+      const oLat: number | null = orderClient?.lat ?? null;
+      const oLng: number | null = orderClient?.lng ?? null;
+      if (oLat === null || oLng === null) continue;
+      for (const emp of employees) {
+        const empPos = gpsMap.get(emp.id);
+        if (!empPos) continue;
+        fetchPairs.push({ empId: emp.id, orderIdx: i, empLat: empPos.lat, empLng: empPos.lng, orderLat: oLat, orderLng: oLng });
+      }
+    }
+
+    // Fetch all in parallel (HERE cache prevents duplicate requests)
+    await Promise.all(
+      fetchPairs.map(async p => {
+        const key: RouteCacheKey = `${p.empId}-${p.orderIdx}`;
+        const info = await getRouteInfo(p.empLat, p.empLng, p.orderLat, p.orderLng);
+        routeCache.set(key, { distance_km: info.distance_km, duration_minutes: info.duration_minutes });
+      }),
+    );
+
+    // ── Scoring loop ──────────────────────────────────────────────────
+    let assigned = 0;
+    const results: { order_id: string; employee_id: string; distance_km?: number; eta_minutes?: number; score: number; routing: string }[] = [];
+
+    for (const [orderIdx, order] of unassigned.entries()) {
       const orderClient = (order as any).client;
       const orderLat: number | null = orderClient?.lat ?? null;
       const orderLng: number | null = orderClient?.lng ?? null;
@@ -107,6 +134,8 @@ export async function POST(request: NextRequest) {
       let bestEmployee: string | null = null;
       let bestScore = -Infinity;
       let bestDistKm: number | undefined;
+      let bestEta: number | undefined;
+      let bestRouting: string = 'none';
 
       for (const emp of employees) {
         let score = 0;
@@ -114,21 +143,34 @@ export async function POST(request: NextRequest) {
         // ── Region match (+10) ────────────────────────────────────────
         if (order.region_id && emp.region_id === order.region_id) score += 10;
 
-        // ── Geo scoring: distance from current GPS to order (+0-25) ──
+        // ── Geo scoring: real road distance from GPS to order ─────────
         if (orderLat !== null && orderLng !== null) {
           const empPos = gpsMap.get(emp.id);
           if (empPos) {
-            const distKm = haversineKm(empPos.lat, empPos.lng, orderLat, orderLng);
-            score += geoScore(distKm);
+            const cacheKey: RouteCacheKey = `${emp.id}-${orderIdx}`;
+            const cached = routeCache.get(cacheKey);
+            const distKm = cached?.distance_km ?? haversineKm(empPos.lat, empPos.lng, orderLat, orderLng) * 1.35;
 
-            // Route insertion cost: how much extra km does this add? (+0-15)
+            score += geoScoreFromKm(distKm);
+
+            // Route insertion cost: how much extra km does this order add? (+0-15)
             const waypoints = waypointsMap.get(emp.id) || [];
             if (waypoints.length > 0) {
               const insertCost = insertionCostKm(
                 [empPos, ...waypoints],
                 { lat: orderLat, lng: orderLng },
               );
-              score += Math.max(0, 15 - Math.round(insertCost * 2));
+              score += Math.max(0, 15 - Math.round(insertCost * 1.35 * 2));
+            }
+
+            if (cached && (bestEmployee === null || distKm < (bestDistKm ?? Infinity))) {
+              bestDistKm = cached.distance_km;
+              bestEta = cached.duration_minutes;
+              bestRouting = 'here';
+            } else if (!cached) {
+              bestDistKm = Math.round(distKm * 10) / 10;
+              bestEta = undefined;
+              bestRouting = 'haversine';
             }
           }
         }
@@ -136,9 +178,9 @@ export async function POST(request: NextRequest) {
         // ── Workload balance ──────────────────────────────────────────
         const currentLoad = workloadMap.get(emp.id) || 0;
         if (strategy === 'minimize') {
-          score += currentLoad * 2; // Pack orders
+          score += currentLoad * 2;
         } else {
-          score -= currentLoad * 3; // Spread evenly
+          score -= currentLoad * 3;
         }
 
         // ── Time conflict (heavy penalty) ─────────────────────────────
@@ -151,9 +193,22 @@ export async function POST(request: NextRequest) {
         if (score > bestScore) {
           bestScore = score;
           bestEmployee = emp.id;
-          if (orderLat && orderLng) {
-            const empPos = gpsMap.get(emp.id);
-            if (empPos) bestDistKm = Math.round(haversineKm(empPos.lat, empPos.lng, orderLat, orderLng) * 10) / 10;
+
+          if (orderLat !== null && orderLng !== null) {
+            const cacheKey: RouteCacheKey = `${emp.id}-${orderIdx}`;
+            const cached = routeCache.get(cacheKey);
+            if (cached) {
+              bestDistKm = cached.distance_km;
+              bestEta = cached.duration_minutes;
+              bestRouting = 'here';
+            } else {
+              const empPos = gpsMap.get(emp.id);
+              if (empPos) {
+                bestDistKm = Math.round(haversineKm(empPos.lat, empPos.lng, orderLat, orderLng) * 1.35 * 10) / 10;
+                bestEta = undefined;
+                bestRouting = 'haversine';
+              }
+            }
           }
         }
       }
@@ -174,7 +229,14 @@ export async function POST(request: NextRequest) {
           waypointsMap.set(bestEmployee, wps);
         }
 
-        results.push({ order_id: order.id, employee_id: bestEmployee, distance_km: bestDistKm, score: Math.round(bestScore) });
+        results.push({
+          order_id: order.id,
+          employee_id: bestEmployee,
+          distance_km: bestDistKm,
+          eta_minutes: bestEta,
+          score: Math.round(bestScore),
+          routing: bestRouting,
+        });
         assigned++;
       }
     }

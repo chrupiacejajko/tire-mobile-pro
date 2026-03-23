@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
-import { haversineKm, etaMinutes, insertionCostKm } from '@/lib/geo';
+import { insertionCostKm } from '@/lib/geo';
+import { getMultiRouteInfo } from '@/lib/here-routing';
 
 /**
  * GET /api/route-suggest?lat=52.1&lng=21.0&date=2026-03-23
  *
- * Returns ranked list of employees who can handle a new order at (lat,lng):
- * - Distance from current GPS position
- * - ETA (estimated time of arrival)
- * - How many km it adds to their existing route
+ * Returns ranked list of employees who can handle a new order at (lat, lng):
+ * - Real road distance from current GPS (HERE API, with traffic)
+ * - ETA in minutes (live traffic-aware)
+ * - How many km inserting this order adds to their existing route
  * - Current workload for the day
  *
- * Used by dispatcher when a client calls → "Kto jest najbliżej?"
+ * Used by dispatcher: "Kto jest najbliżej?" (Who is closest?)
  */
 export async function GET(request: NextRequest) {
   const supabase = getAdminClient();
@@ -30,9 +31,7 @@ export async function GET(request: NextRequest) {
     .select('id, user:profiles(full_name)')
     .eq('is_active', true);
 
-  if (!employees?.length) {
-    return NextResponse.json({ suggestions: [] });
-  }
+  if (!employees?.length) return NextResponse.json({ suggestions: [] });
 
   // Get vehicle assignments to map vehicles → employees
   const { data: vehicleAssignments } = await supabase
@@ -93,7 +92,20 @@ export async function GET(request: NextRequest) {
     ordersMap.set(o.employee_id, list);
   }
 
-  // Build suggestions
+  // ── Fetch real road distances from all employees with GPS to target ──
+  const employeesWithGps = employees.filter(emp => gpsMap.has(emp.id));
+  const routeInfoMap = await getMultiRouteInfo(
+    lat, lng,  // target is the "origin" here — distance from employee TO target
+    employeesWithGps.map(emp => {
+      const pos = gpsMap.get(emp.id)!;
+      return { id: emp.id, lat: pos.lat, lng: pos.lng };
+    }),
+  );
+  // Note: getMultiRouteInfo is origin→dest, but distance is symmetric for routing purposes.
+  // We pass target as origin and employee positions as destinations for cache efficiency
+  // (multiple calls from same origin = HERE can optimize). Result distance is the same.
+
+  // ── Build suggestions ────────────────────────────────────────────────
   const suggestions = employees
     .map(emp => {
       const empId = emp.id;
@@ -108,47 +120,64 @@ export async function GET(request: NextRequest) {
           name,
           distance_km: null,
           eta_minutes: null,
+          eta_no_traffic_minutes: null,
           inserting_adds_km: null,
           orders_today: ordersToday,
           current_status: null,
           has_gps: false,
+          routing: 'none',
         };
       }
 
-      const distKm = Math.round(haversineKm(pos.lat, pos.lng, lat, lng) * 10) / 10;
-      const eta = etaMinutes(distKm);
+      const routeInfo = routeInfoMap.get(empId);
+      const distKm = routeInfo?.distance_km ?? null;
+      const eta = routeInfo?.duration_minutes ?? null;
+      const etaNoTraffic = routeInfo?.duration_no_traffic_minutes ?? null;
+      const routing = routeInfo?.source ?? 'haversine';
 
-      // Calculate insertion cost if employee has existing waypoints
+      // Insertion cost: how many extra km for this employee's route?
       const waypoints = orders
         .filter(o => o.lat && o.lng)
         .map(o => ({ lat: o.lat, lng: o.lng }));
 
       let insertionKm: number | null = null;
-      if (waypoints.length > 0) {
+      if (waypoints.length > 0 && distKm !== null) {
         const cost = insertionCostKm([pos, ...waypoints], { lat, lng });
-        insertionKm = Math.round(cost * 10) / 10;
+        insertionKm = Math.round(cost * 1.35 * 10) / 10; // road correction on Haversine insertion
       }
+
+      // Traffic delay indicator
+      const trafficDelayMin = (eta !== null && etaNoTraffic !== null)
+        ? Math.max(0, eta - etaNoTraffic)
+        : null;
 
       return {
         employee_id: empId,
         name,
         distance_km: distKm,
         eta_minutes: eta,
+        eta_no_traffic_minutes: etaNoTraffic,
+        traffic_delay_minutes: trafficDelayMin,
         inserting_adds_km: insertionKm,
         orders_today: ordersToday,
         current_status: pos.status,
         current_speed: pos.speed,
         has_gps: true,
         last_seen: pos.timestamp,
+        routing,
       };
     })
     .filter(s => s.has_gps || s.orders_today > 0)
     .sort((a, b) => {
-      // Sort by distance (nulls last)
-      if (a.distance_km === null) return 1;
-      if (b.distance_km === null) return -1;
-      return a.distance_km - b.distance_km;
+      // Sort by ETA (traffic-aware), nulls last
+      if (a.eta_minutes === null) return 1;
+      if (b.eta_minutes === null) return -1;
+      return a.eta_minutes - b.eta_minutes;
     });
 
-  return NextResponse.json({ suggestions, target: { lat, lng, date } });
+  return NextResponse.json({
+    suggestions,
+    target: { lat, lng, date },
+    routing_source: suggestions.find(s => s.has_gps)?.routing ?? 'haversine',
+  });
 }

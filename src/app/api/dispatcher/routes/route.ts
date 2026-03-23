@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { haversineKm, totalRouteKm } from '@/lib/geo';
+import { getRouteInfo } from '@/lib/here-routing';
 
 /**
  * GET /api/dispatcher/routes?date=2026-03-23
@@ -91,13 +92,13 @@ export async function GET(request: NextRequest) {
   }
 
   // Build routes
-  const routes = employees
+  const routes = await Promise.all(employees
     .filter(emp => {
       const pos = gpsMap.get(emp.id);
       const orders = ordersByEmployee.get(emp.id) || [];
       return pos || orders.length > 0;
     })
-    .map((emp, idx) => {
+    .map(async (emp, idx) => {
       const pos = gpsMap.get(emp.id);
       const orders = ordersByEmployee.get(emp.id) || [];
       const color = ROUTE_COLORS[idx % ROUTE_COLORS.length];
@@ -126,6 +127,16 @@ export async function GET(request: NextRequest) {
 
       const totalKm = totalRouteKm(waypoints);
 
+      // HERE: get ETA from current position to first pending order
+      let etaToNextMinutes: number | null = null;
+      let etaToNextNoTrafficMinutes: number | null = null;
+      const nextOrder = mappedOrders.find(o => o.status !== 'completed' && o.lat && o.lng);
+      if (pos && nextOrder?.lat && nextOrder?.lng) {
+        const routeInfo = await getRouteInfo(pos.lat, pos.lng, nextOrder.lat, nextOrder.lng);
+        etaToNextMinutes = routeInfo.duration_minutes;
+        etaToNextNoTrafficMinutes = routeInfo.duration_no_traffic_minutes;
+      }
+
       return {
         employee_id: emp.id,
         employee_name: (emp.user as any)?.full_name ?? 'Pracownik',
@@ -135,9 +146,14 @@ export async function GET(request: NextRequest) {
         orders: mappedOrders,
         total_orders: orders.length,
         total_km: Math.round(totalKm * 10) / 10,
-        waypoints, // ordered list for polyline
+        eta_to_next_minutes: etaToNextMinutes,
+        eta_to_next_no_traffic_minutes: etaToNextNoTrafficMinutes,
+        traffic_delay_minutes: etaToNextMinutes !== null && etaToNextNoTrafficMinutes !== null
+          ? Math.max(0, etaToNextMinutes - etaToNextNoTrafficMinutes)
+          : null,
+        waypoints,
       };
-    });
+    }));
 
   return NextResponse.json({ routes, date });
 }
