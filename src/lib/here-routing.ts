@@ -1,8 +1,9 @@
 /**
- * HERE Routing API v8 — real road distance + live traffic ETA
+ * HERE Routing API v8 — real road distance + live traffic ETA + route geometry
  * Automatically falls back to Haversine if API key missing or request fails.
  */
 
+import { decode } from '@here/flexpolyline';
 import { haversineKm, etaMinutes } from './geo';
 
 const HERE_API_KEY = process.env.HERE_API_KEY;
@@ -95,6 +96,78 @@ export async function getMultiRouteInfo(
     })),
   );
   return new Map(entries.map(e => [e.id, e.info]));
+}
+
+// ── Polyline geometry cache ───────────────────────────────────────────────────
+const _polyCache = new Map<string, { points: { lat: number; lng: number }[]; expires: number }>();
+const POLY_CACHE_TTL = 10 * 60 * 1000; // 10 minutes — geometry rarely changes
+
+/**
+ * Fetches the actual road geometry between two points from HERE.
+ * Returns array of {lat, lng} to use as Leaflet polyline positions.
+ * Falls back to just [origin, dest] straight line if HERE unavailable.
+ */
+export async function getRoutePolyline(
+  originLat: number, originLng: number,
+  destLat: number, destLng: number,
+): Promise<{ lat: number; lng: number }[]> {
+  const fallback = [{ lat: originLat, lng: originLng }, { lat: destLat, lng: destLng }];
+  if (!HERE_API_KEY) return fallback;
+
+  const key = `poly:${_cacheKey(originLat, originLng, destLat, destLng)}`;
+  const cached = _polyCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.points;
+
+  try {
+    const url = new URL(ROUTER_URL);
+    url.searchParams.set('transportMode', 'car');
+    url.searchParams.set('origin', `${originLat},${originLng}`);
+    url.searchParams.set('destination', `${destLat},${destLng}`);
+    url.searchParams.set('return', 'polyline');
+    url.searchParams.set('apikey', HERE_API_KEY);
+
+    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return fallback;
+
+    const data = await res.json();
+    const encoded: string | undefined = data.routes?.[0]?.sections?.[0]?.polyline;
+    if (!encoded) return fallback;
+
+    const decoded = decode(encoded);
+    const points = decoded.polyline.map((coord: number[]) => ({ lat: coord[0], lng: coord[1] }));
+
+    _polyCache.set(key, { points, expires: Date.now() + POLY_CACHE_TTL });
+    return points;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Builds a full route polyline for a multi-stop route (GPS → stop1 → stop2 → ...).
+ * Fetches each segment in parallel and concatenates.
+ */
+export async function buildRoutePolyline(
+  waypoints: { lat: number; lng: number }[],
+): Promise<{ lat: number; lng: number }[]> {
+  if (waypoints.length < 2) return waypoints;
+
+  const segments = await Promise.all(
+    waypoints.slice(0, -1).map((wp, i) =>
+      getRoutePolyline(wp.lat, wp.lng, waypoints[i + 1].lat, waypoints[i + 1].lng),
+    ),
+  );
+
+  // Concatenate segments, removing duplicate boundary points
+  const full: { lat: number; lng: number }[] = [];
+  for (const seg of segments) {
+    if (full.length > 0) {
+      full.push(...seg.slice(1)); // skip first point (= last of previous segment)
+    } else {
+      full.push(...seg);
+    }
+  }
+  return full;
 }
 
 /**
