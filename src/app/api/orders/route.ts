@@ -55,10 +55,32 @@ export async function POST(request: NextRequest) {
       .eq('phone', client_phone)
       .single();
 
+    // Geocode address → lat/lng (fire in background, don't block order creation)
+    let clientLat: number | null = null;
+    let clientLng: number | null = null;
+    if (address) {
+      try {
+        const hereKey = process.env.HERE_API_KEY;
+        if (hereKey) {
+          const geoQuery = [address, city, 'Polska'].filter(Boolean).join(', ');
+          const geoRes = await fetch(`https://geocode.search.hereapi.com/v1/geocode?q=${encodeURIComponent(geoQuery)}&apiKey=${hereKey}`);
+          const geoData = await geoRes.json();
+          const pos = geoData.items?.[0]?.position;
+          if (pos) { clientLat = pos.lat; clientLng = pos.lng; }
+        }
+      } catch { /* geocoding is best-effort */ }
+    }
+
     if (existingClient) {
       clientId = existingClient.id;
-      // Update name/address/email if changed
-      await supabase.from('clients').update({ name: client_name, address: address || undefined, city: city || undefined, ...(client_email ? { email: client_email } : {}) }).eq('id', clientId);
+      // Update name/address/email/coords if changed
+      await supabase.from('clients').update({
+        name: client_name,
+        address: address || undefined,
+        city: city || undefined,
+        ...(client_email ? { email: client_email } : {}),
+        ...(clientLat !== null ? { lat: clientLat, lng: clientLng } : {}),
+      }).eq('id', clientId);
     } else {
       const { data: newClient, error: clientError } = await supabase
         .from('clients')
@@ -68,6 +90,8 @@ export async function POST(request: NextRequest) {
           email: client_email || null,
           address: address || 'Do ustalenia',
           city: city || 'Do ustalenia',
+          lat: clientLat,
+          lng: clientLng,
           vehicles: [],
         })
         .select('id')
