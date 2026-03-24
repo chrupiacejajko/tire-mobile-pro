@@ -91,8 +91,8 @@ export async function GET(request: NextRequest) {
       const pos = gpsMap.get(emp.id);
       const orders = assignedOrders.filter(o => o.employee_id === emp.id);
 
-      if (!orders.length && !pos) return null;
-
+      // Always include all active employees so dispatchers can assign orders to them.
+      // (Previously: skipped employees with no orders and no GPS — that hid 3 workers.)
       const startPos: LatLng = pos ?? { lat: 52.2297, lng: 21.0122 }; // Warsaw default
       const startMinutes = parseTime('08:00');
 
