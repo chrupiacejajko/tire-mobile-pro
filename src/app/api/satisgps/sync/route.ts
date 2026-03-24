@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
-import { parseMapState, extractMapState, SatisVehicle } from '@/lib/satisgps/converter';
+import { parseMapState, parseFullResponse, extractMapState, SatisVehicle } from '@/lib/satisgps/converter';
 import { pollSatisGPS } from '@/lib/satisgps/poller';
 
 /**
@@ -57,15 +57,21 @@ export async function POST(request: NextRequest) {
 
   // ── B: MANUAL paste mode ─────────────────────────────────────────
   } else {
-    const mapState = extractMapState(body);
-    if (!mapState) {
-      return NextResponse.json({
-        error: 'Nie znaleziono danych mapy w JSON.',
-        hint: 'Wklej pełny response z zakładki Network w DevTools (szukaj requestu do Localization.GPSTracking/)',
-      }, { status: 422 });
+    // Try full response parser first (table + markers + dashboard)
+    const fullVehicles = parseFullResponse(body);
+    if (fullVehicles.length > 0) {
+      vehicles = fullVehicles;
+    } else {
+      // Fallback to map state only
+      const mapState = extractMapState(body);
+      if (!mapState) {
+        return NextResponse.json({
+          error: 'Nie znaleziono danych mapy w JSON.',
+          hint: 'Wklej pełny response z zakładki Network w DevTools (szukaj requestu do Localization.GPSTracking/)',
+        }, { status: 422 });
+      }
+      vehicles = parseMapState(mapState);
     }
-
-    vehicles = parseMapState(mapState);
     sourceMode = 'manual';
   }
 
@@ -121,13 +127,18 @@ export async function POST(request: NextRequest) {
 
     const employeeId = assignment?.employee_id ?? null;
 
-    // Store location (with or without employee)
+    // Store location with all available telemetry
     const { error } = await supabase.from('employee_locations').insert({
       employee_id: employeeId,
       vehicle_id: dbVehicle.id,
       lat: vehicle.lat,
       lng: vehicle.lng,
+      speed: vehicle.speed,
+      direction: vehicle.direction,
+      rpm: vehicle.rpm,
       status,
+      location_address: vehicle.location,
+      driving_time: vehicle.drivingTime,
       timestamp: vehicle.timestamp
         ? new Date(vehicle.timestamp).toISOString()
         : new Date().toISOString(),

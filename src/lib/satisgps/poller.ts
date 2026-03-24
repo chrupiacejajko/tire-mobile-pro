@@ -15,7 +15,7 @@
  * If it does expire (server restart etc), SATISGPS_USER/PASS enables auto-relogin.
  */
 
-import { extractMapState, parseMapState, SatisVehicle } from './converter';
+import { extractMapState, parseMapState, parseFullResponse, parseVehicleTable, SatisVehicle } from './converter';
 
 const BASE_URL = process.env.SATISGPS_URL || 'https://satisgps.com/KRUSZWIL/View/Localization.GPSTracking/';
 
@@ -247,15 +247,43 @@ export async function pollSatisGPS(retryOnExpiry = true): Promise<PollResult> {
 
     if (getRes.ok) {
       const html = await getRes.text();
+
+      // Try table parser first — has ALL vehicles with speed/RPM/fuel
+      const tableVehicles = parseVehicleTable(html);
+      if (tableVehicles.length > 0) {
+        // Also try to get marker data for enrichment (direction, location)
+        const mapState = extractStateFromHtml(html);
+        if (mapState) {
+          const markerVehicles = parseMapState(mapState);
+          // Merge marker data into table data
+          const plateMap = new Map(tableVehicles.map(v => [v.plate, v]));
+          for (const m of markerVehicles) {
+            const existing = plateMap.get(m.plate);
+            if (existing) {
+              existing.lat = m.lat;
+              existing.lng = m.lng;
+              existing.satisId = m.satisId;
+              if (m.direction) existing.direction = m.direction;
+              if (m.location) existing.location = m.location;
+              if (m.timestamp) existing.timestamp = m.timestamp;
+              if (m.drivingTime) existing.drivingTime = m.drivingTime;
+            }
+          }
+        }
+        console.log(`[SatisGPS] ✓ GET HTML table got ${tableVehicles.length} vehicles (all)`);
+        return { ok: true, vehicles: tableVehicles, raw: html.slice(0, 500) };
+      }
+
+      // Fallback to marker-only parsing
       const mapState = extractStateFromHtml(html);
       if (mapState) {
         const vehicles = parseMapState(mapState);
         if (vehicles.length > 0) {
-          console.log(`[SatisGPS] ✓ GET HTML got ${vehicles.length} vehicles`);
+          console.log(`[SatisGPS] ✓ GET HTML markers got ${vehicles.length} vehicles`);
           return { ok: true, vehicles, raw: mapState };
         }
       }
-      // If no vehicles found in HTML, they may all be offline — return empty ok
+
       if (html.includes('__PAGESTATE_KEY')) {
         console.log('[SatisGPS] GET OK but no active vehicles in HTML (all offline?)');
         return { ok: true, vehicles: [] };
@@ -340,6 +368,13 @@ export async function pollSatisGPS(retryOnExpiry = true): Promise<PollResult> {
         error: 'Nie można parsować odpowiedzi JSON z Satis GPS',
         raw: text.slice(0, 200),
       };
+    }
+
+    // Try full response parser first (table + markers + dashboard)
+    const fullVehicles = parseFullResponse(json);
+    if (fullVehicles.length > 0) {
+      console.log(`[SatisGPS] ✓ POST full parse got ${fullVehicles.length} vehicles`);
+      return { ok: true, vehicles: fullVehicles, raw: json };
     }
 
     const mapState = extractMapState(json);
