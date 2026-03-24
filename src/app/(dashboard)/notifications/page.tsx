@@ -19,7 +19,7 @@ import {
 import {
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@/components/ui/tabs';
-import { Bell, MessageSquare, Mail, Plus, Edit, Trash2, Clock, Check } from 'lucide-react';
+import { Bell, MessageSquare, Mail, Plus, Edit, Trash2, Clock, Check, ShieldAlert } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 const ANIM = {
@@ -67,6 +67,27 @@ const PLACEHOLDERS = [
 const triggerLabel = (trigger: string) =>
   TRIGGER_OPTIONS.find(o => o.value === trigger)?.label || trigger;
 
+// ── Alert Rules ──
+
+interface AlertRule {
+  id: string;
+  name: string;
+  event: string;
+  condition: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+}
+
+const EVENT_LABELS: Record<string, string> = {
+  sla_breach: 'Przekroczenie terminu (SLA)',
+  unassigned_today: 'Nieprzypisane zlecenie na dzis',
+  no_progress: 'Brak postepu na zleceniu',
+  worker_outside_zone: 'Pracownik poza rejonem',
+  order_not_completed: 'Nieukonczone zlecenie na koniec dnia',
+};
+
+const EVENT_OPTIONS = Object.entries(EVENT_LABELS).map(([value, label]) => ({ value, label }));
+
 export default function NotificationsPage() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [notifications, setNotifications] = useState<NotifRow[]>([]);
@@ -86,16 +107,30 @@ export default function NotificationsPage() {
     send_before_time: '',
   });
 
+  // Alert Rules state
+  const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
+  const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
+  const [ruleSaving, setRuleSaving] = useState(false);
+  const [ruleForm, setRuleForm] = useState({
+    name: '',
+    event: 'sla_breach',
+    condition: {} as Record<string, unknown>,
+    is_active: true,
+  });
+
   const supabase = createClient();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [tplRes, notifRes] = await Promise.all([
+    const [tplRes, notifRes, rulesRes] = await Promise.all([
       fetch('/api/notification-templates').then(r => r.json()),
       supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(30),
+      fetch('/api/alert-rules').then(r => r.json()),
     ]);
     setTemplates(tplRes.templates || []);
     if (notifRes.data) setNotifications(notifRes.data as NotifRow[]);
+    setAlertRules(rulesRes.rules || []);
     setLoading(false);
   }, []);
 
@@ -179,6 +214,79 @@ export default function NotificationsPage() {
     setDialogOpen(true);
   };
 
+  // ── Alert Rules handlers ──
+
+  const openNewRule = () => {
+    setRuleForm({ name: '', event: 'sla_breach', condition: {}, is_active: true });
+    setEditingRule(null);
+    setRuleDialogOpen(true);
+  };
+
+  const openEditRule = (r: AlertRule) => {
+    setRuleForm({
+      name: r.name,
+      event: r.event,
+      condition: r.condition || {},
+      is_active: r.is_active,
+    });
+    setEditingRule(r);
+    setRuleDialogOpen(true);
+  };
+
+  const handleSaveRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRuleSaving(true);
+    const payload: any = {
+      name: ruleForm.name,
+      event: ruleForm.event,
+      condition: ruleForm.condition,
+      is_active: ruleForm.is_active,
+    };
+
+    if (editingRule) {
+      payload.id = editingRule.id;
+      await fetch('/api/alert-rules', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      await fetch('/api/alert-rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+    setRuleSaving(false);
+    setRuleDialogOpen(false);
+    setEditingRule(null);
+    fetchData();
+  };
+
+  const handleDeleteRule = async (id: string) => {
+    await fetch(`/api/alert-rules?id=${id}`, { method: 'DELETE' });
+    fetchData();
+  };
+
+  const toggleRule = async (r: AlertRule) => {
+    await fetch('/api/alert-rules', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: r.id, is_active: !r.is_active }),
+    });
+    fetchData();
+  };
+
+  const formatCondition = (event: string, condition: Record<string, unknown>): string => {
+    if (event === 'no_progress' && condition.minutes_threshold) {
+      return `${condition.minutes_threshold} min bez postepu`;
+    }
+    if (event === 'worker_outside_zone' && condition.max_distance_km) {
+      return `Max ${condition.max_distance_km} km`;
+    }
+    return '-';
+  };
+
   const unreadCount = notifications.filter(n => !n.is_read).length;
 
   const channelIcon = (ch: string) => {
@@ -208,6 +316,9 @@ export default function NotificationsPage() {
               <TabsTrigger value="history" className="gap-2">
                 <Bell className="h-4 w-4" /> Historia
                 {unreadCount > 0 && <Badge className="ml-1 h-5 w-5 rounded-full p-0 text-[10px] flex items-center justify-center">{unreadCount}</Badge>}
+              </TabsTrigger>
+              <TabsTrigger value="alert-rules" className="gap-2">
+                <ShieldAlert className="h-4 w-4" /> Reguly alertow
               </TabsTrigger>
             </TabsList>
             <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700" onClick={openNew}>
@@ -309,6 +420,71 @@ export default function NotificationsPage() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="alert-rules">
+            <div className="flex justify-end mb-4">
+              <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700" onClick={openNewRule}>
+                <Plus className="h-4 w-4" /> Dodaj regule
+              </Button>
+            </div>
+            <Card className="rounded-2xl border-gray-100 shadow-sm">
+              <CardContent className="p-0">
+                {loading ? (
+                  <div className="flex items-center justify-center py-20">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+                  </div>
+                ) : alertRules.length === 0 ? (
+                  <div className="text-center py-16 text-gray-400">
+                    <ShieldAlert className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                    <p className="text-sm font-medium">Brak regul alertow</p>
+                    <p className="text-xs mt-1">Dodaj regule, aby otrzymywac alerty o waznych zdarzeniach.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100 bg-gray-50/50">
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Nazwa</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Zdarzenie</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Warunki</th>
+                          <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Aktywny</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Akcje</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {alertRules.map(rule => (
+                          <tr key={rule.id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                            <td className="px-4 py-3 font-medium text-gray-900">{rule.name}</td>
+                            <td className="px-4 py-3">
+                              <Badge variant="outline" className="text-[11px] rounded-lg">
+                                {EVENT_LABELS[rule.event] || rule.event}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3 text-gray-500 text-xs">
+                              {formatCondition(rule.event, rule.condition)}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <Switch checked={rule.is_active} onCheckedChange={() => toggleRule(rule)} />
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <div className="flex justify-end gap-1">
+                                <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => openEditRule(rule)}>
+                                  <Edit className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-red-500" onClick={() => handleDeleteRule(rule.id)}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </div>
 
@@ -380,6 +556,87 @@ export default function NotificationsPage() {
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={() => setDialogOpen(false)}>Anuluj</Button>
               <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">{saving ? 'Zapisywanie...' : 'Zapisz'}</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Alert Rule Dialog */}
+      <Dialog open={ruleDialogOpen} onOpenChange={o => { setRuleDialogOpen(o); if (!o) setEditingRule(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingRule ? 'Edytuj regule alertu' : 'Nowa regula alertu'}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveRule} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Nazwa</Label>
+              <Input
+                required
+                value={ruleForm.name}
+                onChange={e => setRuleForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="np. Alert SLA 24h"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Zdarzenie</Label>
+              <Select
+                value={ruleForm.event}
+                onValueChange={v => setRuleForm(f => ({ ...f, event: v ?? 'sla_breach', condition: {} }))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {EVENT_OPTIONS.map(o => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Conditional fields based on event type */}
+            {ruleForm.event === 'no_progress' && (
+              <div className="space-y-2">
+                <Label>Minuty bez postepu</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={(ruleForm.condition.minutes_threshold as number) || 60}
+                  onChange={e => setRuleForm(f => ({
+                    ...f,
+                    condition: { ...f.condition, minutes_threshold: parseInt(e.target.value) || 60 },
+                  }))}
+                  placeholder="60"
+                />
+              </div>
+            )}
+
+            {ruleForm.event === 'worker_outside_zone' && (
+              <div className="space-y-2">
+                <Label>Max odleglosc [km]</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={(ruleForm.condition.max_distance_km as number) || 50}
+                  onChange={e => setRuleForm(f => ({
+                    ...f,
+                    condition: { ...f.condition, max_distance_km: parseInt(e.target.value) || 50 },
+                  }))}
+                  placeholder="50"
+                />
+              </div>
+            )}
+
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={ruleForm.is_active}
+                onCheckedChange={v => setRuleForm(f => ({ ...f, is_active: v }))}
+              />
+              <span className="text-sm text-gray-700">{ruleForm.is_active ? 'Aktywny' : 'Wylaczony'}</span>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" type="button" onClick={() => setRuleDialogOpen(false)}>Anuluj</Button>
+              <Button type="submit" disabled={ruleSaving} className="bg-blue-600 hover:bg-blue-700">
+                {ruleSaving ? 'Zapisywanie...' : 'Zapisz'}
+              </Button>
             </div>
           </form>
         </DialogContent>

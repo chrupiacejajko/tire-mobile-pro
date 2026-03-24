@@ -30,6 +30,7 @@ import {
   X,
   Route,
   FileText,
+  CalendarDays,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
@@ -42,6 +43,7 @@ const mainMenu = [
   { name: 'Planowanie', href: '/planner', icon: Route },
   { name: 'Klienci', href: '/clients', icon: Users },
   { name: 'Pracownicy', href: '/employees', icon: UserCog },
+  { name: 'Grafik', href: '/schedule', icon: CalendarDays },
   { name: 'Flota', href: '/fleet', icon: Truck },
   { name: 'Magazyn', href: '/warehouse', icon: Package },
   { name: 'Depozyty', href: '/deposits', icon: PackageCheck },

@@ -128,6 +128,27 @@ export async function POST(request: NextRequest) {
       (unavailabilityData ?? []).map((u: { employee_id: string }) => u.employee_id),
     );
 
+    // Check work_schedules — only include employees who have a schedule for this day
+    const { data: workScheduleData } = await supabase
+      .from('work_schedules')
+      .select('employee_id, start_time, end_time')
+      .eq('date', targetDate);
+
+    const scheduledEmployeeIds = new Set(
+      (workScheduleData ?? []).map((ws: { employee_id: string }) => ws.employee_id),
+    );
+    const workScheduleMap = new Map<string, { start_time: string; end_time: string }>();
+    for (const ws of workScheduleData ?? []) {
+      workScheduleMap.set(ws.employee_id, {
+        start_time: ws.start_time,
+        end_time: ws.end_time,
+      });
+    }
+
+    // If there are any work_schedules defined for this date, filter to only scheduled employees.
+    // If no schedules exist at all, skip this filter (backwards compatible).
+    const hasAnySchedules = (workScheduleData ?? []).length > 0;
+
     // Get orders
     let ordersQuery = supabase
       .from('orders')
@@ -165,7 +186,8 @@ export async function POST(request: NextRequest) {
 
     // Get employees + GPS (excluding unavailable ones)
     const candidateEmployeeIds = (employee_ids?.length ? employee_ids : orders.map(o => o.employee_id).filter(Boolean) as string[])
-      .filter((id: string) => !unavailableEmployeeIds.has(id));
+      .filter((id: string) => !unavailableEmployeeIds.has(id))
+      .filter((id: string) => !hasAnySchedules || scheduledEmployeeIds.has(id));
 
     const { data: employees } = await supabase
       .from('employees')
@@ -238,7 +260,11 @@ export async function POST(request: NextRequest) {
         prevPos = { lat: order.lat, lng: order.lng };
       }
 
-      let schedule = buildSchedule(parseTime('08:00'), orderInputs);
+      // Use employee's work schedule start time if available, otherwise default to 08:00
+      const empWorkSchedule = workScheduleMap.get(emp.id);
+      const empStartMinutes = empWorkSchedule ? parseTime(empWorkSchedule.start_time) : parseTime('08:00');
+
+      let schedule = buildSchedule(empStartMinutes, orderInputs);
       const removedOrderIds: string[] = [];
 
       // ── Buffer enforcement (60:40 rule) ───────────────────────────────
