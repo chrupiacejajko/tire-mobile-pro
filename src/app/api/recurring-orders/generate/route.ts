@@ -4,7 +4,7 @@
  * Generates concrete orders from active recurring_orders whose next_date <= target date.
  * Can be called manually or via a cron job.
  *
- * Body: { date?: string }  — defaults to today
+ * Body: { date?: string, days_ahead?: number }  — defaults to today, days_ahead defaults to 0
  *
  * For each matching recurring order:
  *   1. Creates a new order (same pattern as POST /api/orders)
@@ -76,7 +76,13 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json().catch(() => ({}));
-    const targetDate = (body as any)?.date || new Date().toISOString().split('T')[0];
+    const baseDate = (body as Record<string, unknown>)?.date as string | undefined || new Date().toISOString().split('T')[0];
+    const daysAhead = Number((body as Record<string, unknown>)?.days_ahead) || 0;
+
+    // Compute the furthest target date
+    const endDate = new Date(baseDate);
+    endDate.setDate(endDate.getDate() + daysAhead);
+    const targetDate = formatDate(endDate);
 
     // Fetch active recurring orders whose next_date is due
     const { data: recurringOrders, error: fetchError } = await supabase
@@ -152,6 +158,8 @@ export async function POST(request: NextRequest) {
           total_price: totalPrice,
           notes: rec.notes || 'Zlecenie cykliczne',
           employee_id: rec.preferred_employee_id || null,
+          scheduling_type: 'time_window',
+          source: 'recurring',
         })
         .select('id')
         .single();

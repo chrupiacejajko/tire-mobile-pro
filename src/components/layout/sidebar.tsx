@@ -33,6 +33,7 @@ import {
   CalendarDays,
   Upload,
   PhoneCall,
+  Repeat,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
@@ -41,6 +42,7 @@ const mainMenu = [
   { name: 'Nowe zlecenie', href: '/dispatch', icon: PhoneCall },
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Zlecenia', href: '/orders', icon: ClipboardList },
+  { name: 'Zlecenia cykliczne', href: '/recurring', icon: Repeat },
   { name: 'Kalendarz', href: '/calendar', icon: Calendar },
   { name: 'Mapa', href: '/map', icon: MapPin },
   { name: 'Planowanie', href: '/planner', icon: Route },
@@ -54,7 +56,9 @@ const mainMenu = [
   { name: 'Usługi', href: '/services', icon: Wrench },
   { name: 'Formularze', href: '/forms', icon: FileText },
   { name: 'Integracje', href: '/integrations', icon: Zap },
-  { name: 'Raporty', href: '/reports', icon: BarChart3 },
+  { name: 'Raporty', href: '/reports', icon: BarChart3, children: [
+    { name: 'Raport GPS', href: '/reports/gps-compliance', icon: MapPin },
+  ] },
 ];
 
 const otherMenu = [
@@ -104,23 +108,51 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           {mainMenu.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
             return (
-              <Link key={item.href} href={item.href} className="relative block" onClick={onNavigate}>
-                <motion.div
-                  className={cn(
-                    'flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors relative',
-                    isActive ? 'text-orange-700' : 'text-gray-600 hover:text-gray-900'
-                  )}
-                  whileHover={{ x: 2 }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                >
-                  {isActive && (
-                    <motion.div className="absolute inset-0 rounded-xl bg-orange-50" layoutId="activeNav"
-                      transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
-                  )}
-                  <item.icon className={cn('h-[18px] w-[18px] relative z-10', isActive ? 'text-orange-600' : 'text-gray-400')} />
-                  <span className="relative z-10">{item.name}</span>
-                </motion.div>
-              </Link>
+              <div key={item.href}>
+                <Link href={item.href} className="relative block" onClick={onNavigate}>
+                  <motion.div
+                    className={cn(
+                      'flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors relative',
+                      isActive ? 'text-orange-700' : 'text-gray-600 hover:text-gray-900'
+                    )}
+                    whileHover={{ x: 2 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                  >
+                    {isActive && !item.children && (
+                      <motion.div className="absolute inset-0 rounded-xl bg-orange-50" layoutId="activeNav"
+                        transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
+                    )}
+                    <item.icon className={cn('h-[18px] w-[18px] relative z-10', isActive ? 'text-orange-600' : 'text-gray-400')} />
+                    <span className="relative z-10">{item.name}</span>
+                  </motion.div>
+                </Link>
+                {item.children && isActive && (
+                  <div className="ml-7 mt-0.5 space-y-0.5">
+                    {item.children.map((child) => {
+                      const childActive = pathname === child.href;
+                      return (
+                        <Link key={child.href} href={child.href} className="relative block" onClick={onNavigate}>
+                          <motion.div
+                            className={cn(
+                              'flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors relative',
+                              childActive ? 'text-orange-700' : 'text-gray-500 hover:text-gray-800'
+                            )}
+                            whileHover={{ x: 2 }}
+                            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                          >
+                            {childActive && (
+                              <motion.div className="absolute inset-0 rounded-lg bg-orange-50" layoutId="activeNav"
+                                transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
+                            )}
+                            <child.icon className={cn('h-[15px] w-[15px] relative z-10', childActive ? 'text-orange-600' : 'text-gray-400')} />
+                            <span className="relative z-10">{child.name}</span>
+                          </motion.div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </nav>

@@ -27,6 +27,7 @@ export interface Region {
   name: string;
   description: string | null;
   color: string;
+  polygon: [number, number][] | null;
   created_at: string;
 }
 

@@ -46,6 +46,38 @@ export async function POST(request: NextRequest) {
     // Fire completion notification (fire-and-forget)
     buildNotificationContext(order_id).then(ctx => fireNotification('order_completed', ctx)).catch(() => {});
 
+    // Re-optimize remaining route for this employee (fire-and-forget)
+    try {
+      const { data: completedOrder } = await supabase
+        .from('orders')
+        .select('employee_id, scheduled_date')
+        .eq('id', order_id)
+        .single();
+
+      if (completedOrder?.employee_id) {
+        const today = new Date().toISOString().split('T')[0];
+        const orderDate = completedOrder.scheduled_date || today;
+
+        // Only reoptimize if the order is for today
+        if (orderDate === today) {
+          const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL
+            ? `https://${process.env.VERCEL_URL}`
+            : 'http://localhost:3000';
+
+          fetch(`${baseUrl}/api/planner/reoptimize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              employee_id: completedOrder.employee_id,
+              date: orderDate,
+            }),
+          }).catch(() => {}); // fire-and-forget
+        }
+      }
+    } catch {
+      // reoptimize is best-effort, don't block completion
+    }
+
     return NextResponse.json({ success: true, order_id, completed_at: updateData.completed_at });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

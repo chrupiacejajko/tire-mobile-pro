@@ -117,6 +117,31 @@ export function findBestInsertion(
   return { index: bestIndex, costKm: Math.round(bestCost * 10) / 10 };
 }
 
+/**
+ * Point-in-polygon test using ray casting algorithm.
+ * polygon is an array of [lat, lng] pairs forming a closed polygon.
+ * Returns true if the point (lat, lng) is inside the polygon.
+ */
+export function pointInPolygon(
+  lat: number,
+  lng: number,
+  polygon: [number, number][],
+): boolean {
+  if (!polygon || polygon.length < 3) return false;
+
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [yi, xi] = polygon[i];
+    const [yj, xj] = polygon[j];
+
+    const intersect =
+      yi > lng !== yj > lng &&
+      lat < ((xj - xi) * (lng - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }

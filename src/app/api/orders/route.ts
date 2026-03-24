@@ -4,6 +4,7 @@ import { sendBookingConfirmationForOrder } from '@/lib/email';
 import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
 import { autoAssignWorker } from '@/lib/auto-assign';
 import { notifyWorker } from '@/lib/notifications';
+import { pointInPolygon } from '@/lib/geo';
 
 // GET /api/orders - List orders with optional filters
 export async function GET(request: NextRequest) {
@@ -235,6 +236,26 @@ export async function POST(request: NextRequest) {
     }).select().single();
 
     if (orderError) return NextResponse.json({ error: orderError.message }, { status: 400 });
+
+    // ── Auto-assign region based on geocoded location ─────────────────
+    if (clientLat !== null && clientLng !== null && order?.id) {
+      try {
+        const { data: regionsData } = await supabase
+          .from('regions')
+          .select('id, polygon')
+          .not('polygon', 'is', null);
+
+        if (regionsData) {
+          for (const region of regionsData) {
+            const poly = region.polygon as [number, number][] | null;
+            if (poly && poly.length >= 3 && pointInPolygon(clientLat, clientLng, poly)) {
+              await supabase.from('orders').update({ region_id: region.id }).eq('id', order.id);
+              break;
+            }
+          }
+        }
+      } catch { /* region assignment is best-effort */ }
+    }
 
     // ── Auto-assign logic ──────────────────────────────────────────────
     const shouldAutoAssign =

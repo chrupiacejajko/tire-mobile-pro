@@ -22,6 +22,8 @@ const CircleMarker = dynamic(() => import('react-leaflet').then(m => m.CircleMar
 const Polyline = dynamic(() => import('react-leaflet').then(m => m.Polyline), { ssr: false });
 const LeafletCircle = dynamic(() => import('react-leaflet').then(m => m.Circle), { ssr: false });
 const Marker = dynamic(() => import('react-leaflet').then(m => m.Marker), { ssr: false });
+const LeafletPolygon = dynamic(() => import('react-leaflet').then(m => m.Polygon), { ssr: false });
+const LeafletTooltip = dynamic(() => import('react-leaflet').then(m => m.Tooltip), { ssr: false });
 
 import 'leaflet/dist/leaflet.css';
 
@@ -140,6 +142,13 @@ interface NearbyWorker {
   distance_km: number;
   travel_minutes: number;
   orders_today: number;
+}
+
+interface MapRegion {
+  id: string;
+  name: string;
+  color: string;
+  polygon: [number, number][] | null;
 }
 
 /* ─── Helpers ────────────────────────────────────────────────────────── */
@@ -1204,6 +1213,8 @@ export default function MapPage() {
   const [tab, setTab] = useState<SidebarTab>('vehicles');
   const [showRouteLines, setShowRouteLines] = useState(true);
   const [showOrders, setShowOrders] = useState(true);
+  const [showRegions, setShowRegions] = useState(false);
+  const [mapRegions, setMapRegions] = useState<MapRegion[]>([]);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [orderFilter, setOrderFilter] = useState<string>('all');
   const [countdown, setCountdown] = useState(30);
@@ -1223,10 +1234,11 @@ export default function MapPage() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [vRes, rRes, oRes] = await Promise.all([
+      const [vRes, rRes, oRes, regRes] = await Promise.all([
         fetch('/api/vehicles/locations'),
         fetch(`/api/dispatcher/routes?date=${today}`),
         fetch(`/api/dispatcher/orders?date=${today}`),
+        fetch('/api/regions'),
       ]);
       if (vRes.ok) {
         const data = await vRes.json();
@@ -1240,6 +1252,12 @@ export default function MapPage() {
       if (oRes.ok) {
         const data = await oRes.json();
         setAllOrders(data.orders ?? []);
+      }
+      if (regRes.ok) {
+        const data = await regRes.json();
+        if (Array.isArray(data)) {
+          setMapRegions(data.filter((r: MapRegion) => r.polygon && r.polygon.length >= 3));
+        }
       }
     } catch (err) {
       console.error('[MapPage]', err);
@@ -1546,6 +1564,9 @@ export default function MapPage() {
                 <button onClick={() => setShowRouteLines(!showRouteLines)} className="text-[11px] text-blue-500 font-medium">
                   {showRouteLines ? 'Ukryj trasy' : 'Pokaż trasy'}
                 </button>
+                <button onClick={() => setShowRegions(!showRegions)} className="text-[11px] text-purple-500 font-medium">
+                  {showRegions ? 'Ukryj regiony' : 'Pokaż regiony'}
+                </button>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-1.5">
@@ -1613,6 +1634,23 @@ export default function MapPage() {
               attribution='&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
               url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
             />
+
+            {/* Region polygons */}
+            {showRegions && mapRegions.map(region => (
+              <LeafletPolygon
+                key={`region-${region.id}`}
+                positions={region.polygon!.map(p => [p[0], p[1]] as [number, number])}
+                pathOptions={{
+                  color: region.color,
+                  fillColor: region.color,
+                  fillOpacity: 0.12,
+                  weight: 2,
+                  opacity: 0.7,
+                }}
+              >
+                <LeafletTooltip sticky>{region.name}</LeafletTooltip>
+              </LeafletPolygon>
+            ))}
 
             {/* Route polylines */}
             {showRouteLines && routes.map(route => (

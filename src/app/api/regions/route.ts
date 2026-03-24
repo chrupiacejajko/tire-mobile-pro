@@ -46,6 +46,7 @@ export async function PUT(req: NextRequest) {
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
   if (color !== undefined) updates.color = color;
+  if (body.polygon !== undefined) updates.polygon = body.polygon;
 
   const { data, error } = await supabase
     .from('regions')

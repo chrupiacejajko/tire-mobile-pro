@@ -632,6 +632,22 @@ export default function OrdersPage() {
       });
     }
 
+    // Re-optimize remaining route when order is completed or started (fire-and-forget)
+    if (newStatus === 'completed' || newStatus === 'in_progress') {
+      const order = orders.find(o => o.id === orderId);
+      if (order?.employee_id) {
+        const today = new Date().toISOString().split('T')[0];
+        const orderDate = order.scheduled_date || today;
+        if (orderDate === today) {
+          fetch('/api/planner/reoptimize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ employee_id: order.employee_id, date: orderDate }),
+          }).catch(() => {});
+        }
+      }
+    }
+
     fetchData();
     if (selectedOrder?.id === orderId) {
       setSelectedOrder({ ...selectedOrder, status: newStatus });
