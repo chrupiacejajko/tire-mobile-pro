@@ -13,7 +13,7 @@
 -- ============================================================
 
 -- ── orders ──────────────────────────────────────────────────
-DROP POLICY IF EXISTS "Authenticated read orders"   ON public.orders;
+DROP POLICY IF EXISTS "Authenticated read orders" ON public.orders;
 DROP POLICY IF EXISTS "Authenticated manage orders" ON public.orders;
 
 -- Admin/dispatcher: full access (API layer uses service role anyway)
