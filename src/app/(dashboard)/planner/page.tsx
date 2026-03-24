@@ -5,7 +5,14 @@ import {
   Route, ExternalLink, RefreshCw, Zap, Clock, MapPin,
   CheckCircle, AlertTriangle, XCircle, ChevronDown, ChevronUp,
   Navigation, Calendar, Copy, Car, User, TrendingUp,
+  Loader2,
 } from 'lucide-react';
+import {
+  DndContext, DragOverlay, useDraggable, useDroppable,
+  DragStartEvent, DragEndEvent, closestCenter,
+  PointerSensor, useSensor, useSensors,
+} from '@dnd-kit/core';
+import { cn } from '@/lib/utils';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -84,7 +91,7 @@ const STATUS_STYLES = {
   ok:         { bg: 'bg-emerald-50',  border: 'border-emerald-200', dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Na czas' },
   early_wait: { bg: 'bg-blue-50',     border: 'border-blue-200',   dot: 'bg-blue-400',    text: 'text-blue-700',    label: 'Czeka' },
   tight:      { bg: 'bg-amber-50',    border: 'border-amber-200',  dot: 'bg-amber-500',   text: 'text-amber-700',   label: 'Ciasno' },
-  late:       { bg: 'bg-red-50',      border: 'border-red-200',    dot: 'bg-red-500',     text: 'text-red-700',     label: 'Za późno' },
+  late:       { bg: 'bg-red-50',      border: 'border-red-200',    dot: 'bg-red-500',     text: 'text-red-700',     label: 'Za p\u00f3\u017ano' },
   no_window:  { bg: 'bg-gray-50',     border: 'border-gray-200',   dot: 'bg-gray-400',    text: 'text-gray-600',    label: 'Brak okna' },
 };
 
@@ -305,6 +312,54 @@ function UnassignedCard({ order }: { order: UnassignedOrder }) {
   );
 }
 
+// ── Drag & Drop Wrappers ─────────────────────────────────────────────────────
+
+function DraggableUnassignedCard({ order }: { order: UnassignedOrder }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `unassigned-${order.id}`,
+    data: { type: 'unassigned', order },
+  });
+
+  const style = transform ? {
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 100 : undefined,
+  } : undefined;
+
+  return (
+    <div ref={setNodeRef} style={style} {...listeners} {...attributes}>
+      <UnassignedCard order={order} />
+    </div>
+  );
+}
+
+function DroppableRoutePanel({ route, onOptimize }: { route: EmployeeRoute; onOptimize: (id: string) => void }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `route-${route.employee_id}`,
+    data: { type: 'route', employeeId: route.employee_id },
+  });
+
+  return (
+    <div ref={setNodeRef} className={cn(isOver && 'ring-2 ring-orange-400 ring-offset-2 rounded-2xl transition-all')}>
+      <RoutePanel route={route} onOptimize={onOptimize} />
+    </div>
+  );
+}
+
+function DragOverlayCard({ order }: { order: UnassignedOrder }) {
+  return (
+    <div className="w-64 p-3 bg-white rounded-xl border-2 border-orange-400 shadow-xl shadow-orange-500/20">
+      <p className="text-sm font-bold text-gray-900 truncate">{order.client_name}</p>
+      <p className="text-xs text-gray-400 truncate">{order.address}</p>
+      {order.time_window && (
+        <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded mt-1 inline-block">
+          {order.time_window === 'morning' ? '08–12' : order.time_window === 'afternoon' ? '12–16' : '16–20'}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function PlannerPage() {
@@ -312,6 +367,12 @@ export default function PlannerPage() {
   const [data, setData] = useState<PlannerData | null>(null);
   const [loading, setLoading] = useState(true);
   const [optimizing, setOptimizing] = useState<string | null>(null);
+  const [activeOrder, setActiveOrder] = useState<UnassignedOrder | null>(null);
+  const [inserting, setInserting] = useState(false);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
 
   const load = useCallback(async (d: string) => {
     setLoading(true);
@@ -356,147 +417,197 @@ export default function PlannerPage() {
     }
   };
 
+  const handleDragStart = (event: DragStartEvent) => {
+    const { active } = event;
+    if (active.data.current?.type === 'unassigned') {
+      setActiveOrder(active.data.current.order as UnassignedOrder);
+    }
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveOrder(null);
+
+    if (!over || !active.data.current) return;
+
+    const orderId = (active.data.current.order as UnassignedOrder).id;
+    const employeeId = over.data.current?.employeeId;
+
+    if (!employeeId) return;
+
+    setInserting(true);
+    try {
+      const res = await fetch('/api/planner/insert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: orderId, employee_id: employeeId, date }),
+      });
+      if (res.ok) {
+        await load(date);
+      }
+    } catch (e) {
+      console.error('Insert failed', e);
+    }
+    setInserting(false);
+  };
+
   const summary = data?.summary;
   const overallScore = data?.routes?.length
     ? Math.round(data.routes.reduce((s, r) => s + r.score.score, 0) / data.routes.length)
     : null;
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      {/* Top bar */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-orange-100 rounded-xl flex items-center justify-center">
-            <Route className="h-5 w-5 text-orange-600" />
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <div className="relative flex flex-col h-full bg-gray-50">
+        {/* Inserting overlay */}
+        {inserting && (
+          <div className="absolute inset-0 bg-white/60 backdrop-blur-sm z-50 flex items-center justify-center">
+            <div className="flex items-center gap-3 bg-white rounded-2xl px-6 py-4 shadow-xl border">
+              <Loader2 className="h-5 w-5 animate-spin text-orange-500" />
+              <span className="text-sm font-medium text-gray-700">Wstawiam zlecenie do trasy...</span>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-bold text-gray-900">Planowanie tras</h1>
-            <p className="text-xs text-gray-400">Harmonogram dzienny z oknami czasowymi</p>
+        )}
+
+        {/* Top bar */}
+        <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-orange-100 rounded-xl flex items-center justify-center">
+              <Route className="h-5 w-5 text-orange-600" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-gray-900">Planowanie tras</h1>
+              <p className="text-xs text-gray-400">Harmonogram dzienny z oknami czasowymi</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Date picker */}
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+              <Calendar className="h-4 w-4 text-gray-400" />
+              <input
+                type="date"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                className="text-sm bg-transparent outline-none text-gray-700 font-medium"
+              />
+            </div>
+
+            <button
+              onClick={() => load(date)}
+              disabled={loading}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-sm text-gray-600 transition-colors"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              Odśwież
+            </button>
+
+            <button
+              onClick={handleOptimizeAll}
+              disabled={!!optimizing || loading}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              <Zap className="h-4 w-4" />
+              {optimizing === 'all' ? 'Optymalizuję...' : 'Optymalizuj wszystko'}
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Date picker */}
-          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
-            <Calendar className="h-4 w-4 text-gray-400" />
-            <input
-              type="date"
-              value={date}
-              onChange={e => setDate(e.target.value)}
-              className="text-sm bg-transparent outline-none text-gray-700 font-medium"
-            />
-          </div>
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left: Unassigned */}
+          <div className="w-72 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
+            <div className="px-4 py-3 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-gray-800">Nieprzypisane</h2>
+                {summary && (
+                  <span className="text-xs font-medium bg-red-100 text-red-600 px-2 py-0.5 rounded-full">
+                    {summary.unassigned}
+                  </span>
+                )}
+              </div>
+            </div>
 
-          <button
-            onClick={() => load(date)}
-            disabled={loading}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-sm text-gray-600 transition-colors"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            Odśwież
-          </button>
-
-          <button
-            onClick={handleOptimizeAll}
-            disabled={!!optimizing || loading}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium transition-colors disabled:opacity-50"
-          >
-            <Zap className="h-4 w-4" />
-            {optimizing === 'all' ? 'Optymalizuję...' : 'Optymalizuj wszystko'}
-          </button>
-        </div>
-      </div>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left: Unassigned */}
-        <div className="w-72 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
-          <div className="px-4 py-3 border-b border-gray-100">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-800">Nieprzypisane</h2>
-              {summary && (
-                <span className="text-xs font-medium bg-red-100 text-red-600 px-2 py-0.5 rounded-full">
-                  {summary.unassigned}
-                </span>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {loading ? (
+                <div className="space-y-2">
+                  {[1,2,3].map(i => <div key={i} className="h-16 bg-gray-100 animate-pulse rounded-xl" />)}
+                </div>
+              ) : data?.unassigned?.length === 0 ? (
+                <div className="text-center py-8">
+                  <CheckCircle className="h-8 w-8 text-emerald-400 mx-auto mb-2" />
+                  <p className="text-sm text-gray-400">Wszystkie zlecenia przypisane</p>
+                </div>
+              ) : (
+                data?.unassigned?.map(order => (
+                  <DraggableUnassignedCard key={order.id} order={order} />
+                ))
               )}
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {loading ? (
-              <div className="space-y-2">
-                {[1,2,3].map(i => <div key={i} className="h-16 bg-gray-100 animate-pulse rounded-xl" />)}
+          {/* Right: Routes */}
+          <div className="flex-1 overflow-y-auto p-6">
+            {/* Summary bar */}
+            {summary && !loading && (
+              <div className="grid grid-cols-4 gap-4 mb-6">
+                {[
+                  { label: 'Wszystkich zleceń', value: summary.total_orders, icon: Route, color: 'text-gray-900', bg: 'bg-white' },
+                  { label: 'Przypisanych', value: summary.assigned, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                  { label: 'Aktywnych busów', value: summary.active_employees, icon: Car, color: 'text-blue-600', bg: 'bg-blue-50' },
+                  { label: 'Wynik harmonogramu', value: overallScore !== null ? `${overallScore}%` : '–', icon: TrendingUp,
+                    color: overallScore !== null ? (overallScore >= 80 ? 'text-emerald-600' : overallScore >= 50 ? 'text-amber-600' : 'text-red-600') : 'text-gray-400',
+                    bg: 'bg-white' },
+                ].map(s => (
+                  <div key={s.label} className={`${s.bg} rounded-2xl border border-gray-200 p-4 flex items-center gap-3`}>
+                    <s.icon className={`h-5 w-5 ${s.color}`} />
+                    <div>
+                      <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+                      <p className="text-xs text-gray-400">{s.label}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ) : data?.unassigned?.length === 0 ? (
-              <div className="text-center py-8">
-                <CheckCircle className="h-8 w-8 text-emerald-400 mx-auto mb-2" />
-                <p className="text-sm text-gray-400">Wszystkie zlecenia przypisane</p>
+            )}
+
+            {/* Legend */}
+            <div className="flex items-center gap-4 mb-4">
+              <span className="text-xs text-gray-400 font-medium">Status okna:</span>
+              {Object.entries(STATUS_STYLES).map(([key, s]) => (
+                <span key={key} className="flex items-center gap-1 text-xs">
+                  <span className={`w-2 h-2 rounded-full ${s.dot}`} />
+                  <span className="text-gray-500">{s.label}</span>
+                </span>
+              ))}
+            </div>
+
+            {/* Route cards */}
+            {loading ? (
+              <div className="space-y-4">
+                {[1,2,3].map(i => <div key={i} className="h-48 bg-white animate-pulse rounded-2xl border border-gray-200" />)}
+              </div>
+            ) : data?.routes?.length === 0 ? (
+              <div className="text-center py-16">
+                <Route className="h-12 w-12 text-gray-200 mx-auto mb-3" />
+                <p className="text-gray-400">Brak tras na wybrany dzień</p>
               </div>
             ) : (
-              data?.unassigned?.map(order => (
-                <UnassignedCard key={order.id} order={order} />
-              ))
+              <div className="space-y-4">
+                {data?.routes?.map(route => (
+                  <DroppableRoutePanel
+                    key={route.employee_id}
+                    route={route}
+                    onOptimize={handleOptimize}
+                  />
+                ))}
+              </div>
             )}
           </div>
         </div>
-
-        {/* Right: Routes */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {/* Summary bar */}
-          {summary && !loading && (
-            <div className="grid grid-cols-4 gap-4 mb-6">
-              {[
-                { label: 'Wszystkich zleceń', value: summary.total_orders, icon: Route, color: 'text-gray-900', bg: 'bg-white' },
-                { label: 'Przypisanych', value: summary.assigned, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-                { label: 'Aktywnych busów', value: summary.active_employees, icon: Car, color: 'text-blue-600', bg: 'bg-blue-50' },
-                { label: 'Wynik harmonogramu', value: overallScore !== null ? `${overallScore}%` : '–', icon: TrendingUp,
-                  color: overallScore !== null ? (overallScore >= 80 ? 'text-emerald-600' : overallScore >= 50 ? 'text-amber-600' : 'text-red-600') : 'text-gray-400',
-                  bg: 'bg-white' },
-              ].map(s => (
-                <div key={s.label} className={`${s.bg} rounded-2xl border border-gray-200 p-4 flex items-center gap-3`}>
-                  <s.icon className={`h-5 w-5 ${s.color}`} />
-                  <div>
-                    <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-                    <p className="text-xs text-gray-400">{s.label}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Legend */}
-          <div className="flex items-center gap-4 mb-4">
-            <span className="text-xs text-gray-400 font-medium">Status okna:</span>
-            {Object.entries(STATUS_STYLES).map(([key, s]) => (
-              <span key={key} className="flex items-center gap-1 text-xs">
-                <span className={`w-2 h-2 rounded-full ${s.dot}`} />
-                <span className="text-gray-500">{s.label}</span>
-              </span>
-            ))}
-          </div>
-
-          {/* Route cards */}
-          {loading ? (
-            <div className="space-y-4">
-              {[1,2,3].map(i => <div key={i} className="h-48 bg-white animate-pulse rounded-2xl border border-gray-200" />)}
-            </div>
-          ) : data?.routes?.length === 0 ? (
-            <div className="text-center py-16">
-              <Route className="h-12 w-12 text-gray-200 mx-auto mb-3" />
-              <p className="text-gray-400">Brak tras na wybrany dzień</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {data?.routes?.map(route => (
-                <RoutePanel
-                  key={route.employee_id}
-                  route={route}
-                  onOptimize={handleOptimize}
-                />
-              ))}
-            </div>
-          )}
-        </div>
       </div>
-    </div>
+
+      <DragOverlay>
+        {activeOrder ? <DragOverlayCard order={activeOrder} /> : null}
+      </DragOverlay>
+    </DndContext>
   );
 }

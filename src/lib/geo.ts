@@ -85,6 +85,38 @@ export function insertionCostKm(
   return Math.min(minCost, appendCost);
 }
 
+/**
+ * Find the best position to insert a new waypoint into an existing route.
+ * Returns the index (0-based, where 0 = before first stop) and the extra km cost.
+ */
+export function findBestInsertion(
+  existing: { lat: number; lng: number }[],
+  newPoint: { lat: number; lng: number },
+): { index: number; costKm: number } {
+  if (existing.length === 0) return { index: 0, costKm: 0 };
+  if (existing.length === 1) {
+    return { index: 1, costKm: haversineKm(existing[0].lat, existing[0].lng, newPoint.lat, newPoint.lng) };
+  }
+
+  let bestIndex = existing.length; // default: append
+  let bestCost = haversineKm(existing[existing.length - 1].lat, existing[existing.length - 1].lng, newPoint.lat, newPoint.lng);
+
+  for (let i = 0; i < existing.length - 1; i++) {
+    const current = existing[i];
+    const next = existing[i + 1];
+    const detour =
+      haversineKm(current.lat, current.lng, newPoint.lat, newPoint.lng) +
+      haversineKm(newPoint.lat, newPoint.lng, next.lat, next.lng) -
+      haversineKm(current.lat, current.lng, next.lat, next.lng);
+    if (detour < bestCost) {
+      bestCost = detour;
+      bestIndex = i + 1; // insert after position i
+    }
+  }
+
+  return { index: bestIndex, costKm: Math.round(bestCost * 10) / 10 };
+}
+
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }

@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   BarChart3, TrendingUp, DollarSign, Clock, FileDown, Calendar,
   CheckCircle2, XCircle, Loader2, RefreshCw, Car, User,
-  MapPin, AlertTriangle, Activity, Zap, Navigation,
+  MapPin, AlertTriangle, Activity, Zap, Navigation, Wallet,
+  Fuel, Briefcase, PieChart,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
@@ -453,9 +454,330 @@ function StatisticsView({ period, onPeriodChange }: { period: string; onPeriodCh
   );
 }
 
+// ── Financial report types ────────────────────────────────────────────────────
+interface FinancialReport {
+  period: { from: string; to: string };
+  revenue: {
+    total: number;
+    orders_count: number;
+    avg_per_order: number;
+    by_category: { category: string; count: number; revenue: number }[];
+    by_employee: { employee_id: string; employee_name: string; orders_count: number; revenue: number; km_driven: number }[];
+    by_day: { date: string; orders_count: number; revenue: number }[];
+  };
+  costs: {
+    total_km: number;
+    fuel_cost: number;
+    labor_hours: number;
+    labor_cost: number;
+    total: number;
+  };
+  margin: {
+    gross_revenue: number;
+    total_costs: number;
+    profit: number;
+    margin_pct: number;
+  };
+}
+
+// ── Date helpers for presets ──────────────────────────────────────────────────
+function toISO(d: Date) { return d.toISOString().split('T')[0]; }
+
+function getPresetRange(preset: string): { from: string; to: string } {
+  const now = new Date();
+  const today = toISO(now);
+  switch (preset) {
+    case 'week': {
+      const d = new Date(now);
+      const day = d.getDay() || 7; // Monday = 1
+      d.setDate(d.getDate() - day + 1);
+      return { from: toISO(d), to: today };
+    }
+    case 'month': {
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      return { from: `${y}-${m}-01`, to: today };
+    }
+    case '30days': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 30);
+      return { from: toISO(d), to: today };
+    }
+    case 'quarter': {
+      const qMonth = Math.floor(now.getMonth() / 3) * 3;
+      const qStart = new Date(now.getFullYear(), qMonth, 1);
+      return { from: toISO(qStart), to: today };
+    }
+    default:
+      return { from: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`, to: today };
+  }
+}
+
+// ── Financial (Finanse) view ─────────────────────────────────────────────────
+function FinanseView() {
+  const initRange = getPresetRange('month');
+  const [from, setFrom] = useState(initRange.from);
+  const [to, setTo] = useState(initRange.to);
+  const [data, setData] = useState<FinancialReport | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/reports/financial?from=${from}&to=${to}`);
+      const json = await res.json();
+      setData(json);
+    } catch {
+      /* ignore */
+    }
+    setLoading(false);
+  }, [from, to]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const applyPreset = (preset: string) => {
+    const r = getPresetRange(preset);
+    setFrom(r.from);
+    setTo(r.to);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-8 w-8 text-orange-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="text-center py-12 text-gray-400">
+        <DollarSign className="h-10 w-10 mx-auto mb-3 text-gray-200" />
+        <p>Nie udalo sie zaladowac danych finansowych</p>
+      </div>
+    );
+  }
+
+  const maxCatRevenue = Math.max(...data.revenue.by_category.map(c => c.revenue), 1);
+  const maxDayRevenue = Math.max(...data.revenue.by_day.map(d => d.revenue), 1);
+  const marginColor = data.margin.margin_pct >= 40 ? 'from-emerald-500 to-emerald-600' : 'from-red-500 to-red-600';
+
+  return (
+    <div className="space-y-6">
+      {/* Date range picker */}
+      <div className="flex items-center flex-wrap gap-3">
+        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2">
+          <Calendar className="h-4 w-4 text-gray-400" />
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+            className="text-sm bg-transparent outline-none text-gray-700 font-medium" />
+          <span className="text-gray-300">—</span>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)}
+            className="text-sm bg-transparent outline-none text-gray-700 font-medium" />
+        </div>
+        <div className="flex gap-1.5">
+          {[
+            { key: 'week', label: 'Ten tydzien' },
+            { key: 'month', label: 'Ten miesiac' },
+            { key: '30days', label: 'Ostatnie 30 dni' },
+            { key: 'quarter', label: 'Ten kwartal' },
+          ].map(p => (
+            <button key={p.key} onClick={() => applyPreset(p.key)}
+              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors">
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* KPI cards */}
+      <motion.div className="grid grid-cols-2 lg:grid-cols-4 gap-4" variants={ANIM.container} initial="hidden" animate="show">
+        {[
+          { label: 'Przychod', value: `${data.revenue.total.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`, icon: DollarSign, color: 'from-emerald-500 to-emerald-600' },
+          { label: 'Zamowienia', value: data.revenue.orders_count.toString(), icon: BarChart3, color: 'from-blue-500 to-blue-600' },
+          { label: 'Sr. per zamowienie', value: `${data.revenue.avg_per_order.toFixed(2)} zl`, icon: TrendingUp, color: 'from-amber-500 to-amber-600' },
+          { label: `Marza ${data.margin.margin_pct}%`, value: `${data.margin.profit.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`, icon: PieChart, color: marginColor },
+        ].map(kpi => (
+          <motion.div key={kpi.label} variants={ANIM.item}
+            className={`rounded-2xl bg-gradient-to-br ${kpi.color} p-5 text-white shadow-lg relative overflow-hidden`}>
+            <p className="text-sm text-white/80">{kpi.label}</p>
+            <p className="text-2xl font-bold mt-1">{kpi.value}</p>
+            <kpi.icon className="absolute -right-2 -bottom-2 h-16 w-16 text-white/10" />
+          </motion.div>
+        ))}
+      </motion.div>
+
+      {/* Revenue by category */}
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+        <Card className="rounded-2xl border-gray-100 shadow-sm">
+          <CardHeader><CardTitle className="text-base font-bold">Przychod wg kategorii</CardTitle></CardHeader>
+          <CardContent>
+            {data.revenue.by_category.length === 0 ? (
+              <p className="text-center text-gray-400 py-8">Brak danych</p>
+            ) : (
+              <div className="space-y-3">
+                {data.revenue.by_category.map(cat => (
+                  <div key={cat.category} className="flex items-center gap-3">
+                    <span className="w-24 text-sm text-gray-600 truncate">{cat.category}</span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
+                      <motion.div
+                        className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${(cat.revenue / maxCatRevenue * 100)}%` }}
+                        transition={{ duration: 0.6 }}
+                      />
+                    </div>
+                    <span className="text-sm font-bold text-gray-900 w-28 text-right">{cat.revenue.toFixed(0)} zl</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Revenue by employee */}
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+        <Card className="rounded-2xl border-gray-100 shadow-sm">
+          <CardHeader><CardTitle className="text-base font-bold">Przychod wg pracownika</CardTitle></CardHeader>
+          <CardContent>
+            {data.revenue.by_employee.length === 0 ? (
+              <p className="text-center text-gray-400 py-8">Brak danych</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      <th className="text-left py-2 font-semibold text-gray-600">Pracownik</th>
+                      <th className="text-right py-2 font-semibold text-gray-600">Zlecen</th>
+                      <th className="text-right py-2 font-semibold text-gray-600">Przychod</th>
+                      <th className="text-right py-2 font-semibold text-gray-600">km</th>
+                      <th className="text-right py-2 font-semibold text-gray-600">Przychod/km</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.revenue.by_employee.map(emp => (
+                      <tr key={emp.employee_id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                        <td className="py-2.5 font-medium text-gray-800">{emp.employee_name}</td>
+                        <td className="py-2.5 text-right text-gray-600">{emp.orders_count}</td>
+                        <td className="py-2.5 text-right font-bold text-gray-900">{emp.revenue.toLocaleString('pl-PL')} zl</td>
+                        <td className="py-2.5 text-right text-gray-600">{emp.km_driven}</td>
+                        <td className="py-2.5 text-right text-gray-600">
+                          {emp.km_driven > 0 ? (emp.revenue / emp.km_driven).toFixed(1) : '—'} zl
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Daily trend */}
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
+        <Card className="rounded-2xl border-gray-100 shadow-sm">
+          <CardHeader><CardTitle className="text-base font-bold">Trend dzienny</CardTitle></CardHeader>
+          <CardContent>
+            {data.revenue.by_day.length === 0 ? (
+              <p className="text-center text-gray-400 py-8">Brak danych</p>
+            ) : (
+              <div className="flex items-end gap-1 h-48 overflow-x-auto pb-1">
+                {data.revenue.by_day.map(day => (
+                  <div key={day.date} className="flex flex-col items-center gap-1 flex-1 min-w-[24px]">
+                    <span className="text-[9px] text-gray-400 font-medium">{day.revenue > 0 ? `${(day.revenue / 1000).toFixed(1)}k` : ''}</span>
+                    <motion.div
+                      className="w-full max-w-[24px] bg-gradient-to-t from-blue-500 to-blue-400 rounded-t"
+                      initial={{ height: 0 }}
+                      animate={{ height: `${(day.revenue / maxDayRevenue * 100)}%` }}
+                      transition={{ duration: 0.5 }}
+                      style={{ minHeight: day.revenue > 0 ? '4px' : '0px' }}
+                    />
+                    <span className="text-[10px] text-gray-400">{day.date.slice(8)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Costs breakdown */}
+      <motion.div className="grid grid-cols-1 sm:grid-cols-3 gap-4"
+        variants={ANIM.container} initial="hidden" animate="show">
+        {[
+          {
+            label: 'Paliwo',
+            value: `${data.costs.fuel_cost.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`,
+            sub: `${data.costs.total_km} km x 0.50 zl`,
+            icon: Fuel,
+            color: 'text-amber-600',
+            bg: 'bg-amber-50',
+          },
+          {
+            label: 'Robocizna',
+            value: `${data.costs.labor_cost.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`,
+            sub: `${data.costs.labor_hours} h`,
+            icon: Briefcase,
+            color: 'text-blue-600',
+            bg: 'bg-blue-50',
+          },
+          {
+            label: 'Razem koszty',
+            value: `${data.costs.total.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`,
+            sub: 'paliwo + robocizna',
+            icon: Wallet,
+            color: 'text-red-600',
+            bg: 'bg-red-50',
+          },
+        ].map(c => (
+          <motion.div key={c.label} variants={ANIM.item}
+            className={`${c.bg} rounded-2xl border border-gray-100 p-5`}>
+            <div className="flex items-center gap-2 mb-2">
+              <c.icon className={`h-5 w-5 ${c.color}`} />
+              <p className="text-sm font-semibold text-gray-700">{c.label}</p>
+            </div>
+            <p className={`text-2xl font-bold ${c.color}`}>{c.value}</p>
+            <p className="text-xs text-gray-400 mt-1">{c.sub}</p>
+          </motion.div>
+        ))}
+      </motion.div>
+
+      {/* Profit summary */}
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+        <div className={`rounded-2xl p-6 bg-gradient-to-br ${data.margin.margin_pct >= 40 ? 'from-emerald-500 to-emerald-600' : data.margin.margin_pct >= 0 ? 'from-amber-500 to-amber-600' : 'from-red-500 to-red-600'} text-white shadow-lg relative overflow-hidden`}>
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp className="h-5 w-5 text-white/80" />
+            <p className="text-sm font-semibold text-white/80">Podsumowanie zysku</p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div>
+              <p className="text-xs text-white/60">Przychod</p>
+              <p className="text-xl font-bold">{data.margin.gross_revenue.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl</p>
+            </div>
+            <div>
+              <p className="text-xs text-white/60">Koszty</p>
+              <p className="text-xl font-bold">-{data.margin.total_costs.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl</p>
+            </div>
+            <div>
+              <p className="text-xs text-white/60">Zysk</p>
+              <p className="text-3xl font-black">{data.margin.profit.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl</p>
+            </div>
+            <div>
+              <p className="text-xs text-white/60">Marza</p>
+              <p className="text-3xl font-black">{data.margin.margin_pct}%</p>
+            </div>
+          </div>
+          <DollarSign className="absolute -right-4 -bottom-4 h-24 w-24 text-white/10" />
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ReportsPage() {
-  const [tab, setTab] = useState<'operational' | 'stats'>('operational');
+  const [tab, setTab] = useState<'operational' | 'stats' | 'finance'>('operational');
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [period, setPeriod] = useState('month');
 
@@ -474,6 +796,7 @@ export default function ReportsPage() {
             {[
               { key: 'operational', label: 'Operacyjny', icon: Activity },
               { key: 'stats',       label: 'Statystyki', icon: BarChart3 },
+              { key: 'finance',     label: 'Finanse',    icon: Wallet },
             ].map(t => (
               <button
                 key={t.key}
@@ -512,6 +835,11 @@ export default function ReportsPage() {
           {tab === 'stats' && (
             <motion.div key="st" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
               <StatisticsView period={period} onPeriodChange={setPeriod} />
+            </motion.div>
+          )}
+          {tab === 'finance' && (
+            <motion.div key="fin" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+              <FinanseView />
             </motion.div>
           )}
         </AnimatePresence>

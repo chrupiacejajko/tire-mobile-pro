@@ -9,9 +9,11 @@ import {
   MapPin, Navigation, RefreshCw, X, Gauge, Compass,
   Clock, Truck, User, Search, ExternalLink, History,
   Activity, Route, ChevronRight, AlertCircle,
+  Plus, Phone, Briefcase, Target, Zap, ArrowRight, Package, CheckCircle2, Loader2, ChevronDown,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { cn } from '@/lib/utils';
+import { createClient } from '@/lib/supabase/client';
 
 const MapContainer = dynamic(() => import('react-leaflet').then(m => m.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import('react-leaflet').then(m => m.TileLayer), { ssr: false });
@@ -64,6 +66,26 @@ interface EmployeeRoute {
   waypoints: { lat: number; lng: number }[];
 }
 
+interface MapOrder {
+  id: string;
+  status: string;
+  priority: string;
+  scheduled_date: string;
+  scheduled_time_start: string | null;
+  time_window: string | null;
+  services: { name: string; price: number }[];
+  employee_id: string | null;
+  employee_name: string | null;
+  client_name: string | null;
+  client_phone: string | null;
+  client_address: string | null;
+  city: string | null;
+  lat: number | null;
+  lng: number | null;
+  total_price: number;
+  notes: string | null;
+}
+
 /* ─── Constants ──────────────────────────────────────────────────────── */
 const STATUS_COLORS: Record<string, string> = {
   driving: '#3B82F6', working: '#F59E0B', online: '#10B981', offline: '#6B7280',
@@ -77,6 +99,20 @@ const PRIORITY_COLORS: Record<string, string> = {
 const DIRECTION_DEG: Record<string, number> = {
   N: 0, NNE: 22.5, NE: 45, ENE: 67.5, E: 90, ESE: 112.5, SE: 135, SSE: 157.5,
   S: 180, SSW: 202.5, SW: 225, WSW: 247.5, W: 270, WNW: 292.5, NW: 315, NNW: 337.5,
+};
+
+const ORDER_STATUS_COLORS: Record<string, string> = {
+  new: '#9CA3AF',
+  assigned: '#F59E0B',
+  in_progress: '#3B82F6',
+  completed: '#10B981',
+  cancelled: '#EF4444',
+};
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  new: 'Nowe', assigned: 'Przypisane', in_progress: 'W trakcie', completed: 'Zakończone', cancelled: 'Anulowane',
+};
+const TIME_WINDOW_LABELS: Record<string, string> = {
+  morning: '🌅 Rano (8-12)', afternoon: '☀️ Południe (12-16)', evening: '🌇 Wieczór (16-20)',
 };
 
 /* ─── Helpers ────────────────────────────────────────────────────────── */
@@ -159,7 +195,7 @@ function CompassRose({ direction }: { direction: string | null }) {
 }
 
 /* ─── Sidebar tabs ───────────────────────────────────────────────────── */
-type SidebarTab = 'vehicles' | 'routes';
+type SidebarTab = 'vehicles' | 'routes' | 'orders';
 
 /* ─── Vehicle card ───────────────────────────────────────────────────── */
 function VehicleCard({ vehicle, selected, onClick }: { vehicle: VehicleData; selected: boolean; onClick: () => void }) {
@@ -238,7 +274,64 @@ function RouteCard({ route, selected, onClick }: { route: EmployeeRoute; selecte
   );
 }
 
-/* ─── Detail panel ───────────────────────────────────────────────────── */
+/* ─── Order card (sidebar) ───────────────────────────────────────────── */
+function OrderCard({ order, selected, onClick }: { order: MapOrder; selected: boolean; onClick: () => void }) {
+  const color = order.priority === 'urgent' ? '#EF4444' : ORDER_STATUS_COLORS[order.status] || '#9CA3AF';
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full text-left p-3 rounded-xl border transition-all duration-150',
+        selected ? 'border-orange-400 bg-orange-50 shadow-sm' : 'border-gray-100 bg-white hover:bg-gray-50',
+      )}
+    >
+      <div className="flex items-start gap-2.5">
+        <div className="mt-0.5 relative flex-shrink-0">
+          <div className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
+          {order.priority === 'urgent' && (
+            <div className="absolute inset-0 h-3 w-3 rounded-full animate-ping opacity-60" style={{ backgroundColor: '#EF4444' }} />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-bold text-gray-900">{order.client_name ?? 'Brak klienta'}</span>
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+              style={{ backgroundColor: color + '20', color }}>
+              {ORDER_STATUS_LABELS[order.status] ?? order.status}
+            </span>
+          </div>
+          {order.client_address && (
+            <p className="text-[11px] text-gray-400 truncate mt-0.5 flex items-center gap-1">
+              <MapPin className="h-2.5 w-2.5 flex-shrink-0" />{order.client_address}{order.city ? `, ${order.city}` : ''}
+            </p>
+          )}
+          <div className="flex items-center gap-2 mt-1">
+            {order.time_window && (
+              <span className="text-[11px] text-gray-500">{TIME_WINDOW_LABELS[order.time_window] ?? order.time_window}</span>
+            )}
+            {order.scheduled_time_start && (
+              <span className="text-[11px] text-gray-400">{order.scheduled_time_start.slice(0, 5)}</span>
+            )}
+          </div>
+          {order.services?.length > 0 && (
+            <p className="text-[11px] text-gray-400 truncate mt-0.5">
+              {order.services.map(s => s.name).join(', ')}
+            </p>
+          )}
+          {order.employee_name ? (
+            <p className="text-[11px] text-blue-500 mt-0.5 flex items-center gap-1">
+              <User className="h-2.5 w-2.5" />{order.employee_name}
+            </p>
+          ) : (
+            <p className="text-[11px] text-orange-500 font-medium mt-0.5">⚠ Nieprzypisane</p>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/* ─── Vehicle Detail panel ───────────────────────────────────────────── */
 function VehicleDetailPanel({ vehicle, route, onClose }: { vehicle: VehicleData; route: EmployeeRoute | null; onClose: () => void }) {
   const color = STATUS_COLORS[vehicle.status] || STATUS_COLORS.offline;
   const [showOrders, setShowOrders] = useState(false);
@@ -387,6 +480,521 @@ function VehicleDetailPanel({ vehicle, route, onClose }: { vehicle: VehicleData;
   );
 }
 
+/* ─── Order Detail panel ─────────────────────────────────────────────── */
+function OrderDetailPanel({ order, onClose, onRefresh }: { order: MapOrder; onClose: () => void; onRefresh: () => void }) {
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [loadingSuggest, setLoadingSuggest] = useState(false);
+  const [assigning, setAssigning] = useState<string | null>(null);
+
+  const handleSuggest = async () => {
+    setLoadingSuggest(true);
+    try {
+      const res = await fetch('/api/planner/suggest-insert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: order.id }),
+      });
+      const data = await res.json();
+      setSuggestions(data.suggestions ?? []);
+    } catch { /* ignore */ }
+    setLoadingSuggest(false);
+  };
+
+  const handleAssign = async (employeeId: string) => {
+    setAssigning(employeeId);
+    try {
+      await fetch('/api/planner/insert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: order.id, employee_id: employeeId }),
+      });
+      onRefresh();
+      onClose();
+    } catch { /* ignore */ }
+    setAssigning(null);
+  };
+
+  const statusColor = order.priority === 'urgent' ? '#EF4444' : ORDER_STATUS_COLORS[order.status] || '#9CA3AF';
+
+  return (
+    <motion.div
+      initial={{ x: 380, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 380, opacity: 0 }}
+      transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+      className="w-[380px] flex-shrink-0 bg-white border-l border-gray-100 flex flex-col overflow-y-auto"
+    >
+      {/* Header */}
+      <div className="p-5 border-b border-gray-100">
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">{order.client_name ?? 'Brak klienta'}</h2>
+            {order.client_address && (
+              <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-1">
+                <MapPin className="h-3.5 w-3.5 flex-shrink-0" />{order.client_address}{order.city ? `, ${order.city}` : ''}
+              </p>
+            )}
+          </div>
+          <button onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-400 transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Status bar */}
+      <div className="flex items-center justify-center gap-3 py-2.5 text-white font-semibold text-sm"
+        style={{ backgroundColor: statusColor }}>
+        {order.priority === 'urgent' && <span className="h-2 w-2 rounded-full bg-white animate-pulse" />}
+        <span>{ORDER_STATUS_LABELS[order.status] ?? order.status}</span>
+        {order.priority === 'urgent' && <span className="text-xs font-bold bg-white/20 px-2 py-0.5 rounded-full">PILNE</span>}
+        {order.priority === 'high' && <span className="text-xs font-bold bg-white/20 px-2 py-0.5 rounded-full">Wysoki</span>}
+      </div>
+
+      <div className="p-5 space-y-5">
+        {/* Services */}
+        {order.services?.length > 0 && (
+          <div className="bg-gray-50 rounded-xl p-3.5">
+            <div className="flex items-center gap-1.5 text-gray-400 mb-2">
+              <Briefcase className="h-3.5 w-3.5" />
+              <span className="text-[11px] font-medium uppercase tracking-wider">Usługi</span>
+            </div>
+            <div className="space-y-1.5">
+              {order.services.map((s, i) => (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <span className="text-gray-700">{s.name}</span>
+                  <span className="text-gray-500 font-mono text-xs">{s.price.toFixed(2)} zł</span>
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-gray-200 mt-2 pt-2 flex items-center justify-between">
+              <span className="text-sm font-semibold text-gray-700">Razem</span>
+              <span className="text-sm font-bold text-gray-900">{order.total_price.toFixed(2)} zł</span>
+            </div>
+          </div>
+        )}
+
+        {/* Time & Priority */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="bg-gray-50 rounded-xl p-3 text-center">
+            <div className="flex items-center justify-center gap-1 mb-1">
+              <Clock className="h-3.5 w-3.5 text-gray-400" />
+              <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400">Okno czasowe</span>
+            </div>
+            <p className="text-sm font-bold text-gray-900">
+              {order.time_window ? (TIME_WINDOW_LABELS[order.time_window] ?? order.time_window) : '—'}
+            </p>
+            {order.scheduled_time_start && (
+              <p className="text-xs text-gray-400 mt-0.5">{order.scheduled_time_start.slice(0, 5)}</p>
+            )}
+          </div>
+          <div className="bg-gray-50 rounded-xl p-3 text-center">
+            <div className="flex items-center justify-center gap-1 mb-1">
+              <Zap className="h-3.5 w-3.5 text-gray-400" />
+              <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400">Priorytet</span>
+            </div>
+            <p className="text-sm font-bold" style={{ color: PRIORITY_COLORS[order.priority] || '#6B7280' }}>
+              {order.priority === 'urgent' ? 'Pilny' : order.priority === 'high' ? 'Wysoki' : order.priority === 'low' ? 'Niski' : 'Normalny'}
+            </p>
+          </div>
+        </div>
+
+        {/* Notes */}
+        {order.notes && (
+          <div className="bg-amber-50 border border-amber-100 rounded-xl p-3.5">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-amber-600 mb-1">Notatki</p>
+            <p className="text-sm text-amber-900">{order.notes}</p>
+          </div>
+        )}
+
+        {/* Assignment */}
+        <div className="border border-gray-100 rounded-xl p-3.5">
+          <div className="flex items-center gap-1.5 text-gray-400 mb-2">
+            <User className="h-3.5 w-3.5" />
+            <span className="text-[11px] font-medium uppercase tracking-wider">Przypisanie</span>
+          </div>
+          {order.employee_name ? (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
+                  {getInitials(order.employee_name)}
+                </div>
+                <span className="text-sm font-semibold text-gray-900">{order.employee_name}</span>
+              </div>
+              <button onClick={handleSuggest} className="text-xs text-blue-500 font-medium hover:underline">
+                Zmień
+              </button>
+            </div>
+          ) : (
+            <div>
+              <p className="text-sm text-orange-500 font-medium mb-2">⚠ Nieprzypisane do pracownika</p>
+              <button
+                onClick={handleSuggest}
+                disabled={loadingSuggest}
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors disabled:opacity-50"
+              >
+                {loadingSuggest ? <Loader2 className="h-4 w-4 animate-spin" /> : <Target className="h-4 w-4" />}
+                Sugeruj pracownika
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Suggestions */}
+        {suggestions.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Sugestie przypisania</p>
+            {suggestions.slice(0, 3).map((s: any) => (
+              <div key={s.employee_id} className="border border-gray-100 rounded-xl p-3 flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-900">{s.employee_name}</p>
+                  {s.plate && <p className="text-xs text-gray-400 font-mono">{s.plate}</p>}
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className="text-[11px] text-gray-500">+{s.extra_km?.toFixed(1) ?? '?'} km</span>
+                    <span className="text-[11px] text-gray-500">{s.current_orders ?? 0} zleceń</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleAssign(s.employee_id)}
+                  disabled={assigning === s.employee_id}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                >
+                  {assigning === s.employee_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
+                  Przypisz
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="space-y-2">
+          {order.client_phone && (
+            <Button className="w-full rounded-xl bg-emerald-500 hover:bg-emerald-600"
+              onClick={() => window.open(`tel:${order.client_phone}`, '_self')}>
+              <Phone className="h-4 w-4 mr-2" />Zadzwoń do klienta
+            </Button>
+          )}
+          {order.lat && order.lng && (
+            <Button variant="outline" className="w-full rounded-xl"
+              onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${order.lat},${order.lng}`, '_blank')}>
+              <Navigation className="h-4 w-4 mr-2" />Nawiguj do klienta
+            </Button>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ─── Quick Add Order panel ──────────────────────────────────────────── */
+function QuickAddOrderPanel({ onClose, onRefresh }: { onClose: () => void; onRefresh: () => void }) {
+  const [clientName, setClientName] = useState('');
+  const [clientPhone, setClientPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [city, setCity] = useState('');
+  const [priority, setPriority] = useState<string>('urgent');
+  const [timeWindow, setTimeWindow] = useState<string>('morning');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [createdOrderId, setCreatedOrderId] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [loadingSuggest, setLoadingSuggest] = useState(false);
+  const [assigning, setAssigning] = useState<string | null>(null);
+  const [services, setServices] = useState<{ id: string; name: string; price: number }[]>([]);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  const [showServices, setShowServices] = useState(false);
+
+  useEffect(() => {
+    const loadServices = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.from('services').select('id, name, base_price').eq('is_active', true).order('name');
+        if (data) setServices(data.map(s => ({ id: s.id, name: s.name, price: s.base_price ?? 0 })));
+      } catch { /* ignore */ }
+    };
+    loadServices();
+  }, []);
+
+  const toggleService = (id: string) => {
+    setSelectedServiceIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const handleSubmit = async () => {
+    if (!clientName.trim()) return;
+    setSubmitting(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: clientName,
+          client_phone: clientPhone || null,
+          address: address || null,
+          city: city || null,
+          priority,
+          time_window: timeWindow,
+          scheduled_date: today,
+          notes: notes || null,
+          service_ids: selectedServiceIds.length > 0 ? selectedServiceIds : undefined,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const orderId = data.id ?? data.order?.id;
+        if (orderId) {
+          setCreatedOrderId(orderId);
+          // Auto-suggest
+          setLoadingSuggest(true);
+          try {
+            const sRes = await fetch('/api/planner/suggest-insert', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ order_id: orderId }),
+            });
+            const sData = await sRes.json();
+            setSuggestions(sData.suggestions ?? []);
+          } catch { /* ignore */ }
+          setLoadingSuggest(false);
+        } else {
+          onRefresh();
+          onClose();
+        }
+      }
+    } catch { /* ignore */ }
+    setSubmitting(false);
+  };
+
+  const handleAssign = async (employeeId: string) => {
+    if (!createdOrderId) return;
+    setAssigning(employeeId);
+    try {
+      await fetch('/api/planner/insert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: createdOrderId, employee_id: employeeId }),
+      });
+      onRefresh();
+      onClose();
+    } catch { /* ignore */ }
+    setAssigning(null);
+  };
+
+  const priorityOptions = [
+    { value: 'low', label: 'Niski', color: '#9CA3AF' },
+    { value: 'normal', label: 'Normalny', color: '#6B7280' },
+    { value: 'high', label: 'Wysoki', color: '#F97316' },
+    { value: 'urgent', label: 'Pilny', color: '#EF4444' },
+  ];
+
+  const timeWindowOptions = [
+    { value: 'morning', label: '🌅 Rano', sub: '8-12' },
+    { value: 'afternoon', label: '☀️ Południe', sub: '12-16' },
+    { value: 'evening', label: '🌇 Wieczór', sub: '16-20' },
+  ];
+
+  return (
+    <motion.div
+      initial={{ x: 380, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 380, opacity: 0 }}
+      transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+      className="w-[380px] flex-shrink-0 bg-white border-l border-gray-100 flex flex-col overflow-y-auto"
+    >
+      {/* Header */}
+      <div className="p-5 border-b border-gray-100">
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Nowe zlecenie</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Szybkie dodawanie z mapy</p>
+          </div>
+          <button onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-400 transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="p-5 space-y-4">
+        {!createdOrderId ? (
+          <>
+            {/* Client name */}
+            <div>
+              <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Klient</label>
+              <Input placeholder="Imię i nazwisko" value={clientName} onChange={e => setClientName(e.target.value)}
+                className="h-9 text-sm rounded-xl" />
+            </div>
+
+            {/* Phone */}
+            <div>
+              <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Telefon</label>
+              <Input placeholder="+48 ..." value={clientPhone} onChange={e => setClientPhone(e.target.value)}
+                className="h-9 text-sm rounded-xl" />
+            </div>
+
+            {/* Address */}
+            <div>
+              <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Adres</label>
+              <Input placeholder="ul. Przykładowa 1" value={address} onChange={e => setAddress(e.target.value)}
+                className="h-9 text-sm rounded-xl" />
+            </div>
+
+            {/* City */}
+            <div>
+              <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Miasto</label>
+              <Input placeholder="Warszawa" value={city} onChange={e => setCity(e.target.value)}
+                className="h-9 text-sm rounded-xl" />
+            </div>
+
+            {/* Services multi-select */}
+            {services.length > 0 && (
+              <div>
+                <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Usługi</label>
+                <button
+                  onClick={() => setShowServices(!showServices)}
+                  className="w-full flex items-center justify-between h-9 px-3 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+                >
+                  <span className={selectedServiceIds.length === 0 ? 'text-gray-400' : ''}>
+                    {selectedServiceIds.length === 0 ? 'Wybierz usługi...' : `${selectedServiceIds.length} wybranych`}
+                  </span>
+                  <ChevronDown className={cn('h-3.5 w-3.5 text-gray-400 transition-transform', showServices && 'rotate-180')} />
+                </button>
+                {showServices && (
+                  <div className="mt-1 border border-gray-200 rounded-xl overflow-hidden max-h-40 overflow-y-auto">
+                    {services.map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => toggleService(s.id)}
+                        className={cn(
+                          'w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 transition-colors',
+                          selectedServiceIds.includes(s.id) ? 'bg-orange-50' : '',
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={cn(
+                            'h-4 w-4 rounded border flex items-center justify-center',
+                            selectedServiceIds.includes(s.id) ? 'bg-orange-500 border-orange-500' : 'border-gray-300',
+                          )}>
+                            {selectedServiceIds.includes(s.id) && <CheckCircle2 className="h-3 w-3 text-white" />}
+                          </div>
+                          <span className="text-gray-700">{s.name}</span>
+                        </div>
+                        <span className="text-xs text-gray-400 font-mono">{s.price.toFixed(0)} zł</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Priority */}
+            <div>
+              <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5 block">Priorytet</label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {priorityOptions.map(p => (
+                  <button key={p.value} onClick={() => setPriority(p.value)}
+                    className={cn(
+                      'py-1.5 px-2 rounded-lg text-xs font-medium transition-all border',
+                      priority === p.value ? 'border-opacity-100 shadow-sm' : 'border-gray-100 text-gray-500 hover:bg-gray-50',
+                    )}
+                    style={priority === p.value ? { borderColor: p.color, backgroundColor: p.color + '15', color: p.color } : {}}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Time window */}
+            <div>
+              <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5 block">Okno czasowe</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {timeWindowOptions.map(tw => (
+                  <button key={tw.value} onClick={() => setTimeWindow(tw.value)}
+                    className={cn(
+                      'py-2 px-2 rounded-lg text-xs font-medium transition-all border text-center',
+                      timeWindow === tw.value
+                        ? 'border-orange-400 bg-orange-50 text-orange-700 shadow-sm'
+                        : 'border-gray-100 text-gray-500 hover:bg-gray-50',
+                    )}
+                  >
+                    <span className="block">{tw.label}</span>
+                    <span className="block text-[10px] mt-0.5 opacity-70">{tw.sub}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Notes */}
+            <div>
+              <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Notatki</label>
+              <textarea
+                placeholder="Dodatkowe informacje..."
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                className="w-full h-20 px-3 py-2 border border-gray-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
+              />
+            </div>
+
+            {/* Submit */}
+            <Button
+              onClick={handleSubmit}
+              disabled={submitting || !clientName.trim()}
+              className="w-full rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white h-10"
+            >
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+              {submitting ? 'Tworzenie...' : 'Utwórz zlecenie'}
+            </Button>
+          </>
+        ) : (
+          /* After creation — show suggestions */
+          <div className="space-y-4">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-center">
+              <CheckCircle2 className="h-6 w-6 text-emerald-500 mx-auto mb-1" />
+              <p className="text-sm font-semibold text-emerald-800">Zlecenie utworzone!</p>
+              <p className="text-xs text-emerald-600 mt-0.5">Wybierz pracownika do przypisania</p>
+            </div>
+
+            {loadingSuggest ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                <span className="ml-2 text-sm text-gray-500">Szukam najlepszego pracownika...</span>
+              </div>
+            ) : suggestions.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Sugestie przypisania</p>
+                {suggestions.slice(0, 3).map((s: any) => (
+                  <div key={s.employee_id} className="border border-gray-100 rounded-xl p-3 flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-900">{s.employee_name}</p>
+                      {s.plate && <p className="text-xs text-gray-400 font-mono">{s.plate}</p>}
+                      <div className="flex items-center gap-3 mt-0.5">
+                        <span className="text-[11px] text-gray-500">+{s.extra_km?.toFixed(1) ?? '?'} km</span>
+                        <span className="text-[11px] text-gray-500">{s.current_orders ?? 0} zleceń</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleAssign(s.employee_id)}
+                      disabled={assigning === s.employee_id}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                    >
+                      {assigning === s.employee_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
+                      Przypisz
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-4">
+                <p className="text-sm text-gray-400">Brak sugestii — przypisz ręcznie w panelu zleceń</p>
+              </div>
+            )}
+
+            <Button variant="outline" className="w-full rounded-xl" onClick={() => { onRefresh(); onClose(); }}>
+              Zamknij
+            </Button>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 /* ─── FlyToEffect ────────────────────────────────────────────────────── */
 function FlyToEffect({ lat, lng, mapRef, key: _key }: { lat: number; lng: number; mapRef: React.MutableRefObject<any>; key: string }) {
   useEffect(() => {
@@ -399,12 +1007,17 @@ function FlyToEffect({ lat, lng, mapRef, key: _key }: { lat: number; lng: number
 export default function MapPage() {
   const [vehicles, setVehicles] = useState<VehicleData[]>([]);
   const [routes, setRoutes] = useState<EmployeeRoute[]>([]);
+  const [allOrders, setAllOrders] = useState<MapOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleData | null>(null);
   const [selectedRoute, setSelectedRoute] = useState<EmployeeRoute | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<MapOrder | null>(null);
   const [tab, setTab] = useState<SidebarTab>('vehicles');
-  const [showRoutes, setShowRoutes] = useState(true);
+  const [showRouteLines, setShowRouteLines] = useState(true);
+  const [showOrders, setShowOrders] = useState(true);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [orderFilter, setOrderFilter] = useState<string>('all');
   const [countdown, setCountdown] = useState(30);
   const mapRef = useRef<any>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -413,9 +1026,10 @@ export default function MapPage() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [vRes, rRes] = await Promise.all([
+      const [vRes, rRes, oRes] = await Promise.all([
         fetch('/api/vehicles/locations'),
         fetch(`/api/dispatcher/routes?date=${today}`),
+        fetch(`/api/dispatcher/orders?date=${today}`),
       ]);
       if (vRes.ok) {
         const data = await vRes.json();
@@ -425,6 +1039,10 @@ export default function MapPage() {
       if (rRes.ok) {
         const data = await rRes.json();
         setRoutes(data.routes ?? []);
+      }
+      if (oRes.ok) {
+        const data = await oRes.json();
+        setAllOrders(data.orders ?? []);
       }
     } catch (err) {
       console.error('[MapPage]', err);
@@ -462,8 +1080,19 @@ export default function MapPage() {
     return r.employee_name.toLowerCase().includes(q) || (r.plate?.toLowerCase().includes(q) ?? false);
   });
 
+  const filteredOrders = allOrders.filter(o => {
+    const q = search.toLowerCase();
+    const matchSearch = (o.client_name?.toLowerCase().includes(q) ?? false) ||
+      (o.client_address?.toLowerCase().includes(q) ?? false) ||
+      (o.employee_name?.toLowerCase().includes(q) ?? false) ||
+      (o.city?.toLowerCase().includes(q) ?? false);
+    const matchFilter = orderFilter === 'all' || o.status === orderFilter;
+    return matchSearch && matchFilter;
+  });
+
   const handleSelectVehicle = (v: VehicleData) => {
     setSelectedVehicle(prev => prev?.id === v.id ? null : v);
+    setSelectedOrder(null);
     // Find matching route for this vehicle's driver
     const matchRoute = routes.find(r => r.plate === v.plate_number || r.employee_name === v.driver_name);
     setSelectedRoute(matchRoute ?? null);
@@ -472,19 +1101,40 @@ export default function MapPage() {
   const handleSelectRoute = (r: EmployeeRoute) => {
     setSelectedRoute(prev => prev?.employee_id === r.employee_id ? null : r);
     setSelectedVehicle(null);
+    setSelectedOrder(null);
     // Fly to first waypoint
     if (r.waypoints.length > 0 && mapRef.current) {
       mapRef.current.flyTo([r.waypoints[0].lat, r.waypoints[0].lng], 12, { animate: true, duration: 1 });
     }
   };
 
+  const handleSelectOrder = (o: MapOrder) => {
+    setSelectedOrder(prev => prev?.id === o.id ? null : o);
+    setSelectedVehicle(null);
+    setSelectedRoute(null);
+    // Fly to order location
+    if (o.lat && o.lng && mapRef.current) {
+      mapRef.current.flyTo([o.lat, o.lng], 14, { animate: true, duration: 1 });
+    }
+  };
+
   const drivingCount = vehicles.filter(v => v.status === 'driving').length;
   const onlineCount = vehicles.filter(v => v.status !== 'offline').length;
   const totalOrdersToday = routes.reduce((s, r) => s + r.total_orders, 0);
+  const unassignedCount = allOrders.filter(o => !o.employee_id && o.status === 'new').length;
+
+  const orderCountAll = allOrders.length;
+  const orderCountNew = allOrders.filter(o => o.status === 'new').length;
+  const orderCountAssigned = allOrders.filter(o => o.status === 'assigned').length;
+  const orderCountInProgress = allOrders.filter(o => o.status === 'in_progress').length;
 
   return (
     <div className="flex flex-col" style={{ height: '100vh' }}>
-      <Topbar title="Mapa dyspozytora" subtitle={`${onlineCount} online · ${drivingCount} w trasie · ${totalOrdersToday} zleceń dziś`} icon={<Truck className="h-5 w-5" />} />
+      <Topbar
+        title="Mapa dyspozytora"
+        subtitle={`${onlineCount} online · ${drivingCount} w trasie · ${totalOrdersToday} zleceń · ${unassignedCount > 0 ? `⚠ ${unassignedCount} nieprzypisanych` : '✓ wszystkie przypisane'}`}
+        icon={<Truck className="h-5 w-5" />}
+      />
 
       <div className="flex flex-1 overflow-hidden" style={{ height: 'calc(100vh - 64px)' }}>
         {/* ── Sidebar ── */}
@@ -516,6 +1166,9 @@ export default function MapPage() {
               <button onClick={() => setTab('routes')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'routes' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
                 <Route className="h-3.5 w-3.5 inline mr-1" />Trasy
               </button>
+              <button onClick={() => setTab('orders')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'orders' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
+                <Package className="h-3.5 w-3.5 inline mr-1" />Zlecenia
+              </button>
             </div>
           </div>
 
@@ -531,12 +1184,41 @@ export default function MapPage() {
               ) : filteredVehicles.map(v => (
                 <VehicleCard key={v.id} vehicle={v} selected={selectedVehicle?.id === v.id} onClick={() => handleSelectVehicle(v)} />
               ))
-            ) : (
+            ) : tab === 'routes' ? (
               filteredRoutes.length === 0 ? (
                 <div className="text-center py-12 text-gray-400"><Route className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak tras na dziś</p></div>
               ) : filteredRoutes.map(r => (
                 <RouteCard key={r.employee_id} route={r} selected={selectedRoute?.employee_id === r.employee_id} onClick={() => handleSelectRoute(r)} />
               ))
+            ) : (
+              /* Orders tab */
+              <>
+                {/* Order count badges */}
+                <div className="flex flex-wrap items-center gap-1 pb-2">
+                  {[
+                    { key: 'all', label: 'Wszystkie', count: orderCountAll },
+                    { key: 'new', label: 'Nowe', count: orderCountNew },
+                    { key: 'assigned', label: 'Przypisane', count: orderCountAssigned },
+                    { key: 'in_progress', label: 'W trakcie', count: orderCountInProgress },
+                  ].map(f => (
+                    <button
+                      key={f.key}
+                      onClick={() => setOrderFilter(f.key)}
+                      className={cn(
+                        'text-[11px] font-medium px-2 py-1 rounded-lg transition-all',
+                        orderFilter === f.key ? 'bg-orange-100 text-orange-700' : 'bg-gray-50 text-gray-500 hover:bg-gray-100',
+                      )}
+                    >
+                      {f.label} ({f.count})
+                    </button>
+                  ))}
+                </div>
+                {filteredOrders.length === 0 ? (
+                  <div className="text-center py-12 text-gray-400"><Package className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak zleceń</p></div>
+                ) : filteredOrders.map(o => (
+                  <OrderCard key={o.id} order={o} selected={selectedOrder?.id === o.id} onClick={() => handleSelectOrder(o)} />
+                ))}
+              </>
             )}
           </div>
 
@@ -544,15 +1226,28 @@ export default function MapPage() {
           <div className="p-4 border-t border-gray-100">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">Legenda</span>
-              <button onClick={() => setShowRoutes(!showRoutes)} className="text-[11px] text-blue-500 font-medium">
-                {showRoutes ? 'Ukryj trasy' : 'Pokaż trasy'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setShowOrders(!showOrders)} className="text-[11px] text-orange-500 font-medium">
+                  {showOrders ? 'Ukryj zlecenia' : 'Pokaż zlecenia'}
+                </button>
+                <button onClick={() => setShowRouteLines(!showRouteLines)} className="text-[11px] text-blue-500 font-medium">
+                  {showRouteLines ? 'Ukryj trasy' : 'Pokaż trasy'}
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-1.5">
               {Object.entries(STATUS_COLORS).map(([s, c]) => (
                 <div key={s} className="flex items-center gap-1.5">
                   <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c }} />
                   <span className="text-[11px] text-gray-500">{STATUS_LABELS[s]}</span>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 mt-2 pt-2 border-t border-gray-50">
+              {Object.entries(ORDER_STATUS_COLORS).filter(([s]) => s !== 'cancelled').map(([s, c]) => (
+                <div key={s} className="flex items-center gap-1.5">
+                  <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c, border: s === 'new' ? '1px dashed #9CA3AF' : undefined }} />
+                  <span className="text-[11px] text-gray-500">{ORDER_STATUS_LABELS[s]}</span>
                 </div>
               ))}
             </div>
@@ -568,7 +1263,7 @@ export default function MapPage() {
             />
 
             {/* Route polylines */}
-            {showRoutes && routes.map(route => (
+            {showRouteLines && routes.map(route => (
               route.waypoints.length >= 2 && (
                 <Polyline
                   key={route.employee_id}
@@ -584,7 +1279,7 @@ export default function MapPage() {
             ))}
 
             {/* Order markers on routes */}
-            {showRoutes && routes.map(route =>
+            {showRouteLines && routes.map(route =>
               route.orders
                 .filter(o => o.lat && o.lng)
                 .map((o, i) => (
@@ -610,6 +1305,46 @@ export default function MapPage() {
                   </CircleMarker>
                 ))
             )}
+
+            {/* All order pins */}
+            {showOrders && allOrders
+              .filter(o => o.lat && o.lng && o.status !== 'completed' && o.status !== 'cancelled')
+              .map(order => {
+                const isUrgent = order.priority === 'urgent';
+                const isSelected = selectedOrder?.id === order.id;
+                const color = isUrgent ? '#EF4444' : ORDER_STATUS_COLORS[order.status] || '#9CA3AF';
+                return (
+                  <CircleMarker
+                    key={`order-${order.id}`}
+                    center={[order.lat!, order.lng!]}
+                    radius={isSelected ? 10 : isUrgent ? 8 : 7}
+                    pathOptions={{
+                      color: isSelected ? '#1D4ED8' : 'white',
+                      fillColor: color,
+                      fillOpacity: 0.85,
+                      weight: isSelected ? 3 : 2,
+                      dashArray: order.status === 'new' ? '4, 3' : undefined,
+                    }}
+                    eventHandlers={{ click: () => { setSelectedOrder(order); setSelectedVehicle(null); } }}
+                  >
+                    <Popup>
+                      <div className="text-sm min-w-[180px]">
+                        <p className="font-bold">{order.client_name ?? 'Brak klienta'}</p>
+                        <p className="text-xs text-gray-500">{order.client_address}</p>
+                        {order.services?.length > 0 && (
+                          <p className="text-xs text-gray-400 mt-0.5">{order.services.map(s => s.name).join(', ')}</p>
+                        )}
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ backgroundColor: color + '20', color }}>
+                            {ORDER_STATUS_LABELS[order.status]}
+                          </span>
+                          {order.employee_name && <span className="text-xs text-blue-500">{order.employee_name}</span>}
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                );
+              })}
 
             {/* Vehicle GPS markers */}
             {vehicles.filter(v => v.lat && v.lng).map(vehicle => {
@@ -642,15 +1377,36 @@ export default function MapPage() {
           {selectedVehicle?.lat && selectedVehicle?.lng && (
             <FlyToEffect lat={selectedVehicle.lat} lng={selectedVehicle.lng} mapRef={mapRef} key={selectedVehicle.id} />
           )}
+
+          {/* Quick Add FAB */}
+          <button
+            onClick={() => { setShowQuickAdd(true); setSelectedVehicle(null); setSelectedOrder(null); }}
+            className="absolute bottom-6 right-6 z-[1000] h-14 w-14 rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/30 flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
+          >
+            <Plus className="h-6 w-6" />
+          </button>
         </div>
 
-        {/* ── Detail panel ── */}
+        {/* ── Detail panels ── */}
         <AnimatePresence>
           {selectedVehicle && (
             <VehicleDetailPanel
               vehicle={selectedVehicle}
               route={selectedRoute}
               onClose={() => { setSelectedVehicle(null); setSelectedRoute(null); }}
+            />
+          )}
+          {selectedOrder && !selectedVehicle && (
+            <OrderDetailPanel
+              order={selectedOrder}
+              onClose={() => setSelectedOrder(null)}
+              onRefresh={() => { fetchAll(); resetCountdown(); }}
+            />
+          )}
+          {showQuickAdd && !selectedVehicle && !selectedOrder && (
+            <QuickAddOrderPanel
+              onClose={() => setShowQuickAdd(false)}
+              onRefresh={() => { fetchAll(); resetCountdown(); }}
             />
           )}
         </AnimatePresence>

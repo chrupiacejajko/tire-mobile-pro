@@ -1,11 +1,30 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import {
   MapPin, Phone, CheckCircle, Navigation, Camera, ChevronDown,
-  ChevronUp, Clock, Circle, Loader2, AlertCircle, Star, ArrowRight,
+  ChevronUp, Clock, Circle, Loader2, AlertCircle, Star, ArrowRight, Play,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
+
+// ── Shift types & helpers ────────────────────────────────────────────────────
+
+interface Shift {
+  id: string;
+  employee_id: string;
+  date: string;
+  clock_in: string;
+  clock_out: string | null;
+  break_minutes: number;
+  notes: string | null;
+}
+
+function formatShiftTime(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  return `${h}h ${String(m).padStart(2, '0')}m`;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -279,6 +298,9 @@ export default function MobilePage() {
   const [employeeId, setEmployeeId] = useState<string | null>(null);
   const [completeTask, setCompleteTask] = useState<Task | null>(null);
   const [successId, setSuccessId] = useState<string | null>(null);
+  const [shift, setShift] = useState<Shift | null>(null);
+  const [shiftLoading, setShiftLoading] = useState(false);
+  const [shiftSeconds, setShiftSeconds] = useState(0);
 
   // Get employee_id from user profile
   useEffect(() => {
@@ -301,6 +323,76 @@ export default function MobilePage() {
     setLoading(true);
     load(employeeId).finally(() => setLoading(false));
   }, [employeeId, load]);
+
+  // Fetch shift on mount
+  useEffect(() => {
+    if (!employeeId) return;
+    const today = new Date().toISOString().split('T')[0];
+    fetch(`/api/shifts?date=${today}&employee_id=${employeeId}`)
+      .then(r => r.json())
+      .then(d => { if (d?.shift) setShift(d.shift); })
+      .catch(() => {});
+  }, [employeeId]);
+
+  // Timer effect: tick every second while shift is active
+  useEffect(() => {
+    if (!shift || shift.clock_out) {
+      setShiftSeconds(0);
+      return;
+    }
+    const calcSeconds = () => {
+      const elapsed = (Date.now() - new Date(shift.clock_in).getTime()) / 1000;
+      return Math.max(0, Math.floor(elapsed));
+    };
+    setShiftSeconds(calcSeconds());
+    const interval = setInterval(() => setShiftSeconds(calcSeconds()), 1000);
+    return () => clearInterval(interval);
+  }, [shift]);
+
+  const handleClockIn = async () => {
+    if (!employeeId) return;
+    setShiftLoading(true);
+    try {
+      const res = await fetch('/api/shifts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_id: employeeId, action: 'clock_in' }),
+      });
+      const d = await res.json();
+      if (d?.shift) setShift(d.shift);
+    } catch { /* ignore */ }
+    finally { setShiftLoading(false); }
+  };
+
+  const handleClockOut = async () => {
+    if (!employeeId) return;
+    setShiftLoading(true);
+    try {
+      const res = await fetch('/api/shifts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_id: employeeId, action: 'clock_out' }),
+      });
+      const d = await res.json();
+      if (d?.shift) setShift(d.shift);
+    } catch { /* ignore */ }
+    finally { setShiftLoading(false); }
+  };
+
+  const handleBreak = async () => {
+    if (!employeeId) return;
+    setShiftLoading(true);
+    try {
+      const res = await fetch('/api/shifts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_id: employeeId, action: 'add_break', break_minutes: 15 }),
+      });
+      const d = await res.json();
+      if (d?.shift) setShift(d.shift);
+    } catch { /* ignore */ }
+    finally { setShiftLoading(false); }
+  };
 
   const handleComplete = async (notes: string, photos: string[]) => {
     if (!completeTask) return;
@@ -382,6 +474,54 @@ export default function MobilePage() {
           <span className="font-medium">Zlecenie ukończone!</span>
         </div>
       )}
+
+      {/* Shift section */}
+      <div className="px-4 pt-4">
+        {!shift || shift.clock_out ? (
+          <motion.button
+            onClick={handleClockIn}
+            disabled={shiftLoading}
+            whileTap={{ scale: 0.97 }}
+            className="w-full p-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold text-lg shadow-lg shadow-emerald-500/30 disabled:opacity-60"
+          >
+            {shiftLoading ? (
+              <Loader2 className="h-5 w-5 inline mr-2 animate-spin" />
+            ) : (
+              <Play className="h-5 w-5 inline mr-2" />
+            )}
+            Rozpocznij zmian\u0119
+          </motion.button>
+        ) : (
+          <div className="p-4 rounded-2xl bg-white border border-emerald-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-wider">Czas zmiany</p>
+                <p className="text-3xl font-bold text-gray-900 tabular-nums">{formatShiftTime(shiftSeconds)}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-400">Przerwa</p>
+                <p className="text-lg font-bold text-amber-600">{shift.break_minutes}m</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleBreak}
+                disabled={shiftLoading}
+                className="flex-1 py-2.5 rounded-xl bg-amber-50 text-amber-700 font-semibold text-sm border border-amber-200 disabled:opacity-60"
+              >
+                \u2615 Przerwa +15min
+              </button>
+              <button
+                onClick={handleClockOut}
+                disabled={shiftLoading}
+                className="flex-1 py-2.5 rounded-xl bg-red-50 text-red-700 font-semibold text-sm border border-red-200 disabled:opacity-60"
+              >
+                \u23f9 Zako\u0144cz zmian\u0119
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Task list */}
       <div className="p-4 space-y-3">
