@@ -28,23 +28,43 @@ export interface Region {
   description: string | null;
   color: string;
   polygon: [number, number][] | null;
+  free_zone_polygon: [number, number][] | null;
+  main_address: string | null;
+  main_lat: number | null;
+  main_lng: number | null;
   created_at: string;
+}
+
+// ---- Skills ----
+export interface Skill {
+  id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
 }
 
 // ---- Employees ----
 export interface Employee {
   id: string;
   user_id: string;
+  first_name: string | null;
+  last_name: string | null;
   region_id: string | null;
   skills: string[];
   hourly_rate: number;
+  shift_rate: number | null;
   vehicle_info: string | null;
+  default_vehicle_id: string | null;
+  phone_secondary: string | null;
+  mobile_login: string | null;
+  mobile_password: string | null;
   is_active: boolean;
   working_hours: WorkingHours;
   created_at: string;
   // Relations
   user?: User;
   region?: Region;
+  employee_skills?: { skill: Skill }[];
 }
 
 export interface WorkingHours {

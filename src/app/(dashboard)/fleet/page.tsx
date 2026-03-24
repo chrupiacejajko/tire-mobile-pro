@@ -9,19 +9,26 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Plus, Truck, Pencil, Trash2, User, MapPin, X } from 'lucide-react';
+import { Plus, Truck, Pencil, Trash2, User, MapPin, X, Wrench } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 const ANIM = {
   container: { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.06 } } },
   item: { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.3 } } },
 };
+
+interface SkillInfo {
+  id: string;
+  name: string;
+  color: string | null;
+}
 
 interface VehicleRow {
   id: string;
@@ -35,6 +42,7 @@ interface VehicleRow {
   created_at: string;
   current_driver?: string | null;
   current_assignment_id?: string | null;
+  skills: SkillInfo[];
 }
 
 interface EmployeeOption {
@@ -45,6 +53,7 @@ interface EmployeeOption {
 export default function FleetPage() {
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [allSkills, setAllSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
@@ -60,17 +69,21 @@ export default function FleetPage() {
   const [form, setForm] = useState({
     plate_number: '', brand: '', model: '', year: '', satis_device_id: '', notes: '', is_active: true,
   });
+  const [formSkillIds, setFormSkillIds] = useState<string[]>([]);
 
   const supabase = createClient();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
 
-    // Fetch vehicles
-    const { data: vehiclesData } = await supabase
-      .from('vehicles')
-      .select('*')
-      .order('plate_number');
+    // Fetch vehicles via API (now includes skills)
+    const vehiclesRes = await fetch('/api/vehicles');
+    const vehiclesData: Array<{
+      id: string; plate_number: string; brand: string; model: string;
+      year: number | null; satis_device_id: string | null; notes: string | null;
+      is_active: boolean; created_at: string;
+      skills: SkillInfo[];
+    }> = await vehiclesRes.json();
 
     // Fetch active assignments
     const { data: assignments } = await supabase
@@ -84,8 +97,13 @@ export default function FleetPage() {
       .select('id, user:profiles(full_name)')
       .eq('is_active', true);
 
-    if (vehiclesData) {
-      const enriched = vehiclesData.map(v => {
+    // Fetch active skills
+    const skillsRes = await fetch('/api/skills?active=true');
+    const skillsData = await skillsRes.json();
+    if (Array.isArray(skillsData)) setAllSkills(skillsData);
+
+    if (Array.isArray(vehiclesData)) {
+      const enriched: VehicleRow[] = vehiclesData.map(v => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const assignment = (assignments || []).find((a: any) => a.vehicle_id === v.id);
         return {
@@ -110,6 +128,7 @@ export default function FleetPage() {
 
   const resetForm = () => {
     setForm({ plate_number: '', brand: '', model: '', year: '', satis_device_id: '', notes: '', is_active: true });
+    setFormSkillIds([]);
     setEditingVehicle(null);
   };
 
@@ -124,12 +143,21 @@ export default function FleetPage() {
       satis_device_id: form.satis_device_id || null,
       notes: form.notes || null,
       is_active: form.is_active,
+      skill_ids: formSkillIds,
     };
 
     if (editingVehicle) {
-      await supabase.from('vehicles').update(payload).eq('id', editingVehicle.id);
+      await fetch('/api/vehicles', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: editingVehicle.id, ...payload }),
+      });
     } else {
-      await supabase.from('vehicles').insert(payload);
+      await fetch('/api/vehicles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
     }
 
     setSaving(false);
@@ -146,7 +174,6 @@ export default function FleetPage() {
   const handleDelete = async () => {
     if (!deletingVehicle) return;
     setSaving(true);
-    // Soft delete: set is_active = false
     await supabase.from('vehicles').update({ is_active: false }).eq('id', deletingVehicle.id);
     setSaving(false);
     setDeleteDialogOpen(false);
@@ -160,6 +187,7 @@ export default function FleetPage() {
       year: v.year?.toString() || '', satis_device_id: v.satis_device_id || '', notes: v.notes || '',
       is_active: v.is_active,
     });
+    setFormSkillIds(v.skills.map(s => s.id));
     setEditingVehicle(v);
     setDialogOpen(true);
   };
@@ -168,19 +196,16 @@ export default function FleetPage() {
     if (!assigningVehicle || !selectedEmployee) return;
     setSaving(true);
 
-    // End any active assignment for this vehicle
     await supabase.from('vehicle_assignments')
       .update({ is_active: false, ended_at: new Date().toISOString() })
       .eq('vehicle_id', assigningVehicle.id)
       .eq('is_active', true);
 
-    // End any active assignment for this employee (can only drive one bus)
     await supabase.from('vehicle_assignments')
       .update({ is_active: false, ended_at: new Date().toISOString() })
       .eq('employee_id', selectedEmployee)
       .eq('is_active', true);
 
-    // Create new assignment
     await supabase.from('vehicle_assignments').insert({
       vehicle_id: assigningVehicle.id,
       employee_id: selectedEmployee,
@@ -199,6 +224,12 @@ export default function FleetPage() {
       .eq('vehicle_id', vehicleId)
       .eq('is_active', true);
     fetchData();
+  };
+
+  const toggleSkill = (skillId: string) => {
+    setFormSkillIds(prev =>
+      prev.includes(skillId) ? prev.filter(id => id !== skillId) : [...prev, skillId]
+    );
   };
 
   const activeCount = vehicles.filter(v => v.is_active).length;
@@ -279,6 +310,26 @@ export default function FleetPage() {
                       </div>
                     )}
 
+                    {/* Skills / Umiejętności */}
+                    {vehicle.skills.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-3">
+                        {vehicle.skills.map(skill => (
+                          <Badge
+                            key={skill.id}
+                            className="text-[10px] rounded-md px-1.5 py-0.5"
+                            style={{
+                              backgroundColor: skill.color ? `${skill.color}20` : '#e0e7ff',
+                              color: skill.color || '#4338ca',
+                              borderColor: skill.color ? `${skill.color}40` : '#c7d2fe',
+                            }}
+                          >
+                            <Wrench className="h-2.5 w-2.5 mr-0.5" />
+                            {skill.name}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+
                     {/* Current driver */}
                     <div className="rounded-xl bg-gray-50 p-3 mb-3">
                       {vehicle.current_driver ? (
@@ -341,6 +392,51 @@ export default function FleetPage() {
             </div>
             <div className="space-y-2"><Label>ID urządzenia Satis GPS</Label><Input value={form.satis_device_id} onChange={e => setForm({ ...form, satis_device_id: e.target.value })} placeholder="np. SATIS-001 lub IMEI urządzenia" /></div>
             <div className="space-y-2"><Label>Notatki</Label><Input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Dodatkowe info..." /></div>
+
+            {/* Skills multi-select */}
+            {allSkills.length > 0 && (
+              <div className="space-y-2">
+                <Label>Umiejętności pojazdu</Label>
+                <div className="max-h-40 overflow-y-auto border rounded-lg p-2 space-y-1">
+                  {allSkills.map(skill => (
+                    <label key={skill.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer">
+                      <Checkbox
+                        checked={formSkillIds.includes(skill.id)}
+                        onCheckedChange={() => toggleSkill(skill.id)}
+                      />
+                      <span className="text-sm flex items-center gap-1.5">
+                        <span
+                          className="inline-block h-3 w-3 rounded-full"
+                          style={{ backgroundColor: skill.color || '#6366f1' }}
+                        />
+                        {skill.name}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {formSkillIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {formSkillIds.map(sid => {
+                      const sk = allSkills.find(s => s.id === sid);
+                      return sk ? (
+                        <Badge
+                          key={sid}
+                          className="text-[10px] rounded-md cursor-pointer"
+                          style={{
+                            backgroundColor: sk.color ? `${sk.color}20` : '#e0e7ff',
+                            color: sk.color || '#4338ca',
+                          }}
+                          onClick={() => toggleSkill(sid)}
+                        >
+                          {sk.name} <X className="h-2.5 w-2.5 ml-0.5" />
+                        </Badge>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {editingVehicle && (
               <div className="flex items-center gap-3">
                 <Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: !!v })} />

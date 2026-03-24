@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from('work_schedules')
-    .select('*, employee:employees(id, user_id, profiles:user_id(full_name))')
+    .select('*, employee:employees(id, user_id, region_id, default_vehicle_id, profiles:user_id(full_name))')
     .gte('date', from)
     .lte('date', to)
     .order('date', { ascending: true });
@@ -38,7 +38,45 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ schedules: data });
+  // Enrich with vehicle plate and region name
+  // Collect unique vehicle_ids and region_ids
+  const vehicleIds = new Set<string>();
+  const regionIds = new Set<string>();
+  for (const s of (data || [])) {
+    if (s.vehicle_id) vehicleIds.add(s.vehicle_id);
+    if (s.region_id) regionIds.add(s.region_id);
+  }
+
+  let vehicleMap = new Map<string, string>();
+  if (vehicleIds.size > 0) {
+    const { data: vehicles } = await supabase
+      .from('vehicles')
+      .select('id, plate_number')
+      .in('id', Array.from(vehicleIds));
+    if (vehicles) {
+      for (const v of vehicles) vehicleMap.set(v.id, v.plate_number);
+    }
+  }
+
+  let regionMap = new Map<string, { name: string; color: string }>();
+  if (regionIds.size > 0) {
+    const { data: regions } = await supabase
+      .from('regions')
+      .select('id, name, color')
+      .in('id', Array.from(regionIds));
+    if (regions) {
+      for (const r of regions) regionMap.set(r.id, { name: r.name, color: r.color });
+    }
+  }
+
+  const enriched = (data || []).map(s => ({
+    ...s,
+    vehicle_plate: s.vehicle_id ? vehicleMap.get(s.vehicle_id) || null : null,
+    region_name: s.region_id ? regionMap.get(s.region_id)?.name || null : null,
+    region_color: s.region_id ? regionMap.get(s.region_id)?.color || null : null,
+  }));
+
+  return NextResponse.json({ schedules: enriched });
 }
 
 export async function POST(request: NextRequest) {
@@ -47,7 +85,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // ── Bulk generation: 48/48 duty pattern ──
+    // -- Bulk generation: 48/48 duty pattern --
     if (body.bulk && body.pattern === '48_48') {
       const { employees: empList, from_date, to_date, start_time, end_time } = body;
 
@@ -61,28 +99,42 @@ export async function POST(request: NextRequest) {
       const patternStartTime = start_time || '07:00';
       const patternEndTime = end_time || '23:00';
 
+      // Fetch employee defaults for vehicle_id and region_id
+      const empIds = empList.map((e: { employee_id: string }) => e.employee_id);
+      const { data: empDefaults } = await supabase
+        .from('employees')
+        .select('id, default_vehicle_id, region_id')
+        .in('id', empIds);
+      const defaultsMap = new Map<string, { vehicle_id: string | null; region_id: string | null }>();
+      if (empDefaults) {
+        for (const e of empDefaults) {
+          defaultsMap.set(e.id, { vehicle_id: e.default_vehicle_id || null, region_id: e.region_id || null });
+        }
+      }
+
       const rows: Array<{
         employee_id: string;
         date: string;
         start_time: string;
         end_time: string;
         notes: string;
+        vehicle_id: string | null;
+        region_id: string | null;
       }> = [];
 
       for (const emp of empList) {
         const { employee_id: empId, first_on_date } = emp;
         if (!empId || !first_on_date) continue;
 
+        const defaults = defaultsMap.get(empId);
+
         const firstOn = new Date(first_on_date + 'T00:00:00');
         const current = new Date(from_date + 'T00:00:00');
         const end = new Date(to_date + 'T00:00:00');
 
         while (current <= end) {
-          // Calculate how many days since first_on_date
           const diffDays = Math.round((current.getTime() - firstOn.getTime()) / 86400000);
-          // Pattern repeats every 4 days: 2 on, 2 off
-          // diffDays mod 4: 0,1 = ON; 2,3 = OFF
-          const posInCycle = ((diffDays % 4) + 4) % 4; // handle negative modulo
+          const posInCycle = ((diffDays % 4) + 4) % 4;
           const isOnDuty = posInCycle === 0 || posInCycle === 1;
 
           if (isOnDuty) {
@@ -92,6 +144,8 @@ export async function POST(request: NextRequest) {
               start_time: patternStartTime,
               end_time: patternEndTime,
               notes: 'DYZUR_48_48',
+              vehicle_id: defaults?.vehicle_id || null,
+              region_id: defaults?.region_id || null,
             });
           }
 
@@ -115,7 +169,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ schedules: data, count: data?.length ?? 0 }, { status: 201 });
     }
 
-    // ── Bulk generation (standard) ──
+    // -- Bulk generation (standard) --
     if (body.bulk) {
       const {
         employee_id,
@@ -160,10 +214,10 @@ export async function POST(request: NextRequest) {
       }> = [];
 
       const current = new Date(from_date + 'T00:00:00');
-      const end = new Date(to_date + 'T00:00:00');
+      const endDate = new Date(to_date + 'T00:00:00');
 
-      while (current <= end) {
-        const isoDay = current.getDay() === 0 ? 7 : current.getDay(); // 1=Mon,...,7=Sun
+      while (current <= endDate) {
+        const isoDay = current.getDay() === 0 ? 7 : current.getDay();
         const isWeekend = isoDay === 6 || isoDay === 7;
 
         if (skip_weekends && isWeekend) {
@@ -202,8 +256,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ schedules: data, count: data?.length ?? 0 }, { status: 201 });
     }
 
-    // ── Single upsert ──
-    const { employee_id, date, start_time, end_time, is_night_shift, notes } = body;
+    // -- Single upsert --
+    const { employee_id, date, start_time, end_time, is_night_shift, notes, vehicle_id, region_id } = body;
 
     if (!employee_id || !date) {
       return NextResponse.json(
@@ -212,19 +266,64 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Conflict check: employee overlap
+    const { data: empConflicts } = await supabase
+      .from('work_schedules')
+      .select('id, date, start_time, end_time')
+      .eq('employee_id', employee_id)
+      .eq('date', date)
+      .neq('employee_id', '__skip__'); // always true, just to chain
+
+    // If there's already a schedule for this employee+date, upsert will replace it
+    // But we need to check vehicle overlap with OTHER employees
+    if (vehicle_id) {
+      const { data: vehicleConflicts } = await supabase
+        .from('work_schedules')
+        .select('id, employee_id, date, start_time, end_time')
+        .eq('vehicle_id', vehicle_id)
+        .eq('date', date)
+        .neq('employee_id', employee_id);
+
+      if (vehicleConflicts && vehicleConflicts.length > 0) {
+        // Fetch employee name for the conflict
+        const conflictEmpId = vehicleConflicts[0].employee_id;
+        const { data: conflictEmp } = await supabase
+          .from('employees')
+          .select('id, profiles:user_id(full_name)')
+          .eq('id', conflictEmpId)
+          .single();
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const empName = (conflictEmp as any)?.profiles?.full_name || 'inny pracownik';
+
+        // Fetch vehicle plate
+        const { data: veh } = await supabase
+          .from('vehicles')
+          .select('plate_number')
+          .eq('id', vehicle_id)
+          .single();
+
+        return NextResponse.json({
+          error: `Pojazd ${veh?.plate_number || vehicle_id} jest przypisany do ${empName} w terminie ${vehicleConflicts[0].date}`,
+          conflict: 'vehicle',
+        }, { status: 409 });
+      }
+    }
+
+    const upsertData: Record<string, unknown> = {
+      employee_id,
+      date,
+      start_time: start_time || '08:00',
+      end_time: end_time || '16:00',
+      is_night_shift: is_night_shift ?? false,
+      notes: notes || null,
+    };
+    if (vehicle_id !== undefined) upsertData.vehicle_id = vehicle_id || null;
+    if (region_id !== undefined) upsertData.region_id = region_id || null;
+
     const { data, error } = await supabase
       .from('work_schedules')
-      .upsert(
-        {
-          employee_id,
-          date,
-          start_time: start_time || '08:00',
-          end_time: end_time || '16:00',
-          is_night_shift: is_night_shift ?? false,
-          notes: notes || null,
-        },
-        { onConflict: 'employee_id,date' },
-      )
+      .upsert(upsertData, { onConflict: 'employee_id,date' })
       .select()
       .single();
 
@@ -251,7 +350,6 @@ export async function DELETE(request: NextRequest) {
     }
 
     if (from_date && to_date) {
-      // Delete range
       const { error } = await supabase
         .from('work_schedules')
         .delete()
@@ -267,7 +365,6 @@ export async function DELETE(request: NextRequest) {
     }
 
     if (date) {
-      // Delete single
       const { error } = await supabase
         .from('work_schedules')
         .delete()

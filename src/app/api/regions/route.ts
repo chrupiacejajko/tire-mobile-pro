@@ -26,12 +26,18 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { name, color } = body;
+  const { name, color, description, main_address, main_lat, main_lng } = body;
   if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 });
+
+  const insertData: Record<string, unknown> = { name, color: color || '#3B82F6' };
+  if (description !== undefined) insertData.description = description;
+  if (main_address !== undefined) insertData.main_address = main_address || null;
+  if (main_lat !== undefined) insertData.main_lat = main_lat;
+  if (main_lng !== undefined) insertData.main_lng = main_lng;
 
   const { data, error } = await supabase
     .from('regions')
-    .insert({ name, color: color || '#3B82F6' })
+    .insert(insertData)
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -40,13 +46,18 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   const body = await req.json();
-  const { id, name, color } = body;
+  const { id, name, color, description } = body;
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
   if (color !== undefined) updates.color = color;
+  if (description !== undefined) updates.description = description;
   if (body.polygon !== undefined) updates.polygon = body.polygon;
+  if (body.free_zone_polygon !== undefined) updates.free_zone_polygon = body.free_zone_polygon;
+  if (body.main_address !== undefined) updates.main_address = body.main_address || null;
+  if (body.main_lat !== undefined) updates.main_lat = body.main_lat;
+  if (body.main_lng !== undefined) updates.main_lng = body.main_lng;
 
   const { data, error } = await supabase
     .from('regions')

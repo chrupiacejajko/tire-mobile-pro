@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, MapPin, Users, ClipboardList, Edit, Trash2, Map, Pencil, X, Save, Eraser } from 'lucide-react';
+import { Plus, MapPin, Users, ClipboardList, Edit, Trash2, Map, Pencil, X, Save, Eraser, Shield } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import type { Region } from '@/lib/types';
 
@@ -22,7 +22,7 @@ const TileLayer = dynamic(() => import('react-leaflet').then(m => m.TileLayer), 
 const Polygon = dynamic(() => import('react-leaflet').then(m => m.Polygon), { ssr: false });
 const LeafletTooltip = dynamic(() => import('react-leaflet').then(m => m.Tooltip), { ssr: false });
 
-/* ─── Map click handler component ──────────────────────────────────── */
+/* -- Map click handler component -- */
 function MapClickHandler({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) {
   const { useMapEvents } = require('react-leaflet');
   useMapEvents({
@@ -40,18 +40,33 @@ const ANIM = {
 
 type RegionWithCounts = Region & { employee_count?: number; order_count?: number };
 
+/* -- HERE autocomplete suggestion -- */
+interface HereSuggestion {
+  id: string;
+  title: string;
+  address?: { label?: string };
+}
+
 export default function RegionsPage() {
   const [regions, setRegions] = useState<RegionWithCounts[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRegion, setEditingRegion] = useState<Region | null>(null);
-  const [form, setForm] = useState({ name: '', description: '', color: '#3B82F6' });
+  const [form, setForm] = useState({ name: '', description: '', color: '#3B82F6', main_address: '' });
   const [saving, setSaving] = useState(false);
+
+  // Address autocomplete
+  const [addressSuggestions, setAddressSuggestions] = useState<HereSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [geocodedLat, setGeocodedLat] = useState<number | null>(null);
+  const [geocodedLng, setGeocodedLng] = useState<number | null>(null);
+  const addressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Polygon editor state
   const [drawingRegion, setDrawingRegion] = useState<RegionWithCounts | null>(null);
   const [drawingPoints, setDrawingPoints] = useState<[number, number][]>([]);
   const [savingPolygon, setSavingPolygon] = useState(false);
+  const [drawingMode, setDrawingMode] = useState<'boundary' | 'free_zone'>('boundary');
 
   const fetchRegions = useCallback(async () => {
     setLoading(true);
@@ -63,17 +78,66 @@ export default function RegionsPage() {
 
   useEffect(() => { fetchRegions(); }, [fetchRegions]);
 
+  // Address autocomplete handler
+  const handleAddressChange = (value: string) => {
+    setForm(f => ({ ...f, main_address: value }));
+    if (addressTimeoutRef.current) clearTimeout(addressTimeoutRef.current);
+    if (value.length < 3) {
+      setAddressSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    addressTimeoutRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/here-autocomplete?q=${encodeURIComponent(value)}`);
+        const data = await res.json();
+        setAddressSuggestions(data.items || []);
+        setShowSuggestions(true);
+      } catch {
+        setAddressSuggestions([]);
+      }
+    }, 300);
+  };
+
+  const selectSuggestion = async (suggestion: HereSuggestion) => {
+    setForm(f => ({ ...f, main_address: suggestion.title }));
+    setShowSuggestions(false);
+    setAddressSuggestions([]);
+    // Geocode via lookup
+    try {
+      const res = await fetch(`/api/here-lookup?id=${encodeURIComponent(suggestion.id)}`);
+      const data = await res.json();
+      if (data.lat && data.lng) {
+        setGeocodedLat(data.lat);
+        setGeocodedLng(data.lng);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    const payload: Record<string, unknown> = {
+      name: form.name,
+      description: form.description,
+      color: form.color,
+      main_address: form.main_address || null,
+      main_lat: geocodedLat,
+      main_lng: geocodedLng,
+    };
+
     if (editingRegion) {
-      await fetch('/api/regions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: editingRegion.id, ...form }) });
+      await fetch('/api/regions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: editingRegion.id, ...payload }) });
     } else {
-      await fetch('/api/regions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      await fetch('/api/regions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     }
     setSaving(false);
     setDialogOpen(false);
-    setForm({ name: '', description: '', color: '#3B82F6' });
+    setForm({ name: '', description: '', color: '#3B82F6', main_address: '' });
+    setGeocodedLat(null);
+    setGeocodedLng(null);
     setEditingRegion(null);
     fetchRegions();
   };
@@ -84,14 +148,21 @@ export default function RegionsPage() {
   };
 
   const openEdit = (r: Region) => {
-    setForm({ name: r.name, description: r.description || '', color: r.color });
+    setForm({ name: r.name, description: r.description || '', color: r.color, main_address: r.main_address || '' });
+    setGeocodedLat(r.main_lat ?? null);
+    setGeocodedLng(r.main_lng ?? null);
     setEditingRegion(r);
     setDialogOpen(true);
   };
 
-  const openDrawPolygon = (region: RegionWithCounts) => {
+  const openDrawPolygon = (region: RegionWithCounts, mode: 'boundary' | 'free_zone') => {
     setDrawingRegion(region);
-    setDrawingPoints(region.polygon || []);
+    setDrawingMode(mode);
+    if (mode === 'boundary') {
+      setDrawingPoints(region.polygon || []);
+    } else {
+      setDrawingPoints(region.free_zone_polygon || []);
+    }
   };
 
   const handleMapClick = useCallback((lat: number, lng: number) => {
@@ -105,12 +176,13 @@ export default function RegionsPage() {
   const savePolygon = async () => {
     if (!drawingRegion) return;
     setSavingPolygon(true);
+    const fieldName = drawingMode === 'boundary' ? 'polygon' : 'free_zone_polygon';
     await fetch('/api/regions', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id: drawingRegion.id,
-        polygon: drawingPoints.length >= 3 ? drawingPoints : null,
+        [fieldName]: drawingPoints.length >= 3 ? drawingPoints : null,
       }),
     });
     setSavingPolygon(false);
@@ -136,7 +208,7 @@ export default function RegionsPage() {
         icon={<Map className="h-5 w-5" />}
         actions={
           <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
-            onClick={() => { setForm({ name: '', description: '', color: '#3B82F6' }); setEditingRegion(null); setDialogOpen(true); }}>
+            onClick={() => { setForm({ name: '', description: '', color: '#3B82F6', main_address: '' }); setGeocodedLat(null); setGeocodedLng(null); setEditingRegion(null); setDialogOpen(true); }}>
             <Plus className="h-4 w-4" /> Dodaj region
           </Button>
         }
@@ -166,13 +238,25 @@ export default function RegionsPage() {
                           {region.name}
                         </h3>
                         {region.description && <p className="text-sm text-gray-500 mt-1">{region.description}</p>}
+                        {region.main_address && (
+                          <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                            <MapPin className="h-3 w-3" />
+                            {region.main_address}
+                          </p>
+                        )}
                         {region.polygon && region.polygon.length >= 3 && (
                           <p className="text-xs text-green-600 mt-1">{region.polygon.length} punktów granicy</p>
                         )}
+                        {region.free_zone_polygon && region.free_zone_polygon.length >= 3 && (
+                          <p className="text-xs text-emerald-500 mt-0.5">{region.free_zone_polygon.length} punktów strefy bezpłatnej</p>
+                        )}
                       </div>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => openDrawPolygon(region)} title="Rysuj granice">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => openDrawPolygon(region, 'boundary')} title="Rysuj granice">
                           <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-emerald-600" onClick={() => openDrawPolygon(region, 'free_zone')} title="Rysuj strefę bezpłatną">
+                          <Shield className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => openEdit(region)}>
                           <Edit className="h-4 w-4" />
@@ -202,13 +286,45 @@ export default function RegionsPage() {
         )}
       </div>
 
-      {/* ── Create/Edit Dialog ── */}
-      <Dialog open={dialogOpen} onOpenChange={o => { setDialogOpen(o); if (!o) setEditingRegion(null); }}>
+      {/* -- Create/Edit Dialog -- */}
+      <Dialog open={dialogOpen} onOpenChange={o => { setDialogOpen(o); if (!o) { setEditingRegion(null); setShowSuggestions(false); } }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editingRegion ? 'Edytuj region' : 'Nowy region'}</DialogTitle></DialogHeader>
           <form onSubmit={handleSave} className="space-y-4">
             <div className="space-y-2"><Label>Nazwa</Label><Input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="np. Poznań" /></div>
             <div className="space-y-2"><Label>Opis</Label><Textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Opis regionu..." /></div>
+
+            {/* Main address with HERE autocomplete */}
+            <div className="space-y-2 relative">
+              <Label>Główny adres</Label>
+              <Input
+                value={form.main_address}
+                onChange={e => handleAddressChange(e.target.value)}
+                onFocus={() => { if (addressSuggestions.length > 0) setShowSuggestions(true); }}
+                onBlur={() => { setTimeout(() => setShowSuggestions(false), 200); }}
+                placeholder="np. ul. Marszałkowska 1, Warszawa"
+              />
+              {showSuggestions && addressSuggestions.length > 0 && (
+                <div className="absolute z-50 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                  {addressSuggestions.map(s => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b last:border-b-0"
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => selectSuggestion(s)}
+                    >
+                      {s.title}
+                      {s.address?.label && <span className="text-xs text-gray-400 block">{s.address.label}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {geocodedLat && geocodedLng && (
+                <p className="text-[10px] text-gray-400">Współrzędne: {geocodedLat.toFixed(5)}, {geocodedLng.toFixed(5)}</p>
+              )}
+            </div>
+
             <div className="space-y-2">
               <Label>Kolor</Label>
               <div className="flex items-center gap-3">
@@ -226,7 +342,7 @@ export default function RegionsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Polygon Editor Overlay ── */}
+      {/* -- Polygon Editor Overlay -- */}
       <AnimatePresence>
         {drawingRegion && (
           <motion.div
@@ -238,8 +354,10 @@ export default function RegionsPage() {
             {/* Toolbar */}
             <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between z-10">
               <div className="flex items-center gap-3">
-                <div className="h-4 w-4 rounded-full" style={{ backgroundColor: drawingRegion.color }} />
-                <h2 className="text-lg font-bold text-gray-900">Rysuj granice: {drawingRegion.name}</h2>
+                <div className="h-4 w-4 rounded-full" style={{ backgroundColor: drawingMode === 'free_zone' ? '#10b981' : drawingRegion.color }} />
+                <h2 className="text-lg font-bold text-gray-900">
+                  {drawingMode === 'free_zone' ? 'Rysuj strefę bezpłatną' : 'Rysuj granice'}: {drawingRegion.name}
+                </h2>
                 <span className="text-sm text-gray-500 ml-2">({drawingPoints.length} punktów)</span>
               </div>
               <div className="flex items-center gap-2">
@@ -259,7 +377,10 @@ export default function RegionsPage() {
             </div>
 
             <p className="bg-blue-50 text-blue-700 text-sm px-6 py-2 text-center">
-              Kliknij na mapę, aby dodać punkty granicy regionu. Minimum 3 punkty.
+              {drawingMode === 'free_zone'
+                ? 'Kliknij na mapę, aby dodać punkty strefy bezpłatnej. Minimum 3 punkty.'
+                : 'Kliknij na mapę, aby dodać punkty granicy regionu. Minimum 3 punkty.'
+              }
             </p>
 
             {/* Map */}
@@ -300,11 +421,48 @@ export default function RegionsPage() {
                     </Polygon>
                   ))}
 
+                {/* Current region's main boundary (when editing free zone, show the existing boundary) */}
+                {drawingMode === 'free_zone' && drawingRegion.polygon && drawingRegion.polygon.length >= 3 && (
+                  <Polygon
+                    positions={drawingRegion.polygon.map(p => [p[0], p[1]] as [number, number])}
+                    pathOptions={{
+                      color: drawingRegion.color,
+                      fillColor: drawingRegion.color,
+                      fillOpacity: 0.15,
+                      weight: 3,
+                    }}
+                  >
+                    <LeafletTooltip>Granica: {drawingRegion.name}</LeafletTooltip>
+                  </Polygon>
+                )}
+
+                {/* Current region's free zone (when editing boundary, show the existing free zone) */}
+                {drawingMode === 'boundary' && drawingRegion.free_zone_polygon && drawingRegion.free_zone_polygon.length >= 3 && (
+                  <Polygon
+                    positions={drawingRegion.free_zone_polygon.map(p => [p[0], p[1]] as [number, number])}
+                    pathOptions={{
+                      color: '#10b981',
+                      fillColor: '#10b981',
+                      fillOpacity: 0.15,
+                      weight: 2,
+                      dashArray: '8, 4',
+                    }}
+                  >
+                    <LeafletTooltip>Strefa bezpłatna: {drawingRegion.name}</LeafletTooltip>
+                  </Polygon>
+                )}
+
                 {/* Current polygon being drawn */}
                 {drawingPoints.length >= 3 && (
                   <Polygon
                     positions={drawingPoints.map(p => [p[0], p[1]] as [number, number])}
-                    pathOptions={{
+                    pathOptions={drawingMode === 'free_zone' ? {
+                      color: '#10b981',
+                      fillColor: '#10b981',
+                      fillOpacity: 0.25,
+                      weight: 3,
+                      dashArray: '8, 4',
+                    } : {
                       color: drawingRegion.color,
                       fillColor: drawingRegion.color,
                       fillOpacity: 0.25,
@@ -323,7 +481,7 @@ export default function RegionsPage() {
                       radius={5}
                       pathOptions={{
                         color: 'white',
-                        fillColor: drawingRegion.color,
+                        fillColor: drawingMode === 'free_zone' ? '#10b981' : drawingRegion.color,
                         fillOpacity: 1,
                         weight: 2,
                       }}

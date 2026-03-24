@@ -19,11 +19,10 @@ import {
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@/components/ui/tabs';
 import {
-  Plus, Search, Phone, MapPin, Car, Pencil, UserCog, Users, Mail,
-  Clock, DollarSign, Wrench, CalendarOff, Trash2,
+  Plus, Search, Pencil, UserCog, Users, Clock,
+  CalendarOff, Trash2, Award,
 } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
-import type { Region } from '@/lib/types';
+import type { Region, Skill } from '@/lib/types';
 
 const ANIM = {
   container: { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } },
@@ -61,44 +60,86 @@ interface UnavailabilityRow {
   employee?: { id: string; user: { full_name: string } | null } | null;
 }
 
+interface VehicleOption {
+  id: string;
+  plate_number: string;
+  brand: string | null;
+  model: string | null;
+}
+
 interface EmployeeRow {
   id: string;
   user_id: string;
+  first_name: string | null;
+  last_name: string | null;
   region_id: string | null;
+  default_vehicle_id: string | null;
   skills: string[];
   hourly_rate: number;
+  shift_rate: number | null;
+  phone_secondary: string | null;
+  mobile_login: string | null;
+  mobile_password: string | null;
   vehicle_info: string | null;
   is_active: boolean;
   working_hours: Record<string, { start: string; end: string } | null>;
   created_at: string;
   user?: { full_name: string; email: string; phone: string | null; role?: string };
   region?: { name: string; color: string } | null;
+  default_vehicle?: { id: string; plate_number: string; brand: string | null; model: string | null } | null;
+  employee_skills?: { skill_id: string; skill: { id: string; name: string; is_active: boolean } }[];
 }
+
+interface EmployeeForm {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  phone_secondary: string;
+  region_id: string;
+  default_vehicle_id: string;
+  shift_rate: string;
+  mobile_login: string;
+  mobile_password: string;
+  role: string;
+  skill_ids: string[];
+}
+
+const emptyForm: EmployeeForm = {
+  first_name: '', last_name: '', email: '', phone: '', phone_secondary: '',
+  region_id: '', default_vehicle_id: '', shift_rate: '',
+  mobile_login: '', mobile_password: '', role: 'worker', skill_ids: [],
+};
+
+const SKILL_BADGE_COLORS = [
+  'bg-orange-100 text-orange-700',
+  'bg-blue-100 text-blue-700',
+  'bg-green-100 text-green-700',
+  'bg-purple-100 text-purple-700',
+  'bg-pink-100 text-pink-700',
+  'bg-teal-100 text-teal-700',
+];
 
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
+  const [allSkills, setAllSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+
+  // Add dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<EmployeeForm>({ ...emptyForm });
 
-  const [form, setForm] = useState({
-    full_name: '', email: '', phone: '', region_id: '',
-    skills: '', hourly_rate: '40', vehicle_info: '',
-  });
-
-  // Edit employee state
+  // Edit dialog
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<EmployeeRow | null>(null);
-  const [editForm, setEditForm] = useState({
-    full_name: '', phone: '', role: 'worker',
-    start_time: '', end_time: '', skills: '',
-    is_active: true, hourly_rate: '40', region_id: '',
-  });
+  const [editForm, setEditForm] = useState<EmployeeForm>({ ...emptyForm });
   const [editSaving, setEditSaving] = useState(false);
 
-  // Delete confirmation state
+  // Delete confirmation
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingEmployee, setDeletingEmployee] = useState<EmployeeRow | null>(null);
 
@@ -114,16 +155,32 @@ export default function EmployeesPage() {
     start_time: '', end_time: '', notes: '',
   });
 
-  const supabase = createClient();
-
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [empRes, regRes] = await Promise.all([
-      supabase.from('employees').select('*, user:profiles(full_name, email, phone, role), region:regions(name, color)').order('created_at', { ascending: false }),
-      supabase.from('regions').select('*').order('name'),
+    const [empRes, regRes, vehRes, skillRes] = await Promise.all([
+      fetch('/api/employees'),
+      fetch('/api/regions'),
+      fetch('/api/vehicles'),
+      fetch('/api/skills?active=true'),
     ]);
-    if (empRes.data) setEmployees(empRes.data as EmployeeRow[]);
-    if (regRes.data) setRegions(regRes.data as Region[]);
+
+    if (empRes.ok) {
+      const data = await empRes.json();
+      setEmployees(data);
+    }
+    if (regRes.ok) {
+      const data = await regRes.json();
+      setRegions(data);
+    }
+    if (vehRes.ok) {
+      const data = await vehRes.json();
+      // vehicles API might return different shapes; normalize
+      setVehicles(Array.isArray(data) ? data : []);
+    }
+    if (skillRes.ok) {
+      const data = await skillRes.json();
+      setAllSkills(Array.isArray(data) ? data : []);
+    }
     setLoading(false);
   }, []);
 
@@ -141,41 +198,52 @@ export default function EmployeesPage() {
 
   useEffect(() => { fetchData(); fetchUnavailabilities(); }, [fetchData, fetchUnavailabilities]);
 
+  // ── Add Employee ───────────────────────────────────────
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
 
-    // Create auth user first
-    const res = await fetch('/api/employees', {
+    await fetch('/api/employees', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify({
+        first_name: form.first_name,
+        last_name: form.last_name,
+        email: form.email,
+        phone: form.phone,
+        phone_secondary: form.phone_secondary,
+        region_id: form.region_id || null,
+        default_vehicle_id: form.default_vehicle_id || null,
+        shift_rate: form.shift_rate || null,
+        mobile_login: form.mobile_login,
+        mobile_password: form.mobile_password,
+        role: form.role,
+        skill_ids: form.skill_ids,
+      }),
     });
-
-    if (!res.ok) {
-      // Fallback: just show error
-      console.error('Failed to create employee');
-    }
 
     setSaving(false);
     setDialogOpen(false);
-    setForm({ full_name: '', email: '', phone: '', region_id: '', skills: '', hourly_rate: '40', vehicle_info: '' });
+    setForm({ ...emptyForm });
     fetchData();
   };
 
+  // ── Edit Employee ──────────────────────────────────────
   const openEdit = (emp: EmployeeRow) => {
-    const firstDay = emp.working_hours?.monday;
     setEditingEmployee(emp);
     setEditForm({
-      full_name: emp.user?.full_name || '',
+      first_name: emp.first_name || emp.user?.full_name?.split(' ')[0] || '',
+      last_name: emp.last_name || emp.user?.full_name?.split(' ').slice(1).join(' ') || '',
+      email: emp.user?.email || '',
       phone: emp.user?.phone || '',
-      role: emp.user?.role || 'worker',
-      start_time: firstDay?.start || '',
-      end_time: firstDay?.end || '',
-      skills: (emp.skills || []).join(', '),
-      is_active: emp.is_active,
-      hourly_rate: String(emp.hourly_rate),
+      phone_secondary: emp.phone_secondary || '',
       region_id: emp.region_id || '',
+      default_vehicle_id: emp.default_vehicle_id || '',
+      shift_rate: emp.shift_rate != null ? String(emp.shift_rate) : '',
+      mobile_login: emp.mobile_login || '',
+      mobile_password: emp.mobile_password || '',
+      role: emp.user?.role || 'worker',
+      skill_ids: emp.employee_skills?.map(es => es.skill_id) || [],
     });
     setEditDialogOpen(true);
   };
@@ -185,26 +253,24 @@ export default function EmployeesPage() {
     if (!editingEmployee) return;
     setEditSaving(true);
 
-    const res = await fetch('/api/employees', {
+    await fetch('/api/employees', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id: editingEmployee.id,
-        full_name: editForm.full_name,
+        first_name: editForm.first_name,
+        last_name: editForm.last_name,
         phone: editForm.phone,
+        phone_secondary: editForm.phone_secondary,
         role: editForm.role,
-        start_time: editForm.start_time || undefined,
-        end_time: editForm.end_time || undefined,
-        skills: editForm.skills,
-        is_active: editForm.is_active,
-        hourly_rate: editForm.hourly_rate,
-        region_id: editForm.region_id,
+        region_id: editForm.region_id || null,
+        default_vehicle_id: editForm.default_vehicle_id || null,
+        shift_rate: editForm.shift_rate || null,
+        mobile_login: editForm.mobile_login,
+        mobile_password: editForm.mobile_password,
+        skill_ids: editForm.skill_ids,
       }),
     });
-
-    if (!res.ok) {
-      console.error('Failed to update employee');
-    }
 
     setEditSaving(false);
     setEditDialogOpen(false);
@@ -212,6 +278,7 @@ export default function EmployeesPage() {
     fetchData();
   };
 
+  // ── Delete Employee ────────────────────────────────────
   const openDelete = (emp: EmployeeRow) => {
     setDeletingEmployee(emp);
     setDeleteDialogOpen(true);
@@ -233,6 +300,7 @@ export default function EmployeesPage() {
     fetchData();
   };
 
+  // ── Unavailabilities ──────────────────────────────────
   const handleCreateUnavailability = async (e: React.FormEvent) => {
     e.preventDefault();
     setUnavailSaving(true);
@@ -271,12 +339,165 @@ export default function EmployeesPage() {
     return true;
   });
 
-  const filtered = employees.filter(e =>
-    e.user?.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-    e.region?.name?.toLowerCase().includes(search.toLowerCase())
-  );
+  // ── Filtering & Stats ─────────────────────────────────
+  const filtered = employees.filter(e => {
+    const name = e.first_name && e.last_name
+      ? `${e.first_name} ${e.last_name}`
+      : e.user?.full_name || '';
+    return name.toLowerCase().includes(search.toLowerCase()) ||
+      e.region?.name?.toLowerCase().includes(search.toLowerCase());
+  });
 
   const activeCount = employees.filter(e => e.is_active).length;
+  const regionCount = new Set(employees.filter(e => e.region_id).map(e => e.region_id)).size;
+  const avgShiftRate = employees.length > 0
+    ? Math.round(employees.reduce((s, e) => s + (Number(e.shift_rate) || 0), 0) / employees.length)
+    : 0;
+
+  const getDisplayName = (emp: EmployeeRow) => {
+    if (emp.first_name && emp.last_name) return `${emp.first_name} ${emp.last_name}`;
+    return emp.user?.full_name || '?';
+  };
+
+  const getInitials = (emp: EmployeeRow) => {
+    const name = getDisplayName(emp);
+    return name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  };
+
+  // ── Skill toggle helper ───────────────────────────────
+  const toggleSkill = (
+    currentIds: string[],
+    skillId: string,
+    setter: (fn: (prev: EmployeeForm) => EmployeeForm) => void
+  ) => {
+    setter(prev => ({
+      ...prev,
+      skill_ids: prev.skill_ids.includes(skillId)
+        ? prev.skill_ids.filter(id => id !== skillId)
+        : [...prev.skill_ids, skillId],
+    }));
+  };
+
+  // ── Employee Form Fields (shared between add/edit) ────
+  const renderFormFields = (
+    formData: EmployeeForm,
+    setFormData: React.Dispatch<React.SetStateAction<EmployeeForm>>,
+    isEdit: boolean
+  ) => (
+    <>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Imię *</Label>
+          <Input required value={formData.first_name} onChange={e => setFormData(f => ({ ...f, first_name: e.target.value }))} />
+        </div>
+        <div className="space-y-2">
+          <Label>Nazwisko *</Label>
+          <Input required value={formData.last_name} onChange={e => setFormData(f => ({ ...f, last_name: e.target.value }))} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Telefon służbowy</Label>
+          <Input value={formData.phone} onChange={e => setFormData(f => ({ ...f, phone: e.target.value }))} />
+        </div>
+        <div className="space-y-2">
+          <Label>Telefon prywatny</Label>
+          <Input value={formData.phone_secondary} onChange={e => setFormData(f => ({ ...f, phone_secondary: e.target.value }))} />
+        </div>
+      </div>
+
+      {!isEdit && (
+        <div className="space-y-2">
+          <Label>Email *</Label>
+          <Input type="email" required value={formData.email} onChange={e => setFormData(f => ({ ...f, email: e.target.value }))} />
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Domyślny obszar</Label>
+          <Select value={formData.region_id} onValueChange={v => setFormData(f => ({ ...f, region_id: v === '__none__' ? '' : (v ?? '') }))}>
+            <SelectTrigger><SelectValue placeholder="Wybierz region" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Brak</SelectItem>
+              {regions.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Domyślny pojazd</Label>
+          <Select value={formData.default_vehicle_id} onValueChange={v => setFormData(f => ({ ...f, default_vehicle_id: v === '__none__' ? '' : (v ?? '') }))}>
+            <SelectTrigger><SelectValue placeholder="Wybierz pojazd" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Brak</SelectItem>
+              {vehicles.map(v => (
+                <SelectItem key={v.id} value={v.id}>
+                  {v.plate_number}{v.brand ? ` - ${v.brand}` : ''}{v.model ? ` ${v.model}` : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Stawka za dyżur (PLN/24h)</Label>
+          <Input type="number" value={formData.shift_rate} onChange={e => setFormData(f => ({ ...f, shift_rate: e.target.value }))} placeholder="0" />
+        </div>
+        <div className="space-y-2">
+          <Label>Rola</Label>
+          <Select value={formData.role} onValueChange={v => setFormData(f => ({ ...f, role: v ?? 'worker' }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="admin">Admin</SelectItem>
+              <SelectItem value="dispatcher">Dyspozytor</SelectItem>
+              <SelectItem value="worker">Pracownik</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Skills multi-select */}
+      {allSkills.length > 0 && (
+        <div className="space-y-2">
+          <Label>Umiejętności</Label>
+          <div className="flex flex-wrap gap-2 p-3 border rounded-xl bg-gray-50/50">
+            {allSkills.map(skill => {
+              const selected = formData.skill_ids.includes(skill.id);
+              return (
+                <button
+                  key={skill.id}
+                  type="button"
+                  onClick={() => toggleSkill(formData.skill_ids, skill.id, setFormData)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    selected
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-white text-gray-600 border border-gray-200 hover:border-orange-300 hover:text-orange-600'
+                  }`}
+                >
+                  <Award className="h-3 w-3" />
+                  {skill.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Login mobilny</Label>
+          <Input value={formData.mobile_login} onChange={e => setFormData(f => ({ ...f, mobile_login: e.target.value }))} />
+        </div>
+        <div className="space-y-2">
+          <Label>Hasło mobilne</Label>
+          <Input type="password" value={formData.mobile_password} onChange={e => setFormData(f => ({ ...f, mobile_password: e.target.value }))} />
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <div className="min-h-screen bg-gray-50/50">
@@ -285,7 +506,7 @@ export default function EmployeesPage() {
         subtitle="Zarządzaj zespołem"
         icon={<UserCog className="h-5 w-5" />}
         actions={
-          <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700" onClick={() => setDialogOpen(true)}>
+          <Button className="h-9 rounded-xl text-sm gap-2 bg-orange-500 hover:bg-orange-600" onClick={() => { setForm({ ...emptyForm }); setDialogOpen(true); }}>
             <Plus className="h-4 w-4" /> Dodaj pracownika
           </Button>
         }
@@ -294,10 +515,10 @@ export default function EmployeesPage() {
         {/* Stats */}
         <motion.div className="grid grid-cols-1 gap-4 sm:grid-cols-4" variants={ANIM.container} initial="hidden" animate="show">
           {[
-            { label: 'Wszyscy', value: employees.length, color: 'from-blue-500 to-blue-600' },
+            { label: 'Wszyscy', value: employees.length, color: 'from-orange-500 to-orange-600' },
             { label: 'Aktywni', value: activeCount, color: 'from-emerald-500 to-emerald-600' },
-            { label: 'Regiony', value: regions.length, color: 'from-violet-500 to-violet-600' },
-            { label: 'Śr. stawka/h', value: employees.length > 0 ? Math.round(employees.reduce((s, e) => s + Number(e.hourly_rate), 0) / employees.length) + ' zł' : '0 zł', color: 'from-amber-500 to-amber-600' },
+            { label: 'Regiony', value: regionCount, color: 'from-violet-500 to-violet-600' },
+            { label: 'Śr. stawka/dyżur', value: avgShiftRate > 0 ? `${avgShiftRate} zł` : '0 zł', color: 'from-amber-500 to-amber-600' },
           ].map(s => (
             <motion.div key={s.label} variants={ANIM.item} className={`rounded-2xl bg-gradient-to-br ${s.color} p-4 text-white shadow-lg`}>
               <p className="text-sm text-white/80">{s.label}</p>
@@ -312,7 +533,7 @@ export default function EmployeesPage() {
             <TabsList>
               <TabsTrigger value="list" className="gap-2"><Users className="h-4 w-4" /> Lista pracowników</TabsTrigger>
               <TabsTrigger value="schedule" className="gap-2"><Clock className="h-4 w-4" /> Grafik pracy</TabsTrigger>
-              <TabsTrigger value="unavailabilities" className="gap-2"><CalendarOff className="h-4 w-4" /> Niedostepnosci</TabsTrigger>
+              <TabsTrigger value="unavailabilities" className="gap-2"><CalendarOff className="h-4 w-4" /> Niedostępności</TabsTrigger>
             </TabsList>
             <div className="relative w-64">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -320,12 +541,13 @@ export default function EmployeesPage() {
             </div>
           </div>
 
+          {/* ── LIST TAB ── */}
           <TabsContent value="list" className="mt-4">
             <Card className="rounded-2xl border-gray-100 shadow-sm">
               <CardContent className="p-0">
                 {loading ? (
                   <div className="flex items-center justify-center py-20">
-                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-orange-500 border-t-transparent" />
                   </div>
                 ) : filtered.length === 0 ? (
                   <div className="text-center py-20 text-gray-400">
@@ -336,33 +558,59 @@ export default function EmployeesPage() {
                 ) : (
                   <motion.div variants={ANIM.container} initial="hidden" animate="show">
                     {/* Header */}
-                    <div className="grid grid-cols-[1fr_120px_120px_100px_80px_80px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                      <span>Pracownik</span><span>Region</span><span>Pojazd</span><span>Stawka/h</span><span>Status</span><span></span>
+                    <div className="grid grid-cols-[1fr_100px_100px_1fr_100px_80px_80px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      <span>Pracownik</span><span>Telefon</span><span>Obszar</span><span>Umiejętności</span><span>Stawka</span><span>Status</span><span></span>
                     </div>
                     {filtered.map(emp => (
                       <motion.div
                         key={emp.id}
                         variants={ANIM.item}
-                        className="grid grid-cols-[1fr_120px_120px_100px_80px_80px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
+                        className="grid grid-cols-[1fr_100px_100px_1fr_100px_80px_80px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
                       >
+                        {/* Name + email */}
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white text-xs font-bold">
-                            {emp.user?.full_name?.split(' ').map(n => n[0]).join('').slice(0, 2) || '?'}
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white text-xs font-bold">
+                            {getInitials(emp)}
                           </div>
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">{emp.user?.full_name}</p>
+                            <p className="text-sm font-medium text-gray-900 truncate">{getDisplayName(emp)}</p>
                             <p className="text-xs text-gray-400 truncate">{emp.user?.email}</p>
                           </div>
                         </div>
+
+                        {/* Phone */}
+                        <span className="text-sm text-gray-600 truncate">{emp.user?.phone || '-'}</span>
+
+                        {/* Region */}
                         <div className="flex items-center gap-1.5">
                           {emp.region && <div className="h-2 w-2 rounded-full" style={{ backgroundColor: emp.region.color }} />}
-                          <span className="text-sm text-gray-600">{emp.region?.name || '-'}</span>
+                          <span className="text-sm text-gray-600 truncate">{emp.region?.name || '-'}</span>
                         </div>
-                        <span className="text-sm text-gray-600 truncate">{emp.vehicle_info || '-'}</span>
-                        <span className="text-sm font-medium">{Number(emp.hourly_rate)} zł</span>
+
+                        {/* Skills */}
+                        <div className="flex flex-wrap gap-1">
+                          {emp.employee_skills && emp.employee_skills.length > 0 ? (
+                            emp.employee_skills.map((es, idx) => (
+                              <Badge key={es.skill_id} className={`text-[10px] rounded-lg ${SKILL_BADGE_COLORS[idx % SKILL_BADGE_COLORS.length]}`}>
+                                {es.skill?.name || '?'}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-xs text-gray-400">-</span>
+                          )}
+                        </div>
+
+                        {/* Shift rate */}
+                        <span className="text-sm font-medium">
+                          {emp.shift_rate != null ? `${Number(emp.shift_rate)} zł` : '-'}
+                        </span>
+
+                        {/* Status */}
                         <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-[10px] rounded-lg">
                           {emp.is_active ? 'Aktywny' : 'Nieaktywny'}
                         </Badge>
+
+                        {/* Actions */}
                         <div className="flex gap-1">
                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-orange-500 hover:text-orange-600 hover:bg-orange-50" onClick={() => openEdit(emp)}>
                             <Pencil className="h-4 w-4" />
@@ -379,6 +627,7 @@ export default function EmployeesPage() {
             </Card>
           </TabsContent>
 
+          {/* ── SCHEDULE TAB ── */}
           <TabsContent value="schedule" className="mt-4">
             <Card className="rounded-2xl border-gray-100 shadow-sm">
               <CardContent className="p-6 text-center text-gray-400">
@@ -388,8 +637,9 @@ export default function EmployeesPage() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* ── UNAVAILABILITIES TAB ── */}
           <TabsContent value="unavailabilities" className="mt-4 space-y-4">
-            {/* Filters + Add button */}
             <div className="flex items-center gap-3 flex-wrap">
               <Select value={unavailFilterEmployee} onValueChange={v => setUnavailFilterEmployee(v === '__all__' ? '' : (v ?? ''))}>
                 <SelectTrigger className="w-48 h-9 rounded-xl text-sm">
@@ -398,7 +648,7 @@ export default function EmployeesPage() {
                 <SelectContent>
                   <SelectItem value="__all__">Wszyscy pracownicy</SelectItem>
                   {employees.map(emp => (
-                    <SelectItem key={emp.id} value={emp.id}>{emp.user?.full_name || emp.id.slice(0, 8)}</SelectItem>
+                    <SelectItem key={emp.id} value={emp.id}>{getDisplayName(emp)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -414,8 +664,8 @@ export default function EmployeesPage() {
                 </SelectContent>
               </Select>
               <div className="flex-1" />
-              <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700" onClick={() => setUnavailDialogOpen(true)}>
-                <Plus className="h-4 w-4" /> Dodaj niedostepnosc
+              <Button className="h-9 rounded-xl text-sm gap-2 bg-orange-500 hover:bg-orange-600" onClick={() => setUnavailDialogOpen(true)}>
+                <Plus className="h-4 w-4" /> Dodaj niedostępność
               </Button>
             </div>
 
@@ -423,13 +673,13 @@ export default function EmployeesPage() {
               <CardContent className="p-0">
                 {unavailLoading ? (
                   <div className="flex items-center justify-center py-20">
-                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-orange-500 border-t-transparent" />
                   </div>
                 ) : filteredUnavailabilities.length === 0 ? (
                   <div className="text-center py-20 text-gray-400">
                     <CalendarOff className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                    <p className="font-medium">Brak niedostepnosci</p>
-                    <p className="text-sm mt-1">Dodaj pierwsza niedostepnosc</p>
+                    <p className="font-medium">Brak niedostępności</p>
+                    <p className="text-sm mt-1">Dodaj pierwszą niedostępność</p>
                   </div>
                 ) : (
                   <div>
@@ -445,7 +695,7 @@ export default function EmployeesPage() {
                           className="grid grid-cols-[1fr_140px_180px_1fr_50px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white text-xs font-bold">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white text-xs font-bold">
                               {empName.split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
                             </div>
                             <span className="text-sm font-medium text-gray-900 truncate">{empName}</span>
@@ -476,10 +726,10 @@ export default function EmployeesPage() {
         </Tabs>
       </div>
 
-      {/* Add Unavailability Dialog */}
+      {/* ── Add Unavailability Dialog ── */}
       <Dialog open={unavailDialogOpen} onOpenChange={setUnavailDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Nowa niedostepnosc</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Nowa niedostępność</DialogTitle></DialogHeader>
           <form onSubmit={handleCreateUnavailability} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -488,7 +738,7 @@ export default function EmployeesPage() {
                   <SelectTrigger><SelectValue placeholder="Wybierz pracownika" /></SelectTrigger>
                   <SelectContent>
                     {employees.map(emp => (
-                      <SelectItem key={emp.id} value={emp.id}>{emp.user?.full_name || emp.id.slice(0, 8)}</SelectItem>
+                      <SelectItem key={emp.id} value={emp.id}>{getDisplayName(emp)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -516,7 +766,7 @@ export default function EmployeesPage() {
             <div className="space-y-2"><Label>Notatki</Label><Input value={unavailForm.notes} onChange={e => setUnavailForm({ ...unavailForm, notes: e.target.value })} placeholder="Opcjonalne notatki..." /></div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={() => setUnavailDialogOpen(false)}>Anuluj</Button>
-              <Button type="submit" disabled={unavailSaving || !unavailForm.employee_id} className="bg-blue-600 hover:bg-blue-700">
+              <Button type="submit" disabled={unavailSaving || !unavailForm.employee_id} className="bg-orange-500 hover:bg-orange-600">
                 {unavailSaving ? 'Zapisywanie...' : 'Dodaj'}
               </Button>
             </div>
@@ -524,33 +774,15 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Employee Dialog */}
+      {/* ── Add Employee Dialog ── */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Nowy pracownik</DialogTitle></DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>Imię i nazwisko</Label><Input required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Telefon</Label><Input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
-            </div>
-            <div className="space-y-2"><Label>Email</Label><Input type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Region</Label>
-                <Select value={form.region_id} onValueChange={v => setForm({ ...form, region_id: v ?? '' })}>
-                  <SelectTrigger><SelectValue placeholder="Wybierz region" /></SelectTrigger>
-                  <SelectContent>
-                    {regions.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2"><Label>Stawka/h (zł)</Label><Input type="number" value={form.hourly_rate} onChange={e => setForm({ ...form, hourly_rate: e.target.value })} /></div>
-            </div>
-            <div className="space-y-2"><Label>Pojazd</Label><Input value={form.vehicle_info} onChange={e => setForm({ ...form, vehicle_info: e.target.value })} placeholder="VW Transporter 2021" /></div>
-            <div className="space-y-2"><Label>Umiejętności (oddzielone przecinkami)</Label><Input value={form.skills} onChange={e => setForm({ ...form, skills: e.target.value })} placeholder="wymiana opon, wyważanie, naprawa" /></div>
+            {renderFormFields(form, setForm, false)}
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={() => setDialogOpen(false)}>Anuluj</Button>
-              <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">
+              <Button type="submit" disabled={saving} className="bg-orange-500 hover:bg-orange-600">
                 {saving ? 'Tworzenie...' : 'Dodaj pracownika'}
               </Button>
             </div>
@@ -558,66 +790,12 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Employee Dialog */}
+      {/* ── Edit Employee Dialog ── */}
       <Dialog open={editDialogOpen} onOpenChange={o => { setEditDialogOpen(o); if (!o) setEditingEmployee(null); }}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edytuj pracownika</DialogTitle></DialogHeader>
           <form onSubmit={handleEditSave} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Imię i nazwisko</Label>
-                <Input required value={editForm.full_name} onChange={e => setEditForm({ ...editForm, full_name: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label>Telefon</Label>
-                <Input value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Rola</Label>
-                <Select value={editForm.role} onValueChange={v => setEditForm({ ...editForm, role: v ?? 'worker' })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="dispatcher">Dyspozytor</SelectItem>
-                    <SelectItem value="worker">Pracownik</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Region</Label>
-                <Select value={editForm.region_id} onValueChange={v => setEditForm({ ...editForm, region_id: v ?? '' })}>
-                  <SelectTrigger><SelectValue placeholder="Brak" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Brak</SelectItem>
-                    {regions.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Godziny pracy od</Label>
-                <Input type="time" value={editForm.start_time} onChange={e => setEditForm({ ...editForm, start_time: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label>Godziny pracy do</Label>
-                <Input type="time" value={editForm.end_time} onChange={e => setEditForm({ ...editForm, end_time: e.target.value })} />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Stawka/h (zł)</Label>
-              <Input type="number" value={editForm.hourly_rate} onChange={e => setEditForm({ ...editForm, hourly_rate: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label>Umiejętności (oddzielone przecinkami)</Label>
-              <Input value={editForm.skills} onChange={e => setEditForm({ ...editForm, skills: e.target.value })} placeholder="wymiana opon, wyważanie, naprawa" />
-            </div>
-            <div className="flex items-center gap-3">
-              <Switch checked={editForm.is_active} onCheckedChange={v => setEditForm({ ...editForm, is_active: !!v })} />
-              <Label>{editForm.is_active ? 'Aktywny' : 'Nieaktywny'}</Label>
-            </div>
+            {renderFormFields(editForm, setEditForm, true)}
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={() => setEditDialogOpen(false)}>Anuluj</Button>
               <Button type="submit" disabled={editSaving} className="bg-orange-500 hover:bg-orange-600">
@@ -628,12 +806,12 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
+      {/* ── Delete Confirmation Dialog ── */}
       <Dialog open={deleteDialogOpen} onOpenChange={o => { setDeleteDialogOpen(o); if (!o) setDeletingEmployee(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Dezaktywuj pracownika</DialogTitle></DialogHeader>
           <p className="text-sm text-gray-600">
-            Czy na pewno chcesz dezaktywować pracownika <strong>{deletingEmployee?.user?.full_name}</strong>? Pracownik zostanie oznaczony jako nieaktywny.
+            Czy na pewno chcesz dezaktywować pracownika <strong>{deletingEmployee ? getDisplayName(deletingEmployee) : ''}</strong>? Pracownik zostanie oznaczony jako nieaktywny.
           </p>
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Anuluj</Button>

@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Calendar, ClipboardList, MapPin, Users, UserCog,
   BarChart3, Settings, Wrench, LogOut, Bell, Truck, Menu, X, Route,
-  FileText, CalendarDays, Upload, PhoneCall, Repeat, Package,
+  FileText, CalendarDays, Upload, PhoneCall, Repeat, Package, Award,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
@@ -37,6 +37,7 @@ const resourcesMenu = [
 
 const configMenu = [
   { name: 'Usługi', href: '/services', icon: Wrench },
+  { name: 'Umiejętności', href: '/skills', icon: Award },
   { name: 'Magazyn', href: '/warehouse', icon: Package },
   { name: 'Formularze', href: '/forms', icon: FileText },
 ];

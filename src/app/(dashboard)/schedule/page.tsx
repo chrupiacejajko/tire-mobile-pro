@@ -6,9 +6,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -16,15 +15,34 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Copy, Shield,
+  CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Shield, AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { createClient } from '@/lib/supabase/client';
 
-// ── Types ──
+// -- Types --
 
-interface Employee {
+interface EmployeeInfo {
   id: string;
   name: string;
+  region_id: string | null;
+  default_vehicle_id: string | null;
+  region_name?: string | null;
+  region_color?: string | null;
+}
+
+interface VehicleInfo {
+  id: string;
+  plate_number: string;
+  brand: string;
+  model: string;
+  is_active: boolean;
+}
+
+interface RegionInfo {
+  id: string;
+  name: string;
+  color: string;
 }
 
 interface WorkSchedule {
@@ -35,27 +53,16 @@ interface WorkSchedule {
   end_time: string;
   is_night_shift: boolean;
   notes: string | null;
+  vehicle_id: string | null;
+  region_id: string | null;
+  vehicle_plate: string | null;
+  region_name: string | null;
+  region_color: string | null;
 }
 
-interface Unavailability {
-  id: string;
-  employee_id: string;
-  start_date: string;
-  end_date: string;
-  type: string;
-}
+type ViewMode = 'day' | 'week' | 'month';
 
-interface ScheduleTemplate {
-  id: string;
-  name: string;
-  days_of_week: number[];
-  start_time: string;
-  end_time: string;
-}
-
-type ViewMode = '7' | '14' | '30';
-
-// ── Helpers ──
+// -- Helpers --
 
 function formatDate(d: Date): string {
   return d.toISOString().split('T')[0];
@@ -75,12 +82,13 @@ function getMonday(d: Date): Date {
   return m;
 }
 
-function formatDayHeader(d: Date): { day: string; date: string; isWeekend: boolean } {
+function formatDayHeader(d: Date): { day: string; date: string; full: string; isWeekend: boolean } {
   const dayNames = ['Nd', 'Pn', 'Wt', 'Sr', 'Cz', 'Pt', 'So'];
   const dow = d.getDay();
   return {
     day: dayNames[dow],
     date: `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`,
+    full: `${dayNames[dow]} ${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`,
     isWeekend: dow === 0 || dow === 6,
   };
 }
@@ -89,48 +97,42 @@ function timeStr(t: string): string {
   return t?.slice(0, 5) ?? '';
 }
 
-// ── Main Page ──
+// -- Main Page --
 
 export default function SchedulePage() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
+  const supabase = createClient();
+  const [employees, setEmployees] = useState<EmployeeInfo[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleInfo[]>([]);
+  const [regions, setRegions] = useState<RegionInfo[]>([]);
   const [schedules, setSchedules] = useState<WorkSchedule[]>([]);
-  const [unavailabilities, setUnavailabilities] = useState<Unavailability[]>([]);
-  const [templates, setTemplates] = useState<ScheduleTemplate[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [viewMode, setViewMode] = useState<ViewMode>('14');
+  const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [startDate, setStartDate] = useState(() => getMonday(new Date()));
 
   // Dialogs
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [dutyDialogOpen, setDutyDialogOpen] = useState(false);
+  const [conflictError, setConflictError] = useState<string | null>(null);
+  const [savingSchedule, setSavingSchedule] = useState(false);
 
   // Edit form
   const [editForm, setEditForm] = useState({
     employee_id: '',
-    date: '',
-    start_time: '08:00',
-    end_time: '16:00',
-    is_night_shift: false,
+    start_date: '',
+    start_time: '07:00',
+    end_date: '',
+    end_time: '07:00',
+    vehicle_id: '',
+    region_id: '',
     notes: '',
     isNew: true,
-  });
-
-  // Bulk form
-  const [bulkForm, setBulkForm] = useState({
-    employee_ids: [] as string[],
-    from_date: '',
-    to_date: '',
-    template_id: '',
-    start_time: '08:00',
-    end_time: '16:00',
-    skip_weekends: true,
+    originalDate: '', // for editing existing
   });
 
   // 48/48 duty form
   const [dutyForm, setDutyForm] = useState({
-    employee_groups: {} as Record<string, 'A' | 'B'>, // employee_id -> group
+    employee_groups: {} as Record<string, 'A' | 'B'>,
     from_date: '',
     to_date: '',
     start_time: '07:00',
@@ -140,7 +142,9 @@ export default function SchedulePage() {
   const today = formatDate(new Date());
 
   const days = useMemo(() => {
-    const count = parseInt(viewMode);
+    let count = 7;
+    if (viewMode === 'day') count = 1;
+    else if (viewMode === 'month') count = 30;
     const result: Date[] = [];
     for (let i = 0; i < count; i++) {
       result.push(addDays(startDate, i));
@@ -153,35 +157,57 @@ export default function SchedulePage() {
     to: formatDate(days[days.length - 1]),
   }), [days]);
 
-  // ── Data fetching ──
+  // -- Data fetching --
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [empRes, schedRes, unavRes, tplRes] = await Promise.all([
-        fetch('/api/employees').then(r => r.json()),
-        fetch(`/api/work-schedules?from=${dateRange.from}&to=${dateRange.to}`).then(r => r.json()),
-        fetch(`/api/unavailabilities?from=${dateRange.from}&to=${dateRange.to}`).then(r => r.json()),
-        fetch('/api/schedule-templates').then(r => r.json()),
-      ]);
+      // Fetch employees with region info
+      const { data: empData } = await supabase
+        .from('employees')
+        .select('id, region_id, default_vehicle_id, user:profiles(full_name), region:regions(name, color)')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true });
 
-      const empList: Employee[] = (empRes.employees || []).map((e: any) => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const empList: EmployeeInfo[] = (empData || []).map((e: any) => ({
         id: e.id,
-        name: e.user?.full_name || e.profiles?.full_name || 'Pracownik',
+        name: e.user?.full_name || 'Pracownik',
+        region_id: e.region_id,
+        default_vehicle_id: e.default_vehicle_id || null,
+        region_name: e.region?.name || null,
+        region_color: e.region?.color || null,
       }));
       setEmployees(empList);
-      setSchedules(schedRes.schedules || []);
-      setUnavailabilities(unavRes.unavailabilities || []);
-      setTemplates(tplRes.templates || []);
+
+      // Fetch vehicles
+      const { data: vehData } = await supabase
+        .from('vehicles')
+        .select('id, plate_number, brand, model, is_active')
+        .eq('is_active', true)
+        .order('plate_number');
+      setVehicles(vehData || []);
+
+      // Fetch regions
+      const { data: regData } = await supabase
+        .from('regions')
+        .select('id, name, color')
+        .order('name');
+      setRegions(regData || []);
+
+      // Fetch schedules via API (includes vehicle_plate and region_name)
+      const schedRes = await fetch(`/api/work-schedules?from=${dateRange.from}&to=${dateRange.to}`);
+      const schedJson = await schedRes.json();
+      setSchedules(schedJson.schedules || []);
     } catch (err) {
       console.error('[schedule] fetch error', err);
     }
     setLoading(false);
-  }, [dateRange]);
+  }, [dateRange, supabase]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // ── Schedule lookup ──
+  // -- Schedule lookup --
 
   const scheduleMap = useMemo(() => {
     const m = new Map<string, WorkSchedule>();
@@ -191,59 +217,125 @@ export default function SchedulePage() {
     return m;
   }, [schedules]);
 
-  const unavailabilityMap = useMemo(() => {
-    const m = new Map<string, boolean>();
-    for (const u of unavailabilities) {
-      const start = new Date(u.start_date + 'T00:00:00');
-      const end = new Date(u.end_date + 'T00:00:00');
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        m.set(`${u.employee_id}:${formatDate(d)}`, true);
+  // Vehicle gantt: vehicle_id -> date -> schedule info
+  const vehicleScheduleMap = useMemo(() => {
+    const m = new Map<string, Map<string, WorkSchedule>>();
+    for (const s of schedules) {
+      if (!s.vehicle_id) continue;
+      let dateMap = m.get(s.vehicle_id);
+      if (!dateMap) {
+        dateMap = new Map();
+        m.set(s.vehicle_id, dateMap);
       }
+      dateMap.set(s.date, s);
     }
     return m;
-  }, [unavailabilities]);
+  }, [schedules]);
 
-  // ── Handlers ──
+  // Employee name lookup
+  const employeeNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of employees) m.set(e.id, e.name);
+    return m;
+  }, [employees]);
 
-  function handleCellClick(employeeId: string, date: string) {
-    const existing = scheduleMap.get(`${employeeId}:${date}`);
+  // Vehicle plate lookup
+  const vehiclePlateMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const v of vehicles) m.set(v.id, v.plate_number);
+    return m;
+  }, [vehicles]);
+
+  // -- Handlers --
+
+  function handleCellClick(employeeId: string, dateStr: string) {
+    const existing = scheduleMap.get(`${employeeId}:${dateStr}`);
+    const emp = employees.find(e => e.id === employeeId);
+    setConflictError(null);
+
     if (existing) {
       setEditForm({
         employee_id: existing.employee_id,
-        date: existing.date,
+        start_date: existing.date,
         start_time: timeStr(existing.start_time),
+        end_date: existing.date,
         end_time: timeStr(existing.end_time),
-        is_night_shift: existing.is_night_shift,
+        vehicle_id: existing.vehicle_id || emp?.default_vehicle_id || '',
+        region_id: existing.region_id || emp?.region_id || '',
         notes: existing.notes || '',
         isNew: false,
+        originalDate: existing.date,
       });
     } else {
+      const endDate = formatDate(addDays(new Date(dateStr + 'T00:00:00'), 1));
       setEditForm({
         employee_id: employeeId,
-        date,
-        start_time: '08:00',
-        end_time: '16:00',
-        is_night_shift: false,
+        start_date: dateStr,
+        start_time: '07:00',
+        end_date: endDate,
+        end_time: '07:00',
+        vehicle_id: emp?.default_vehicle_id || '',
+        region_id: emp?.region_id || '',
         notes: '',
         isNew: true,
+        originalDate: '',
       });
     }
     setEditDialogOpen(true);
   }
 
   async function handleSaveSchedule() {
-    await fetch('/api/work-schedules', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        employee_id: editForm.employee_id,
-        date: editForm.date,
-        start_time: editForm.start_time,
-        end_time: editForm.end_time,
-        is_night_shift: editForm.is_night_shift,
-        notes: editForm.notes || null,
-      }),
-    });
+    setSavingSchedule(true);
+    setConflictError(null);
+
+    // For multi-day shifts, create one schedule entry per day
+    const start = new Date(editForm.start_date + 'T00:00:00');
+    const end = new Date(editForm.end_date + 'T00:00:00');
+    const dayCount = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+
+    for (let i = 0; i < dayCount; i++) {
+      const currentDay = addDays(start, i);
+      const dateStr = formatDate(currentDay);
+
+      // Determine time for this day
+      let dayStart = editForm.start_time;
+      let dayEnd = editForm.end_time;
+      if (dayCount > 1) {
+        if (i === 0) {
+          dayStart = editForm.start_time;
+          dayEnd = '23:59';
+        } else if (i === dayCount - 1) {
+          dayStart = '00:00';
+          dayEnd = editForm.end_time;
+        } else {
+          dayStart = '00:00';
+          dayEnd = '23:59';
+        }
+      }
+
+      const res = await fetch('/api/work-schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employee_id: editForm.employee_id,
+          date: dateStr,
+          start_time: dayStart,
+          end_time: dayEnd,
+          vehicle_id: editForm.vehicle_id || null,
+          region_id: editForm.region_id || null,
+          notes: editForm.notes || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        setConflictError(err.error || 'Wystąpił błąd');
+        setSavingSchedule(false);
+        return;
+      }
+    }
+
+    setSavingSchedule(false);
     setEditDialogOpen(false);
     fetchData();
   }
@@ -254,75 +346,26 @@ export default function SchedulePage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         employee_id: editForm.employee_id,
-        date: editForm.date,
+        date: editForm.originalDate || editForm.start_date,
       }),
     });
     setEditDialogOpen(false);
     fetchData();
   }
 
-  async function handleBulkGenerate() {
-    for (const empId of bulkForm.employee_ids) {
-      await fetch('/api/work-schedules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bulk: true,
-          employee_id: empId,
-          from_date: bulkForm.from_date,
-          to_date: bulkForm.to_date,
-          template_id: bulkForm.template_id || undefined,
-          start_time: !bulkForm.template_id ? bulkForm.start_time : undefined,
-          end_time: !bulkForm.template_id ? bulkForm.end_time : undefined,
-          skip_weekends: bulkForm.skip_weekends,
-        }),
-      });
-    }
-    setBulkDialogOpen(false);
-    fetchData();
-  }
-
   function navigate(dir: number) {
-    const count = parseInt(viewMode);
+    let count = 7;
+    if (viewMode === 'day') count = 1;
+    else if (viewMode === 'month') count = 30;
     setStartDate(prev => addDays(prev, dir * count));
   }
 
   function goToday() {
-    setStartDate(getMonday(new Date()));
+    if (viewMode === 'day') setStartDate(new Date());
+    else setStartDate(getMonday(new Date()));
   }
 
-  function openBulkDialog() {
-    setBulkForm({
-      employee_ids: [],
-      from_date: dateRange.from,
-      to_date: dateRange.to,
-      template_id: '',
-      start_time: '08:00',
-      end_time: '16:00',
-      skip_weekends: true,
-    });
-    setBulkDialogOpen(true);
-  }
-
-  const toggleBulkEmployee = (id: string) => {
-    setBulkForm(prev => ({
-      ...prev,
-      employee_ids: prev.employee_ids.includes(id)
-        ? prev.employee_ids.filter(e => e !== id)
-        : [...prev.employee_ids, id],
-    }));
-  };
-
-  const selectAllBulkEmployees = () => {
-    setBulkForm(prev => ({
-      ...prev,
-      employee_ids: prev.employee_ids.length === employees.length
-        ? []
-        : employees.map(e => e.id),
-    }));
-  };
-
-  // ── 48/48 Duty handlers ──
+  // -- 48/48 Duty handlers --
 
   function openDutyDialog() {
     const todayStr = formatDate(new Date());
@@ -361,7 +404,6 @@ export default function SchedulePage() {
     if (selectedEmployees.length === 0) return;
 
     const fromDate = dutyForm.from_date;
-    // Group A starts ON on from_date, Group B starts ON 2 days later
     const groupBStart = formatDate(addDays(new Date(fromDate + 'T00:00:00'), 2));
 
     const empPayload = selectedEmployees.map(([empId, group]) => ({
@@ -387,12 +429,23 @@ export default function SchedulePage() {
     fetchData();
   }
 
-  // ── Rendering ──
+  // Auto-fill vehicle/region when employee changes
+  function handleEmployeeChange(empId: string) {
+    const emp = employees.find(e => e.id === empId);
+    setEditForm(f => ({
+      ...f,
+      employee_id: empId,
+      vehicle_id: emp?.default_vehicle_id || f.vehicle_id,
+      region_id: emp?.region_id || f.region_id,
+    }));
+  }
+
+  // -- Rendering --
 
   const monthLabel = useMemo(() => {
     const months = [
-      'Styczen', 'Luty', 'Marzec', 'Kwiecien', 'Maj', 'Czerwiec',
-      'Lipiec', 'Sierpien', 'Wrzesien', 'Pazdziernik', 'Listopad', 'Grudzien',
+      'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
+      'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
     ];
     const first = days[0];
     const last = days[days.length - 1];
@@ -402,25 +455,57 @@ export default function SchedulePage() {
     return `${months[first.getMonth()]} - ${months[last.getMonth()]} ${last.getFullYear()}`;
   }, [days]);
 
+  // Vehicles that appear in any schedule in the date range
+  const activeVehicleIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of schedules) {
+      if (s.vehicle_id) ids.add(s.vehicle_id);
+    }
+    return ids;
+  }, [schedules]);
+
+  const vehiclesForGantt = useMemo(() => {
+    return vehicles.filter(v => activeVehicleIds.has(v.id));
+  }, [vehicles, activeVehicleIds]);
+
+  const isCompact = viewMode === 'month';
+
   return (
     <div className="min-h-screen bg-gray-50/50">
       <Topbar
         title="Grafik zmian"
-        subtitle="Planowanie zmian pracownikow"
+        subtitle="Planowanie dyżurów pracowników"
         icon={<CalendarDays className="h-5 w-5" />}
         actions={
           <div className="flex items-center gap-2">
             <Button
+              className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
+              onClick={() => {
+                setConflictError(null);
+                const todayStr = formatDate(new Date());
+                const endStr = formatDate(addDays(new Date(), 1));
+                setEditForm({
+                  employee_id: employees[0]?.id || '',
+                  start_date: todayStr,
+                  start_time: '07:00',
+                  end_date: endStr,
+                  end_time: '07:00',
+                  vehicle_id: employees[0]?.default_vehicle_id || '',
+                  region_id: employees[0]?.region_id || '',
+                  notes: '',
+                  isNew: true,
+                  originalDate: '',
+                });
+                setEditDialogOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" /> Utwórz dyżur
+            </Button>
+            <Button
               className="h-9 rounded-xl text-sm gap-2 bg-emerald-600 hover:bg-emerald-700"
               onClick={openDutyDialog}
             >
-              <Shield className="h-4 w-4" /> Generuj dyzury 48/48
-            </Button>
-            <Button
-              className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
-              onClick={openBulkDialog}
-            >
-              <Copy className="h-4 w-4" /> Zastosuj szablon
+              <Shield className="h-4 w-4" /> Generuj 48/48
             </Button>
           </div>
         }
@@ -429,6 +514,24 @@ export default function SchedulePage() {
       <div className="p-4 lg:p-6">
         {/* Controls */}
         <div className="flex flex-wrap items-center gap-3 mb-4">
+          <div className="flex items-center gap-1">
+            {(['day', 'week', 'month'] as ViewMode[]).map(v => (
+              <Button
+                key={v}
+                variant={viewMode === v ? 'default' : 'outline'}
+                size="sm"
+                className={cn('h-8 rounded-lg text-xs', viewMode === v && 'bg-blue-600 hover:bg-blue-700')}
+                onClick={() => {
+                  setViewMode(v);
+                  if (v === 'day') setStartDate(new Date());
+                  else setStartDate(getMonday(new Date()));
+                }}
+              >
+                {v === 'day' ? 'Dzień' : v === 'week' ? 'Tydzień' : 'Miesiąc'}
+              </Button>
+            ))}
+          </div>
+
           <div className="flex items-center gap-1">
             <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg" onClick={() => navigate(-1)}>
               <ChevronLeft className="h-4 w-4" />
@@ -442,209 +545,288 @@ export default function SchedulePage() {
           </div>
 
           <span className="text-sm font-semibold text-gray-700">{monthLabel}</span>
-
-          <div className="ml-auto flex items-center gap-1">
-            {(['7', '14', '30'] as ViewMode[]).map(v => (
-              <Button
-                key={v}
-                variant={viewMode === v ? 'default' : 'outline'}
-                size="sm"
-                className={cn('h-8 rounded-lg text-xs', viewMode === v && 'bg-blue-600 hover:bg-blue-700')}
-                onClick={() => setViewMode(v)}
-              >
-                {v === '7' ? 'Tydzien' : v === '14' ? '2 Tygodnie' : 'Miesiac'}
-              </Button>
-            ))}
-          </div>
         </div>
 
-        {/* Grid */}
-        <Card className="rounded-2xl border-gray-100 shadow-sm overflow-hidden">
-          <CardContent className="p-0">
-            {loading ? (
-              <div className="flex items-center justify-center py-20">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-              </div>
-            ) : employees.length === 0 ? (
-              <div className="text-center py-16 text-gray-400">
-                <CalendarDays className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                <p className="text-sm font-medium">Brak pracownikow</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
-                      <th className="sticky left-0 z-10 bg-gray-50 w-[160px] min-w-[160px] px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider border-r border-gray-100">
-                        Pracownik
-                      </th>
-                      {days.map(d => {
-                        const info = formatDayHeader(d);
-                        const isToday = formatDate(d) === today;
-                        return (
-                          <th
-                            key={formatDate(d)}
-                            className={cn(
-                              'min-w-[70px] px-1 py-2.5 text-center border-r border-gray-50',
-                              info.isWeekend && 'bg-gray-100/50',
-                              isToday && 'ring-2 ring-inset ring-orange-400 bg-orange-50/30',
-                            )}
-                          >
-                            <div className={cn(
-                              'text-[10px] font-semibold uppercase',
-                              info.isWeekend ? 'text-red-400' : 'text-gray-400',
-                            )}>
-                              {info.day}
-                            </div>
-                            <div className={cn(
-                              'text-[11px] font-bold',
-                              isToday ? 'text-orange-600' : 'text-gray-700',
-                            )}>
-                              {info.date}
-                            </div>
-                          </th>
-                        );
-                      })}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {employees.map(emp => (
-                      <tr key={emp.id} className="border-b border-gray-50 hover:bg-gray-50/30">
-                        <td className="sticky left-0 z-10 bg-white w-[160px] min-w-[160px] px-3 py-2 border-r border-gray-100">
-                          <div className="flex items-center gap-2">
-                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-gray-600 to-gray-800 text-white text-[10px] font-bold shrink-0">
-                              {emp.name.charAt(0).toUpperCase()}
-                            </div>
-                            <span className="text-[12px] font-medium text-gray-800 truncate">{emp.name}</span>
-                          </div>
-                        </td>
-                        {days.map(d => {
-                          const dateStr = formatDate(d);
-                          const info = formatDayHeader(d);
-                          const isToday = dateStr === today;
-                          const key = `${emp.id}:${dateStr}`;
-                          const schedule = scheduleMap.get(key);
-                          const isUnavailable = unavailabilityMap.get(key);
-
-                          return (
-                            <td
-                              key={dateStr}
-                              className={cn(
-                                'min-w-[70px] px-0.5 py-1 border-r border-gray-50 cursor-pointer transition-colors',
-                                info.isWeekend && 'bg-gray-50/50',
-                                isToday && 'ring-2 ring-inset ring-orange-400',
-                              )}
-                              onClick={() => handleCellClick(emp.id, dateStr)}
-                            >
-                              {(() => {
-                                const isDuty48 = schedule?.notes === 'DYZUR_48_48';
-                                // Check if this is an "off" day in a 48/48 pattern (no schedule but other employees have duty)
-                                const isOffDay48 = !schedule && !isUnavailable && schedules.some(
-                                  s => s.notes === 'DYZUR_48_48' && s.date === dateStr && s.employee_id !== emp.id
-                                );
-
-                                if (isUnavailable) {
-                                  return (
-                                    <div className="mx-auto h-8 w-full rounded-md bg-red-100 flex items-center justify-center"
-                                      style={{
-                                        backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, rgba(239,68,68,0.15) 3px, rgba(239,68,68,0.15) 6px)',
-                                      }}
-                                    >
-                                      <span className="text-[9px] font-medium text-red-500">Niedost.</span>
-                                    </div>
-                                  );
-                                }
-                                if (isDuty48) {
-                                  return (
-                                    <div className="mx-auto h-8 w-full rounded-md bg-emerald-200 text-emerald-800 flex items-center justify-center">
-                                      <span className="text-[9px] font-bold whitespace-nowrap">
-                                        DYZUR {timeStr(schedule.start_time)}-{timeStr(schedule.end_time)}
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* == EMPLOYEE GANTT == */}
+            <div>
+              <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                <CalendarDays className="h-4 w-4" /> Grafik pracowników
+              </h2>
+              <Card className="rounded-2xl border-gray-100 shadow-sm overflow-hidden">
+                <CardContent className="p-0">
+                  {employees.length === 0 ? (
+                    <div className="text-center py-12 text-gray-400">
+                      <p className="text-sm font-medium">Brak aktywnych pracowników</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-100">
+                            <th className="sticky left-0 z-10 bg-gray-50 w-[160px] min-w-[160px] px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider border-r border-gray-100">
+                              Pracownik
+                            </th>
+                            {days.map(d => {
+                              const info = formatDayHeader(d);
+                              const isToday = formatDate(d) === today;
+                              return (
+                                <th
+                                  key={formatDate(d)}
+                                  className={cn(
+                                    'px-1 py-2.5 text-center border-r border-gray-50',
+                                    isCompact ? 'min-w-[32px]' : 'min-w-[90px]',
+                                    info.isWeekend && 'bg-gray-100/50',
+                                    isToday && 'ring-2 ring-inset ring-orange-400 bg-orange-50/30',
+                                  )}
+                                >
+                                  <div className={cn(
+                                    'text-[10px] font-semibold uppercase',
+                                    info.isWeekend ? 'text-red-400' : 'text-gray-400',
+                                  )}>
+                                    {info.day}
+                                  </div>
+                                  <div className={cn(
+                                    'text-[11px] font-bold',
+                                    isToday ? 'text-orange-600' : 'text-gray-700',
+                                  )}>
+                                    {info.date}
+                                  </div>
+                                </th>
+                              );
+                            })}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {employees.map(emp => (
+                            <tr key={emp.id} className="border-b border-gray-50 hover:bg-gray-50/30">
+                              <td className="sticky left-0 z-10 bg-white w-[160px] min-w-[160px] px-3 py-2 border-r border-gray-100">
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className="flex h-7 w-7 items-center justify-center rounded-full text-white text-[10px] font-bold shrink-0"
+                                    style={{ backgroundColor: emp.region_color || '#374151' }}
+                                  >
+                                    {emp.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <span className="text-[12px] font-medium text-gray-800 truncate block">{emp.name}</span>
+                                    {emp.default_vehicle_id && (
+                                      <span className="text-[10px] text-gray-400 truncate block">
+                                        {vehiclePlateMap.get(emp.default_vehicle_id) || ''}
                                       </span>
-                                    </div>
-                                  );
-                                }
-                                if (schedule) {
-                                  return (
-                                    <div className={cn(
-                                      'mx-auto h-8 w-full rounded-md flex items-center justify-center',
-                                      schedule.is_night_shift
-                                        ? 'bg-indigo-100 text-indigo-700'
-                                        : 'bg-blue-100 text-blue-700',
-                                    )}>
-                                      <span className="text-[10px] font-semibold whitespace-nowrap">
-                                        {timeStr(schedule.start_time)}-{timeStr(schedule.end_time)}
-                                      </span>
-                                    </div>
-                                  );
-                                }
-                                if (isOffDay48) {
-                                  return (
-                                    <div className="mx-auto h-8 w-full rounded-md bg-gray-100 flex items-center justify-center">
-                                      <span className="text-[9px] font-medium text-gray-400">WOLNE</span>
-                                    </div>
-                                  );
-                                }
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              {days.map(d => {
+                                const dateStr = formatDate(d);
+                                const info = formatDayHeader(d);
+                                const isToday = dateStr === today;
+                                const key = `${emp.id}:${dateStr}`;
+                                const schedule = scheduleMap.get(key);
+
                                 return (
-                                  <div className="mx-auto h-8 w-full rounded-md hover:bg-gray-100 transition-colors" />
+                                  <td
+                                    key={dateStr}
+                                    className={cn(
+                                      'px-0.5 py-1 border-r border-gray-50 cursor-pointer transition-colors',
+                                      isCompact ? 'min-w-[32px]' : 'min-w-[90px]',
+                                      info.isWeekend && 'bg-gray-50/50',
+                                      isToday && 'ring-2 ring-inset ring-orange-400',
+                                    )}
+                                    onClick={() => handleCellClick(emp.id, dateStr)}
+                                  >
+                                    {schedule ? (
+                                      <div
+                                        className={cn(
+                                          'mx-auto w-full rounded-md flex items-center justify-center text-white',
+                                          isCompact ? 'h-6' : 'h-10',
+                                        )}
+                                        style={{
+                                          backgroundColor: schedule.region_color || '#3b82f6',
+                                        }}
+                                        title={`${timeStr(schedule.start_time)}-${timeStr(schedule.end_time)} ${schedule.vehicle_plate || ''} ${schedule.region_name || ''}`}
+                                      >
+                                        {isCompact ? (
+                                          <span className="text-[8px] font-bold">
+                                            {timeStr(schedule.start_time).replace(':', '')}
+                                          </span>
+                                        ) : (
+                                          <div className="text-center px-1">
+                                            <div className="text-[9px] font-bold whitespace-nowrap">
+                                              {schedule.notes === 'DYZUR_48_48' ? 'DYŻUR ' : ''}
+                                              {timeStr(schedule.start_time)}-{timeStr(schedule.end_time)}
+                                            </div>
+                                            {schedule.vehicle_plate && (
+                                              <div className="text-[8px] opacity-90 whitespace-nowrap">{schedule.vehicle_plate}</div>
+                                            )}
+                                            {schedule.region_name && (
+                                              <div className="text-[8px] opacity-80 whitespace-nowrap">{schedule.region_name}</div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className={cn(
+                                        'mx-auto w-full rounded-md hover:bg-gray-100 transition-colors',
+                                        isCompact ? 'h-6' : 'h-10',
+                                      )} />
+                                    )}
+                                  </td>
                                 );
-                              })()}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* == VEHICLE GANTT == */}
+            {vehiclesForGantt.length > 0 && (
+              <div>
+                <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                  <CalendarDays className="h-4 w-4" /> Grafik pojazdów
+                </h2>
+                <Card className="rounded-2xl border-gray-100 shadow-sm overflow-hidden">
+                  <CardContent className="p-0">
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-100">
+                            <th className="sticky left-0 z-10 bg-gray-50 w-[160px] min-w-[160px] px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider border-r border-gray-100">
+                              Pojazd
+                            </th>
+                            {days.map(d => {
+                              const info = formatDayHeader(d);
+                              const isToday = formatDate(d) === today;
+                              return (
+                                <th
+                                  key={formatDate(d)}
+                                  className={cn(
+                                    'px-1 py-2.5 text-center border-r border-gray-50',
+                                    isCompact ? 'min-w-[32px]' : 'min-w-[90px]',
+                                    info.isWeekend && 'bg-gray-100/50',
+                                    isToday && 'ring-2 ring-inset ring-orange-400 bg-orange-50/30',
+                                  )}
+                                >
+                                  <div className={cn(
+                                    'text-[10px] font-semibold uppercase',
+                                    info.isWeekend ? 'text-red-400' : 'text-gray-400',
+                                  )}>
+                                    {info.day}
+                                  </div>
+                                  <div className={cn(
+                                    'text-[11px] font-bold',
+                                    isToday ? 'text-orange-600' : 'text-gray-700',
+                                  )}>
+                                    {info.date}
+                                  </div>
+                                </th>
+                              );
+                            })}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {vehiclesForGantt.map(veh => {
+                            const dateMap = vehicleScheduleMap.get(veh.id);
+                            return (
+                              <tr key={veh.id} className="border-b border-gray-50 hover:bg-gray-50/30">
+                                <td className="sticky left-0 z-10 bg-white w-[160px] min-w-[160px] px-3 py-2 border-r border-gray-100">
+                                  <div>
+                                    <span className="text-[12px] font-bold text-gray-800">{veh.plate_number}</span>
+                                    <span className="text-[10px] text-gray-400 block">{veh.brand} {veh.model}</span>
+                                  </div>
+                                </td>
+                                {days.map(d => {
+                                  const dateStr = formatDate(d);
+                                  const info = formatDayHeader(d);
+                                  const isToday = dateStr === today;
+                                  const schedule = dateMap?.get(dateStr);
+                                  const empName = schedule ? (employeeNameMap.get(schedule.employee_id) || '?') : null;
+
+                                  return (
+                                    <td
+                                      key={dateStr}
+                                      className={cn(
+                                        'px-0.5 py-1 border-r border-gray-50',
+                                        isCompact ? 'min-w-[32px]' : 'min-w-[90px]',
+                                        info.isWeekend && 'bg-gray-50/50',
+                                        isToday && 'ring-2 ring-inset ring-orange-400',
+                                      )}
+                                    >
+                                      {schedule ? (
+                                        <div
+                                          className={cn(
+                                            'mx-auto w-full rounded-md flex items-center justify-center text-white',
+                                            isCompact ? 'h-6' : 'h-10',
+                                          )}
+                                          style={{
+                                            backgroundColor: schedule.region_color || '#3b82f6',
+                                          }}
+                                          title={`${empName} ${timeStr(schedule.start_time)}-${timeStr(schedule.end_time)}`}
+                                        >
+                                          {isCompact ? (
+                                            <span className="text-[8px] font-bold">
+                                              {(empName || '').charAt(0)}
+                                            </span>
+                                          ) : (
+                                            <div className="text-center px-1">
+                                              <div className="text-[9px] font-bold whitespace-nowrap truncate max-w-[80px]">
+                                                {empName}
+                                              </div>
+                                              <div className="text-[8px] opacity-90 whitespace-nowrap">
+                                                {timeStr(schedule.start_time)}-{timeStr(schedule.end_time)}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <div className={cn(
+                                          'mx-auto w-full rounded-md',
+                                          isCompact ? 'h-6' : 'h-10',
+                                        )} />
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             )}
-          </CardContent>
-        </Card>
-
-        {/* Legend */}
-        <div className="flex flex-wrap gap-4 mt-4 text-[11px] text-gray-500">
-          <div className="flex items-center gap-1.5">
-            <div className="h-4 w-8 rounded bg-blue-100" />
-            <span>Zaplanowane</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-4 w-8 rounded bg-indigo-100" />
-            <span>Zmiana nocna</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-4 w-8 rounded bg-red-100" style={{
-              backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, rgba(239,68,68,0.15) 3px, rgba(239,68,68,0.15) 6px)',
-            }} />
-            <span>Niedostepnosc</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-4 w-8 rounded bg-emerald-200" />
-            <span>Dyzur 48/48</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-4 w-8 rounded bg-gray-100" />
-            <span>Wolne (48/48)</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-4 w-8 rounded border-2 border-orange-400" />
-            <span>Dzisiaj</span>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* ── Edit / Create Schedule Dialog ── */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+      {/* == Edit / Create Schedule Dialog == */}
+      <Dialog open={editDialogOpen} onOpenChange={o => { setEditDialogOpen(o); if (!o) setConflictError(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {editForm.isNew ? 'Dodaj zmiane' : 'Edytuj zmiane'}
+              {editForm.isNew ? 'Nowy dyżur' : 'Edytuj dyżur'}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Employee */}
             <div className="space-y-2">
               <Label>Pracownik</Label>
               <Select
                 value={editForm.employee_id}
-                onValueChange={v => setEditForm(f => ({ ...f, employee_id: v ?? '' }))}
+                onValueChange={v => handleEmployeeChange(v ?? '')}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -654,25 +836,43 @@ export default function SchedulePage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Data</Label>
-              <Input
-                type="date"
-                value={editForm.date}
-                onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))}
-              />
-            </div>
+
+            {/* Start date + time */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Rozpoczecie</Label>
+                <Label>Początek dyżuru</Label>
+                <Input
+                  type="date"
+                  value={editForm.start_date}
+                  onChange={e => {
+                    const newStart = e.target.value;
+                    const newEnd = formatDate(addDays(new Date(newStart + 'T00:00:00'), 1));
+                    setEditForm(f => ({ ...f, start_date: newStart, end_date: newEnd }));
+                  }}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Godzina</Label>
                 <Input
                   type="time"
                   value={editForm.start_time}
                   onChange={e => setEditForm(f => ({ ...f, start_time: e.target.value }))}
                 />
               </div>
+            </div>
+
+            {/* End date + time */}
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Zakonczenie</Label>
+                <Label>Koniec dyżuru</Label>
+                <Input
+                  type="date"
+                  value={editForm.end_date}
+                  onChange={e => setEditForm(f => ({ ...f, end_date: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Godzina</Label>
                 <Input
                   type="time"
                   value={editForm.end_time}
@@ -680,21 +880,65 @@ export default function SchedulePage() {
                 />
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <Switch
-                checked={editForm.is_night_shift}
-                onCheckedChange={v => setEditForm(f => ({ ...f, is_night_shift: v }))}
-              />
-              <span className="text-sm text-gray-700">Zmiana nocna</span>
+
+            {/* Vehicle */}
+            <div className="space-y-2">
+              <Label>Pojazd</Label>
+              <Select
+                value={editForm.vehicle_id}
+                onValueChange={v => setEditForm(f => ({ ...f, vehicle_id: v === '__none__' ? '' : (v ?? '') }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Wybierz pojazd" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">-- Brak --</SelectItem>
+                  {vehicles.map(v => (
+                    <SelectItem key={v.id} value={v.id}>{v.plate_number} ({v.brand} {v.model})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+
+            {/* Region */}
+            <div className="space-y-2">
+              <Label>Obszar</Label>
+              <Select
+                value={editForm.region_id}
+                onValueChange={v => setEditForm(f => ({ ...f, region_id: v === '__none__' ? '' : (v ?? '') }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Wybierz region" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">-- Brak --</SelectItem>
+                  {regions.map(r => (
+                    <SelectItem key={r.id} value={r.id}>
+                      <span className="flex items-center gap-2">
+                        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: r.color }} />
+                        {r.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Notes */}
             <div className="space-y-2">
               <Label>Notatki</Label>
-              <Input
+              <Textarea
                 value={editForm.notes}
                 onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
                 placeholder="Opcjonalne..."
+                rows={2}
               />
             </div>
+
+            {/* Conflict error */}
+            {conflictError && (
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 text-red-700 text-sm">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{conflictError}</span>
+              </div>
+            )}
+
             <div className="flex justify-between">
               <div>
                 {!editForm.isNew && (
@@ -703,7 +947,7 @@ export default function SchedulePage() {
                     className="text-red-600 border-red-200 hover:bg-red-50"
                     onClick={handleDeleteSchedule}
                   >
-                    <Trash2 className="h-4 w-4 mr-1" /> Usun
+                    <Trash2 className="h-4 w-4 mr-1" /> Usuń
                   </Button>
                 )}
               </div>
@@ -711,8 +955,12 @@ export default function SchedulePage() {
                 <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
                   Anuluj
                 </Button>
-                <Button className="bg-blue-600 hover:bg-blue-700" onClick={handleSaveSchedule}>
-                  Zapisz
+                <Button
+                  className="bg-blue-600 hover:bg-blue-700"
+                  onClick={handleSaveSchedule}
+                  disabled={savingSchedule}
+                >
+                  {savingSchedule ? 'Zapisywanie...' : 'Zapisz'}
                 </Button>
               </div>
             </div>
@@ -720,18 +968,17 @@ export default function SchedulePage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── 48/48 Duty Dialog ── */}
+      {/* == 48/48 Duty Dialog == */}
       <Dialog open={dutyDialogOpen} onOpenChange={setDutyDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Generuj dyzury 48/48</DialogTitle>
+            <DialogTitle>Generuj dyżury 48/48</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            {/* Employee selection with group assignment */}
             <div className="space-y-2">
               <Label>Pracownicy i grupy</Label>
               <p className="text-[11px] text-gray-400">
-                Grupa A: dyzur zaczyna sie od daty poczatkowej. Grupa B: dyzur zaczyna sie 2 dni pozniej.
+                Grupa A: dyżur zaczyna się od daty początkowej. Grupa B: dyżur zaczyna się 2 dni później.
               </p>
               <div className="max-h-52 overflow-y-auto border rounded-lg p-2 space-y-1">
                 {employees.map(e => {
@@ -777,7 +1024,7 @@ export default function SchedulePage() {
               </div>
               {Object.keys(dutyForm.employee_groups).length > 0 && (
                 <p className="text-[11px] text-gray-400">
-                  Wybrano: {Object.keys(dutyForm.employee_groups).length} pracownikow
+                  Wybrano: {Object.keys(dutyForm.employee_groups).length} pracowników
                   (A: {Object.values(dutyForm.employee_groups).filter(g => g === 'A').length},
                   B: {Object.values(dutyForm.employee_groups).filter(g => g === 'B').length})
                 </p>
@@ -807,7 +1054,7 @@ export default function SchedulePage() {
             {/* Working hours */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Godzina rozpoczecia</Label>
+                <Label>Godzina rozpoczęcia</Label>
                 <Input
                   type="time"
                   value={dutyForm.start_time}
@@ -815,7 +1062,7 @@ export default function SchedulePage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Godzina zakonczenia</Label>
+                <Label>Godzina zakończenia</Label>
                 <Input
                   type="time"
                   value={dutyForm.end_time}
@@ -834,129 +1081,6 @@ export default function SchedulePage() {
                 onClick={handleDutyGenerate}
               >
                 <Shield className="h-4 w-4 mr-1" /> Generuj
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Bulk / Template Dialog ── */}
-      <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Zastosuj szablon grafiku</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            {/* Employee selection */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label>Pracownicy</Label>
-                <button
-                  type="button"
-                  onClick={selectAllBulkEmployees}
-                  className="text-[11px] text-blue-600 hover:underline"
-                >
-                  {bulkForm.employee_ids.length === employees.length ? 'Odznacz wszystko' : 'Zaznacz wszystko'}
-                </button>
-              </div>
-              <div className="max-h-40 overflow-y-auto border rounded-lg p-2 space-y-1">
-                {employees.map(e => (
-                  <label key={e.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer">
-                    <Checkbox
-                      checked={bulkForm.employee_ids.includes(e.id)}
-                      onCheckedChange={() => toggleBulkEmployee(e.id)}
-                    />
-                    <span className="text-sm">{e.name}</span>
-                  </label>
-                ))}
-              </div>
-              {bulkForm.employee_ids.length > 0 && (
-                <p className="text-[11px] text-gray-400">
-                  Wybrano: {bulkForm.employee_ids.length} pracownikow
-                </p>
-              )}
-            </div>
-
-            {/* Date range */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Od</Label>
-                <Input
-                  type="date"
-                  value={bulkForm.from_date}
-                  onChange={e => setBulkForm(f => ({ ...f, from_date: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Do</Label>
-                <Input
-                  type="date"
-                  value={bulkForm.to_date}
-                  onChange={e => setBulkForm(f => ({ ...f, to_date: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            {/* Template */}
-            <div className="space-y-2">
-              <Label>Szablon</Label>
-              <Select
-                value={bulkForm.template_id}
-                onValueChange={v => setBulkForm(f => ({ ...f, template_id: v ?? '' }))}
-              >
-                <SelectTrigger><SelectValue placeholder="Reczne godziny" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Reczne godziny</SelectItem>
-                  {templates.map(t => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.name} ({timeStr(t.start_time)}-{timeStr(t.end_time)})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Manual times (when no template selected) */}
-            {(!bulkForm.template_id || bulkForm.template_id === '__none__') && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Rozpoczecie</Label>
-                  <Input
-                    type="time"
-                    value={bulkForm.start_time}
-                    onChange={e => setBulkForm(f => ({ ...f, start_time: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Zakonczenie</Label>
-                  <Input
-                    type="time"
-                    value={bulkForm.end_time}
-                    onChange={e => setBulkForm(f => ({ ...f, end_time: e.target.value }))}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Skip weekends */}
-            <div className="flex items-center gap-3">
-              <Switch
-                checked={bulkForm.skip_weekends}
-                onCheckedChange={v => setBulkForm(f => ({ ...f, skip_weekends: v }))}
-              />
-              <span className="text-sm text-gray-700">Pomin weekendy</span>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setBulkDialogOpen(false)}>
-                Anuluj
-              </Button>
-              <Button
-                className="bg-blue-600 hover:bg-blue-700"
-                disabled={bulkForm.employee_ids.length === 0 || !bulkForm.from_date || !bulkForm.to_date}
-                onClick={handleBulkGenerate}
-              >
-                <Plus className="h-4 w-4 mr-1" /> Generuj grafik
               </Button>
             </div>
           </div>
