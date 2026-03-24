@@ -97,12 +97,25 @@ export async function POST(request: NextRequest) {
   for (const vehicle of vehicles) {
     const status = getStatusFromVehicle(vehicle);
 
-    // Find vehicle in DB by plate or satis_device_id
-    const { data: dbVehicle } = await supabase
+    // Find vehicle in DB by plate (primary) or satis_device_id (fallback)
+    let dbVehicle: { id: string; plate_number: string } | null = null;
+    const { data: byPlate } = await supabase
       .from('vehicles')
       .select('id, plate_number')
-      .or(`plate_number.eq.${vehicle.plate},satis_device_id.eq.${vehicle.satisId}`)
-      .single();
+      .eq('plate_number', vehicle.plate)
+      .limit(1)
+      .maybeSingle();
+    if (byPlate) {
+      dbVehicle = byPlate;
+    } else if (vehicle.satisId) {
+      const { data: byDevice } = await supabase
+        .from('vehicles')
+        .select('id, plate_number')
+        .eq('satis_device_id', vehicle.satisId)
+        .limit(1)
+        .maybeSingle();
+      dbVehicle = byDevice;
+    }
 
     if (!dbVehicle) {
       results.push({
