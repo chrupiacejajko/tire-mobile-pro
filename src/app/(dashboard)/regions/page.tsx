@@ -12,7 +12,6 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Plus, MapPin, Users, ClipboardList, Edit, Trash2, Map } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
 import type { Region } from '@/lib/types';
 
 const ANIM = {
@@ -27,22 +26,12 @@ export default function RegionsPage() {
   const [editingRegion, setEditingRegion] = useState<Region | null>(null);
   const [form, setForm] = useState({ name: '', description: '', color: '#3B82F6' });
   const [saving, setSaving] = useState(false);
-  const supabase = createClient();
 
   const fetchRegions = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('regions').select('*').order('name');
-    if (data) {
-      // Get counts per region
-      const withCounts = await Promise.all(data.map(async (r) => {
-        const [empRes, ordRes] = await Promise.all([
-          supabase.from('employees').select('id', { count: 'exact', head: true }).eq('region_id', r.id),
-          supabase.from('orders').select('id', { count: 'exact', head: true }).eq('region_id', r.id),
-        ]);
-        return { ...r, employee_count: empRes.count || 0, order_count: ordRes.count || 0 };
-      }));
-      setRegions(withCounts);
-    }
+    const res = await fetch('/api/regions');
+    const data = await res.json();
+    if (Array.isArray(data)) setRegions(data);
     setLoading(false);
   }, []);
 
@@ -52,9 +41,9 @@ export default function RegionsPage() {
     e.preventDefault();
     setSaving(true);
     if (editingRegion) {
-      await supabase.from('regions').update(form).eq('id', editingRegion.id);
+      await fetch('/api/regions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: editingRegion.id, ...form }) });
     } else {
-      await supabase.from('regions').insert(form);
+      await fetch('/api/regions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
     }
     setSaving(false);
     setDialogOpen(false);
@@ -64,7 +53,7 @@ export default function RegionsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('regions').delete().eq('id', id);
+    await fetch(`/api/regions?id=${id}`, { method: 'DELETE' });
     fetchRegions();
   };
 

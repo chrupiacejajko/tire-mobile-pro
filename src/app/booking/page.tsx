@@ -314,6 +314,12 @@ export default function BookingPage() {
         vehicles: vehiclesPayload,
         notes: form.notes || undefined,
         priority: 'normal',
+        scheduling_type: bookingMode === 'slots' ? 'fixed_time' : 'time_window',
+        source: 'booking',
+        time_window_start: bookingMode === 'windows' && selectedWindow
+          ? WINDOW_LABELS[selectedWindow]?.start : undefined,
+        time_window_end: bookingMode === 'windows' && selectedWindow
+          ? WINDOW_LABELS[selectedWindow]?.end : undefined,
       }),
     });
     const data = await res.json();

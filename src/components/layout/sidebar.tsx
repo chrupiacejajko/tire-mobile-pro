@@ -32,11 +32,13 @@ import {
   FileText,
   CalendarDays,
   Upload,
+  PhoneCall,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 
 const mainMenu = [
+  { name: 'Nowe zlecenie', href: '/dispatch', icon: PhoneCall },
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Zlecenia', href: '/orders', icon: ClipboardList },
   { name: 'Kalendarz', href: '/calendar', icon: Calendar },

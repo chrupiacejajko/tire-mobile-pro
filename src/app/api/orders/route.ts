@@ -46,6 +46,9 @@ export async function POST(request: NextRequest) {
       scheduled_date, scheduled_time, time_window,
       service_ids, service_names, vehicles,
       notes, priority,
+      scheduling_type, time_window_start, time_window_end,
+      flexibility_minutes, source, auto_assign,
+      vehicle_info,
     } = body;
 
     // ── Duplicate guard: same phone + date + services within 5 min ─────
@@ -193,12 +196,27 @@ export async function POST(request: NextRequest) {
     }
     if (!finalNotes) finalNotes = 'Rezerwacja online';
 
+    // ── Resolve scheduling_type & priority overrides ─────────────────────
+    const today = new Date().toISOString().split('T')[0];
+    let finalSchedulingType = scheduling_type || (time_window ? 'time_window' : (scheduled_time ? 'fixed_time' : 'time_window'));
+    let finalPriority = priority || 'normal';
+    let finalDate = scheduled_date || today;
+    let finalTimeWindowStart = time_window_start || null;
+    let finalTimeWindowEnd = time_window_end || null;
+    let finalFlexibility = flexibility_minutes || 0;
+    const finalSource = source || 'dispatcher';
+
+    if (finalSchedulingType === 'asap') {
+      finalDate = today;
+      finalPriority = 'urgent';
+    }
+
     // ── Create order ────────────────────────────────────────────────────
     const { data: order, error: orderError } = await supabase.from('orders').insert({
       client_id: clientId,
       status: 'new',
-      priority: priority || 'normal',
-      scheduled_date: scheduled_date || new Date().toISOString().split('T')[0],
+      priority: finalPriority,
+      scheduled_date: finalDate,
       scheduled_time_start: startTime,
       scheduled_time_end: endTime,
       address: address || 'Do ustalenia',
@@ -206,9 +224,38 @@ export async function POST(request: NextRequest) {
       services: resolvedServices,
       total_price: totalPrice,
       notes: finalNotes,
+      scheduling_type: finalSchedulingType,
+      time_window_start: finalTimeWindowStart,
+      time_window_end: finalTimeWindowEnd,
+      flexibility_minutes: finalFlexibility,
+      source: finalSource,
+      auto_assigned: auto_assign || false,
     }).select().single();
 
     if (orderError) return NextResponse.json({ error: orderError.message }, { status: 400 });
+
+    // ── Auto-assign if requested (fire-and-forget for speed) ──────────
+    let assignedEmployee: string | null = null;
+    if (auto_assign && order?.id) {
+      try {
+        const suggestRes = await fetch(new URL('/api/planner/suggest-insert', request.url).toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: order.id, date: finalDate }),
+        });
+        const suggestData = await suggestRes.json();
+        if (suggestData.suggestions?.length > 0) {
+          const best = suggestData.suggestions[0];
+          await supabase.from('orders').update({
+            employee_id: best.employee_id,
+            status: 'assigned',
+            auto_assigned: true,
+            estimated_travel_minutes: best.gps_distance_km ? Math.round(best.gps_distance_km * 2) : null,
+          }).eq('id', order.id);
+          assignedEmployee = best.employee_name;
+        }
+      } catch { /* auto-assign is best-effort */ }
+    }
 
     // ── Send booking confirmation email (fire-and-forget) ─────────────
     sendBookingConfirmationForOrder(order.id, clientId, {
@@ -230,7 +277,8 @@ export async function POST(request: NextRequest) {
       order_id: order.id,
       total_price: totalPrice,
       total_duration_minutes: totalDuration,
-      message: `Zlecenie utworzone na ${scheduled_date} (${time_window || startTime}). Kwota: ${totalPrice} zł.`,
+      assigned_employee: assignedEmployee,
+      message: `Zlecenie utworzone na ${finalDate} (${time_window || startTime}). Kwota: ${totalPrice} zł.`,
     }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
