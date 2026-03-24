@@ -1,8 +1,8 @@
 /**
  * POST /api/worker/tasks/complete
- * Body: { order_id, notes?, photos?: string[] (base64 or URLs) }
+ * Body: { order_id, notes?, photos?: string[] (base64 or URLs), closure_code_id?, closure_notes? }
  *
- * Marks order as completed, saves notes and optional photo URLs.
+ * Marks order as completed, saves notes, closure code, and optional photo URLs.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
   const supabase = getAdminClient();
   try {
     const body = await request.json();
-    const { order_id, notes, photos } = body;
+    const { order_id, notes, photos, closure_code_id, closure_notes } = body;
 
     if (!order_id) return NextResponse.json({ error: 'order_id required' }, { status: 400 });
 
@@ -21,6 +21,8 @@ export async function POST(request: NextRequest) {
       completed_at: new Date().toISOString(),
     };
     if (notes) updateData.notes = notes;
+    if (closure_code_id) updateData.closure_code_id = closure_code_id;
+    if (closure_notes) updateData.closure_notes = closure_notes;
 
     const { error } = await supabase
       .from('orders')

@@ -117,6 +117,17 @@ export async function POST(request: NextRequest) {
 
     const targetDate = date || new Date().toISOString().split('T')[0];
 
+    // Check employee unavailabilities for the target date
+    const { data: unavailabilityData } = await supabase
+      .from('unavailabilities')
+      .select('employee_id')
+      .lte('start_date', targetDate)
+      .gte('end_date', targetDate);
+
+    const unavailableEmployeeIds = new Set(
+      (unavailabilityData ?? []).map((u: { employee_id: string }) => u.employee_id),
+    );
+
     // Get orders
     let ordersQuery = supabase
       .from('orders')
@@ -152,12 +163,15 @@ export async function POST(request: NextRequest) {
       })
       .filter(Boolean) as OrderForOptimization[];
 
-    // Get employees + GPS
+    // Get employees + GPS (excluding unavailable ones)
+    const candidateEmployeeIds = (employee_ids?.length ? employee_ids : orders.map(o => o.employee_id).filter(Boolean) as string[])
+      .filter((id: string) => !unavailableEmployeeIds.has(id));
+
     const { data: employees } = await supabase
       .from('employees')
       .select('id, user:profiles(full_name)')
       .eq('is_active', true)
-      .in('id', employee_ids?.length ? employee_ids : orders.map(o => o.employee_id).filter(Boolean) as string[]);
+      .in('id', candidateEmployeeIds.length ? candidateEmployeeIds : ['__none__']);
 
     const { data: vehicleAssignments } = await supabase
       .from('vehicle_assignments')

@@ -5,9 +5,10 @@ import { motion } from 'framer-motion';
 import {
   MapPin, Phone, CheckCircle, Navigation, Camera, ChevronDown,
   ChevronUp, Clock, Circle, Loader2, AlertCircle, Star, ArrowRight, Play,
-  Compass,
+  Compass, Check,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
+import { cn } from '@/lib/utils';
 
 // ── Shift types & helpers ────────────────────────────────────────────────────
 
@@ -46,6 +47,21 @@ interface Task {
   distance_km: number | null;
   navigate_url: string | null;
   photos_taken: number;
+}
+
+interface SubTask {
+  id: string;
+  step_name: string;
+  step_order: number;
+  is_required: boolean;
+  is_completed: boolean;
+  completed_at: string | null;
+  notes: string | null;
+}
+
+interface ClosureCode {
+  id: string;
+  label: string;
 }
 
 interface WorkerData {
@@ -88,14 +104,17 @@ function CompleteModal({
   task,
   onConfirm,
   onClose,
+  closureCodes,
 }: {
   task: Task;
-  onConfirm: (notes: string, photos: string[]) => Promise<void>;
+  onConfirm: (notes: string, photos: string[], closureCodeId: string) => Promise<void>;
   onClose: () => void;
+  closureCodes: ClosureCode[];
 }) {
   const [notes, setNotes] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [closureCode, setClosureCode] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,8 +129,9 @@ function CompleteModal({
   };
 
   const handleConfirm = async () => {
+    if (!closureCode) return;
     setLoading(true);
-    try { await onConfirm(notes, photos); }
+    try { await onConfirm(notes, photos, closureCode); }
     finally { setLoading(false); }
   };
 
@@ -156,13 +176,28 @@ function CompleteModal({
           )}
         </div>
 
+        {/* Closure code */}
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-gray-500">Powód zakończenia</label>
+          <select
+            value={closureCode}
+            onChange={e => setClosureCode(e.target.value)}
+            className="w-full p-2.5 rounded-xl border border-gray-200 text-sm bg-white"
+          >
+            <option value="">Wybierz...</option>
+            {closureCodes.map(cc => (
+              <option key={cc.id} value={cc.id}>{cc.label}</option>
+            ))}
+          </select>
+        </div>
+
         <div className="flex gap-3 pt-2">
           <button onClick={onClose} className="flex-1 py-3 rounded-2xl border border-gray-200 text-gray-600 font-medium">
             Anuluj
           </button>
           <button
             onClick={handleConfirm}
-            disabled={loading}
+            disabled={loading || !closureCode}
             className="flex-1 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold flex items-center justify-center gap-2 disabled:opacity-60 transition-colors"
           >
             {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle className="h-5 w-5" />}
@@ -180,10 +215,18 @@ function TaskCard({
   task,
   isNext,
   onComplete,
+  subtasks,
+  enforceOrder,
+  onExpand,
+  onCompleteSubtask,
 }: {
   task: Task;
   isNext: boolean;
   onComplete: (t: Task) => void;
+  subtasks: SubTask[];
+  enforceOrder: boolean;
+  onExpand: (orderId: string) => void;
+  onCompleteSubtask: (subtaskId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(isNext && task.status !== 'completed');
   const cfg = STATUS_CONFIG[task.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.pending;
@@ -198,7 +241,11 @@ function TaskCard({
       {/* Header */}
       <button
         className="w-full px-4 py-4 flex items-start gap-3 text-left"
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => {
+          const willExpand = !expanded;
+          setExpanded(willExpand);
+          if (willExpand) onExpand(task.id);
+        }}
       >
         {/* Status icon */}
         <div className="mt-0.5 flex-shrink-0">
@@ -287,6 +334,41 @@ function TaskCard({
               </a>
             )}
           </div>
+
+          {/* Czynności */}
+          {subtasks.length > 0 && (
+            <div className="mt-3 space-y-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Czynności</p>
+              {subtasks.map((st, i) => {
+                const canComplete = !enforceOrder || subtasks.slice(0, i).every(s => s.is_completed);
+                return (
+                  <div key={st.id} className={cn(
+                    'flex items-center gap-3 p-2.5 rounded-xl border transition-all',
+                    st.is_completed ? 'bg-emerald-50 border-emerald-200' : canComplete ? 'bg-white border-gray-200' : 'bg-gray-50 border-gray-100 opacity-60'
+                  )}>
+                    <button
+                      disabled={st.is_completed || !canComplete}
+                      onClick={() => onCompleteSubtask(st.id)}
+                      className={cn(
+                        'h-6 w-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all',
+                        st.is_completed ? 'bg-emerald-500 border-emerald-500 text-white' : canComplete ? 'border-gray-300 hover:border-emerald-400' : 'border-gray-200'
+                      )}
+                    >
+                      {st.is_completed && <Check className="h-3.5 w-3.5" />}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className={cn('text-sm', st.is_completed ? 'text-emerald-700 line-through' : 'text-gray-800')}>
+                        {st.step_order}. {st.step_name}
+                      </p>
+                      {st.is_required && !st.is_completed && (
+                        <span className="text-[10px] text-red-400">Wymagane</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           <button
             onClick={() => onComplete(task)}
@@ -382,6 +464,9 @@ export default function MobilePage() {
   const [nearbyExpanded, setNearbyExpanded] = useState(false);
   const [nearbyLoading, setNearbyLoading] = useState(false);
   const [acceptingOrder, setAcceptingOrder] = useState<string | null>(null);
+  const [taskSubtasks, setTaskSubtasks] = useState<Record<string, SubTask[]>>({});
+  const [enforceOrders, setEnforceOrders] = useState<Record<string, boolean>>({});
+  const [closureCodes, setClosureCodes] = useState<ClosureCode[]>([]);
 
   // Get employee_id from user profile
   useEffect(() => {
@@ -440,6 +525,41 @@ export default function MobilePage() {
     if (!employeeId) return;
     loadNearby();
   }, [employeeId, loadNearby]);
+
+  // Fetch closure codes on mount
+  useEffect(() => {
+    fetch('/api/closure-codes')
+      .then(r => r.json())
+      .then(d => { if (d?.codes) setClosureCodes(d.codes); })
+      .catch(() => {});
+  }, []);
+
+  const fetchSubtasks = useCallback(async (orderId: string) => {
+    try {
+      const res = await fetch(`/api/subtasks?order_id=${orderId}`);
+      const data = await res.json();
+      setTaskSubtasks(prev => ({ ...prev, [orderId]: data.subtasks ?? [] }));
+      setEnforceOrders(prev => ({ ...prev, [orderId]: data.enforce_order ?? false }));
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleCompleteSubtask = useCallback(async (subtaskId: string) => {
+    if (!employeeId) return;
+    try {
+      const res = await fetch('/api/subtasks', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: subtaskId, is_completed: true, completed_by: employeeId }),
+      });
+      if (res.ok) {
+        // Refresh subtasks for the affected task
+        const data = await res.json();
+        if (data.order_id) {
+          fetchSubtasks(data.order_id);
+        }
+      }
+    } catch { /* ignore */ }
+  }, [employeeId, fetchSubtasks]);
 
   const handleAcceptOrder = async (orderId: string) => {
     if (!employeeId) return;
@@ -519,12 +639,12 @@ export default function MobilePage() {
     finally { setShiftLoading(false); }
   };
 
-  const handleComplete = async (notes: string, photos: string[]) => {
+  const handleComplete = async (notes: string, photos: string[], closureCodeId: string) => {
     if (!completeTask) return;
     const res = await fetch('/api/worker/tasks/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ order_id: completeTask.id, notes, photos }),
+      body: JSON.stringify({ order_id: completeTask.id, notes, photos, closure_code_id: closureCodeId }),
     });
     if (res.ok) {
       setSuccessId(completeTask.id);
@@ -664,6 +784,10 @@ export default function MobilePage() {
             task={task}
             isNext={task.id === data.next_task_id}
             onComplete={setCompleteTask}
+            subtasks={taskSubtasks[task.id] ?? []}
+            enforceOrder={enforceOrders[task.id] ?? false}
+            onExpand={fetchSubtasks}
+            onCompleteSubtask={handleCompleteSubtask}
           />
         ))}
       </div>
@@ -725,6 +849,7 @@ export default function MobilePage() {
           task={completeTask}
           onConfirm={handleComplete}
           onClose={() => setCompleteTask(null)}
+          closureCodes={closureCodes}
         />
       )}
     </div>

@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/tabs';
 import {
   Plus, Search, Phone, MapPin, Car, Edit, UserCog, Users, Mail,
-  Clock, DollarSign, Wrench,
+  Clock, DollarSign, Wrench, CalendarOff, Trash2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { Region } from '@/lib/types';
@@ -28,6 +28,37 @@ const ANIM = {
   container: { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } },
   item: { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0, transition: { duration: 0.3 } } },
 };
+
+const TYPE_LABELS: Record<string, string> = {
+  vacation: 'Urlop',
+  sick_leave: 'Zwolnienie lekarskie',
+  training: 'Szkolenie',
+  personal: 'Osobiste',
+  other: 'Inne',
+};
+
+const TYPE_COLORS: Record<string, string> = {
+  vacation: 'bg-blue-100 text-blue-700',
+  sick_leave: 'bg-red-100 text-red-700',
+  training: 'bg-purple-100 text-purple-700',
+  personal: 'bg-amber-100 text-amber-700',
+  other: 'bg-gray-100 text-gray-700',
+};
+
+interface UnavailabilityRow {
+  id: string;
+  employee_id: string;
+  type: string;
+  start_date: string;
+  end_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  is_recurring: boolean;
+  recurrence_day: number | null;
+  notes: string | null;
+  created_at: string;
+  employee?: { id: string; user: { full_name: string } | null } | null;
+}
 
 interface EmployeeRow {
   id: string;
@@ -56,6 +87,18 @@ export default function EmployeesPage() {
     skills: '', hourly_rate: '40', vehicle_info: '',
   });
 
+  // Unavailability state
+  const [unavailabilities, setUnavailabilities] = useState<UnavailabilityRow[]>([]);
+  const [unavailLoading, setUnavailLoading] = useState(false);
+  const [unavailDialogOpen, setUnavailDialogOpen] = useState(false);
+  const [unavailSaving, setUnavailSaving] = useState(false);
+  const [unavailFilterEmployee, setUnavailFilterEmployee] = useState('');
+  const [unavailFilterType, setUnavailFilterType] = useState('');
+  const [unavailForm, setUnavailForm] = useState({
+    employee_id: '', type: 'vacation', start_date: '', end_date: '',
+    start_time: '', end_time: '', notes: '',
+  });
+
   const supabase = createClient();
 
   const fetchData = useCallback(async () => {
@@ -69,7 +112,19 @@ export default function EmployeesPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const fetchUnavailabilities = useCallback(async () => {
+    setUnavailLoading(true);
+    try {
+      const res = await fetch('/api/unavailabilities');
+      const data = await res.json();
+      setUnavailabilities(data.unavailabilities ?? []);
+    } catch {
+      console.error('Failed to fetch unavailabilities');
+    }
+    setUnavailLoading(false);
+  }, []);
+
+  useEffect(() => { fetchData(); fetchUnavailabilities(); }, [fetchData, fetchUnavailabilities]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,6 +147,44 @@ export default function EmployeesPage() {
     setForm({ full_name: '', email: '', phone: '', region_id: '', skills: '', hourly_rate: '40', vehicle_info: '' });
     fetchData();
   };
+
+  const handleCreateUnavailability = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUnavailSaving(true);
+    try {
+      await fetch('/api/unavailabilities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...unavailForm,
+          start_time: unavailForm.start_time || null,
+          end_time: unavailForm.end_time || null,
+          is_recurring: false,
+        }),
+      });
+    } catch {
+      console.error('Failed to create unavailability');
+    }
+    setUnavailSaving(false);
+    setUnavailDialogOpen(false);
+    setUnavailForm({ employee_id: '', type: 'vacation', start_date: '', end_date: '', start_time: '', end_time: '', notes: '' });
+    fetchUnavailabilities();
+  };
+
+  const handleDeleteUnavailability = async (id: string) => {
+    await fetch('/api/unavailabilities', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    fetchUnavailabilities();
+  };
+
+  const filteredUnavailabilities = unavailabilities.filter(u => {
+    if (unavailFilterEmployee && u.employee_id !== unavailFilterEmployee) return false;
+    if (unavailFilterType && u.type !== unavailFilterType) return false;
+    return true;
+  });
 
   const filtered = employees.filter(e =>
     e.user?.full_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -134,6 +227,7 @@ export default function EmployeesPage() {
             <TabsList>
               <TabsTrigger value="list" className="gap-2"><Users className="h-4 w-4" /> Lista pracowników</TabsTrigger>
               <TabsTrigger value="schedule" className="gap-2"><Clock className="h-4 w-4" /> Grafik pracy</TabsTrigger>
+              <TabsTrigger value="unavailabilities" className="gap-2"><CalendarOff className="h-4 w-4" /> Niedostepnosci</TabsTrigger>
             </TabsList>
             <div className="relative w-64">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -204,8 +298,141 @@ export default function EmployeesPage() {
               </CardContent>
             </Card>
           </TabsContent>
+          <TabsContent value="unavailabilities" className="mt-4 space-y-4">
+            {/* Filters + Add button */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <Select value={unavailFilterEmployee} onValueChange={v => setUnavailFilterEmployee(v === '__all__' ? '' : (v ?? ''))}>
+                <SelectTrigger className="w-48 h-9 rounded-xl text-sm">
+                  <SelectValue placeholder="Wszyscy pracownicy" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Wszyscy pracownicy</SelectItem>
+                  {employees.map(emp => (
+                    <SelectItem key={emp.id} value={emp.id}>{emp.user?.full_name || emp.id.slice(0, 8)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={unavailFilterType} onValueChange={v => setUnavailFilterType(v === '__all__' ? '' : (v ?? ''))}>
+                <SelectTrigger className="w-48 h-9 rounded-xl text-sm">
+                  <SelectValue placeholder="Wszystkie typy" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Wszystkie typy</SelectItem>
+                  {Object.entries(TYPE_LABELS).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="flex-1" />
+              <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700" onClick={() => setUnavailDialogOpen(true)}>
+                <Plus className="h-4 w-4" /> Dodaj niedostepnosc
+              </Button>
+            </div>
+
+            <Card className="rounded-2xl border-gray-100 shadow-sm">
+              <CardContent className="p-0">
+                {unavailLoading ? (
+                  <div className="flex items-center justify-center py-20">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+                  </div>
+                ) : filteredUnavailabilities.length === 0 ? (
+                  <div className="text-center py-20 text-gray-400">
+                    <CalendarOff className="h-12 w-12 mx-auto mb-3 opacity-40" />
+                    <p className="font-medium">Brak niedostepnosci</p>
+                    <p className="text-sm mt-1">Dodaj pierwsza niedostepnosc</p>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="grid grid-cols-[1fr_140px_180px_1fr_50px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      <span>Pracownik</span><span>Typ</span><span>Okres</span><span>Notatki</span><span></span>
+                    </div>
+                    {filteredUnavailabilities.map(u => {
+                      const empName = u.employee?.user?.full_name || u.employee_id.slice(0, 8);
+                      const typeColor = TYPE_COLORS[u.type] || TYPE_COLORS.other;
+                      return (
+                        <div
+                          key={u.id}
+                          className="grid grid-cols-[1fr_140px_180px_1fr_50px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white text-xs font-bold">
+                              {empName.split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
+                            </div>
+                            <span className="text-sm font-medium text-gray-900 truncate">{empName}</span>
+                          </div>
+                          <Badge className={`text-[10px] rounded-lg ${typeColor}`}>
+                            {TYPE_LABELS[u.type] || u.type}
+                          </Badge>
+                          <span className="text-sm text-gray-600">
+                            {u.start_date === u.end_date ? u.start_date : `${u.start_date} — ${u.end_date}`}
+                          </span>
+                          <span className="text-sm text-gray-500 truncate">{u.notes || '-'}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50"
+                            onClick={() => handleDeleteUnavailability(u.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </div>
+
+      {/* Add Unavailability Dialog */}
+      <Dialog open={unavailDialogOpen} onOpenChange={setUnavailDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Nowa niedostepnosc</DialogTitle></DialogHeader>
+          <form onSubmit={handleCreateUnavailability} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Pracownik</Label>
+                <Select value={unavailForm.employee_id} onValueChange={v => setUnavailForm({ ...unavailForm, employee_id: v ?? '' })}>
+                  <SelectTrigger><SelectValue placeholder="Wybierz pracownika" /></SelectTrigger>
+                  <SelectContent>
+                    {employees.map(emp => (
+                      <SelectItem key={emp.id} value={emp.id}>{emp.user?.full_name || emp.id.slice(0, 8)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Typ</Label>
+                <Select value={unavailForm.type} onValueChange={v => setUnavailForm({ ...unavailForm, type: v ?? 'vacation' })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(TYPE_LABELS).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>{v}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Data od</Label><Input type="date" required value={unavailForm.start_date} onChange={e => setUnavailForm({ ...unavailForm, start_date: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Data do</Label><Input type="date" required value={unavailForm.end_date} onChange={e => setUnavailForm({ ...unavailForm, end_date: e.target.value })} /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Godzina od (opcjonalnie)</Label><Input type="time" value={unavailForm.start_time} onChange={e => setUnavailForm({ ...unavailForm, start_time: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Godzina do (opcjonalnie)</Label><Input type="time" value={unavailForm.end_time} onChange={e => setUnavailForm({ ...unavailForm, end_time: e.target.value })} /></div>
+            </div>
+            <div className="space-y-2"><Label>Notatki</Label><Input value={unavailForm.notes} onChange={e => setUnavailForm({ ...unavailForm, notes: e.target.value })} placeholder="Opcjonalne notatki..." /></div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" type="button" onClick={() => setUnavailDialogOpen(false)}>Anuluj</Button>
+              <Button type="submit" disabled={unavailSaving || !unavailForm.employee_id} className="bg-blue-600 hover:bg-blue-700">
+                {unavailSaving ? 'Zapisywanie...' : 'Dodaj'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Employee Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

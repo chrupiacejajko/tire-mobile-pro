@@ -1,6 +1,7 @@
 import { getAdminClient } from '@/lib/supabase/admin';
 import { notFound } from 'next/navigation';
 import { TrackingRefresher } from './tracking-refresher';
+import { SelfCareActions } from './self-care-actions';
 
 const STATUS_STEPS = [
   { key: 'new', label: 'Nowe' },
@@ -322,6 +323,11 @@ export default async function TrackingPage({
             </div>
           )}
         </div>
+
+        {/* Self-care actions (reschedule / cancel) */}
+        {order.status !== 'completed' && order.status !== 'cancelled' && (
+          <SelfCareActions orderId={order.id} orderStatus={order.status} />
+        )}
       </main>
 
       {/* Footer */}

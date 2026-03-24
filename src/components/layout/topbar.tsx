@@ -1,9 +1,9 @@
 'use client';
 
-import { Bell, Search, Share2 } from 'lucide-react';
+import { Search, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { AlertBadge } from '@/components/layout/alert-badge';
 
 interface TopbarProps {
   title: string;
@@ -39,12 +39,7 @@ export function Topbar({ title, subtitle, icon, actions }: TopbarProps) {
           </kbd>
         </div>
         {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative h-9 w-9 rounded-xl">
-          <Bell className="h-[18px] w-[18px] text-gray-500" />
-          <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
-            3
-          </span>
-        </Button>
+        <AlertBadge />
         {/* Share */}
         <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl">
           <Share2 className="h-[18px] w-[18px] text-gray-500" />
