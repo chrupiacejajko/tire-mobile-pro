@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -18,7 +19,7 @@ import {
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@/components/ui/tabs';
 import {
-  Plus, Search, Phone, MapPin, Car, Edit, UserCog, Users, Mail,
+  Plus, Search, Phone, MapPin, Car, Pencil, UserCog, Users, Mail,
   Clock, DollarSign, Wrench, CalendarOff, Trash2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
@@ -70,7 +71,7 @@ interface EmployeeRow {
   is_active: boolean;
   working_hours: Record<string, { start: string; end: string } | null>;
   created_at: string;
-  user?: { full_name: string; email: string; phone: string | null };
+  user?: { full_name: string; email: string; phone: string | null; role?: string };
   region?: { name: string; color: string } | null;
 }
 
@@ -86,6 +87,20 @@ export default function EmployeesPage() {
     full_name: '', email: '', phone: '', region_id: '',
     skills: '', hourly_rate: '40', vehicle_info: '',
   });
+
+  // Edit employee state
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<EmployeeRow | null>(null);
+  const [editForm, setEditForm] = useState({
+    full_name: '', phone: '', role: 'worker',
+    start_time: '', end_time: '', skills: '',
+    is_active: true, hourly_rate: '40', region_id: '',
+  });
+  const [editSaving, setEditSaving] = useState(false);
+
+  // Delete confirmation state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingEmployee, setDeletingEmployee] = useState<EmployeeRow | null>(null);
 
   // Unavailability state
   const [unavailabilities, setUnavailabilities] = useState<UnavailabilityRow[]>([]);
@@ -104,7 +119,7 @@ export default function EmployeesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [empRes, regRes] = await Promise.all([
-      supabase.from('employees').select('*, user:profiles(full_name, email, phone), region:regions(name, color)').order('created_at', { ascending: false }),
+      supabase.from('employees').select('*, user:profiles(full_name, email, phone, role), region:regions(name, color)').order('created_at', { ascending: false }),
       supabase.from('regions').select('*').order('name'),
     ]);
     if (empRes.data) setEmployees(empRes.data as EmployeeRow[]);
@@ -145,6 +160,76 @@ export default function EmployeesPage() {
     setSaving(false);
     setDialogOpen(false);
     setForm({ full_name: '', email: '', phone: '', region_id: '', skills: '', hourly_rate: '40', vehicle_info: '' });
+    fetchData();
+  };
+
+  const openEdit = (emp: EmployeeRow) => {
+    const firstDay = emp.working_hours?.monday;
+    setEditingEmployee(emp);
+    setEditForm({
+      full_name: emp.user?.full_name || '',
+      phone: emp.user?.phone || '',
+      role: emp.user?.role || 'worker',
+      start_time: firstDay?.start || '',
+      end_time: firstDay?.end || '',
+      skills: (emp.skills || []).join(', '),
+      is_active: emp.is_active,
+      hourly_rate: String(emp.hourly_rate),
+      region_id: emp.region_id || '',
+    });
+    setEditDialogOpen(true);
+  };
+
+  const handleEditSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEmployee) return;
+    setEditSaving(true);
+
+    const res = await fetch('/api/employees', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: editingEmployee.id,
+        full_name: editForm.full_name,
+        phone: editForm.phone,
+        role: editForm.role,
+        start_time: editForm.start_time || undefined,
+        end_time: editForm.end_time || undefined,
+        skills: editForm.skills,
+        is_active: editForm.is_active,
+        hourly_rate: editForm.hourly_rate,
+        region_id: editForm.region_id,
+      }),
+    });
+
+    if (!res.ok) {
+      console.error('Failed to update employee');
+    }
+
+    setEditSaving(false);
+    setEditDialogOpen(false);
+    setEditingEmployee(null);
+    fetchData();
+  };
+
+  const openDelete = (emp: EmployeeRow) => {
+    setDeletingEmployee(emp);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDelete = async () => {
+    if (!deletingEmployee) return;
+    setEditSaving(true);
+
+    await fetch('/api/employees', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: deletingEmployee.id, is_active: false }),
+    });
+
+    setEditSaving(false);
+    setDeleteDialogOpen(false);
+    setDeletingEmployee(null);
     fetchData();
   };
 
@@ -251,14 +336,14 @@ export default function EmployeesPage() {
                 ) : (
                   <motion.div variants={ANIM.container} initial="hidden" animate="show">
                     {/* Header */}
-                    <div className="grid grid-cols-[1fr_120px_120px_100px_80px_60px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    <div className="grid grid-cols-[1fr_120px_120px_100px_80px_80px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
                       <span>Pracownik</span><span>Region</span><span>Pojazd</span><span>Stawka/h</span><span>Status</span><span></span>
                     </div>
                     {filtered.map(emp => (
                       <motion.div
                         key={emp.id}
                         variants={ANIM.item}
-                        className="grid grid-cols-[1fr_120px_120px_100px_80px_60px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
+                        className="grid grid-cols-[1fr_120px_120px_100px_80px_80px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white text-xs font-bold">
@@ -278,9 +363,14 @@ export default function EmployeesPage() {
                         <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-[10px] rounded-lg">
                           {emp.is_active ? 'Aktywny' : 'Nieaktywny'}
                         </Badge>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg">
-                          <Edit className="h-4 w-4" />
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-orange-500 hover:text-orange-600 hover:bg-orange-50" onClick={() => openEdit(emp)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50" onClick={() => openDelete(emp)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </motion.div>
                     ))}
                   </motion.div>
@@ -465,6 +555,92 @@ export default function EmployeesPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Employee Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={o => { setEditDialogOpen(o); if (!o) setEditingEmployee(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Edytuj pracownika</DialogTitle></DialogHeader>
+          <form onSubmit={handleEditSave} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Imię i nazwisko</Label>
+                <Input required value={editForm.full_name} onChange={e => setEditForm({ ...editForm, full_name: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Telefon</Label>
+                <Input value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Rola</Label>
+                <Select value={editForm.role} onValueChange={v => setEditForm({ ...editForm, role: v ?? 'worker' })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="dispatcher">Dyspozytor</SelectItem>
+                    <SelectItem value="worker">Pracownik</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Region</Label>
+                <Select value={editForm.region_id} onValueChange={v => setEditForm({ ...editForm, region_id: v ?? '' })}>
+                  <SelectTrigger><SelectValue placeholder="Brak" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Brak</SelectItem>
+                    {regions.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Godziny pracy od</Label>
+                <Input type="time" value={editForm.start_time} onChange={e => setEditForm({ ...editForm, start_time: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Godziny pracy do</Label>
+                <Input type="time" value={editForm.end_time} onChange={e => setEditForm({ ...editForm, end_time: e.target.value })} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Stawka/h (zł)</Label>
+              <Input type="number" value={editForm.hourly_rate} onChange={e => setEditForm({ ...editForm, hourly_rate: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Umiejętności (oddzielone przecinkami)</Label>
+              <Input value={editForm.skills} onChange={e => setEditForm({ ...editForm, skills: e.target.value })} placeholder="wymiana opon, wyważanie, naprawa" />
+            </div>
+            <div className="flex items-center gap-3">
+              <Switch checked={editForm.is_active} onCheckedChange={v => setEditForm({ ...editForm, is_active: !!v })} />
+              <Label>{editForm.is_active ? 'Aktywny' : 'Nieaktywny'}</Label>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" type="button" onClick={() => setEditDialogOpen(false)}>Anuluj</Button>
+              <Button type="submit" disabled={editSaving} className="bg-orange-500 hover:bg-orange-600">
+                {editSaving ? 'Zapisywanie...' : 'Zapisz zmiany'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={o => { setDeleteDialogOpen(o); if (!o) setDeletingEmployee(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Dezaktywuj pracownika</DialogTitle></DialogHeader>
+          <p className="text-sm text-gray-600">
+            Czy na pewno chcesz dezaktywować pracownika <strong>{deletingEmployee?.user?.full_name}</strong>? Pracownik zostanie oznaczony jako nieaktywny.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Anuluj</Button>
+            <Button className="bg-red-500 hover:bg-red-600" onClick={handleDelete} disabled={editSaving}>
+              {editSaving ? 'Dezaktywuję...' : 'Dezaktywuj'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

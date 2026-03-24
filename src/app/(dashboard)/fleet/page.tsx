@@ -3,18 +3,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Topbar } from '@/components/layout/topbar';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Plus, Truck, Edit, Trash2, User, MapPin, Clock, Check, X } from 'lucide-react';
+import { Plus, Truck, Pencil, Trash2, User, MapPin, X } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 const ANIM = {
@@ -52,8 +53,12 @@ export default function FleetPage() {
   const [selectedEmployee, setSelectedEmployee] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Delete confirmation state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingVehicle, setDeletingVehicle] = useState<VehicleRow | null>(null);
+
   const [form, setForm] = useState({
-    plate_number: '', brand: '', model: '', year: '', satis_device_id: '', notes: '',
+    plate_number: '', brand: '', model: '', year: '', satis_device_id: '', notes: '', is_active: true,
   });
 
   const supabase = createClient();
@@ -81,10 +86,12 @@ export default function FleetPage() {
 
     if (vehiclesData) {
       const enriched = vehiclesData.map(v => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const assignment = (assignments || []).find((a: any) => a.vehicle_id === v.id);
         return {
           ...v,
-          current_driver: assignment ? (assignment as any).employee?.user?.full_name : null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          current_driver: assignment ? (assignment as any).employee?.user?.full_name ?? null : null,
           current_assignment_id: assignment?.id || null,
         };
       });
@@ -92,6 +99,7 @@ export default function FleetPage() {
     }
 
     if (empData) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       setEmployees(empData.map((e: any) => ({ id: e.id, name: e.user?.full_name || 'Nieznany' })));
     }
 
@@ -101,7 +109,7 @@ export default function FleetPage() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const resetForm = () => {
-    setForm({ plate_number: '', brand: '', model: '', year: '', satis_device_id: '', notes: '' });
+    setForm({ plate_number: '', brand: '', model: '', year: '', satis_device_id: '', notes: '', is_active: true });
     setEditingVehicle(null);
   };
 
@@ -115,6 +123,7 @@ export default function FleetPage() {
       year: form.year ? Number(form.year) : null,
       satis_device_id: form.satis_device_id || null,
       notes: form.notes || null,
+      is_active: form.is_active,
     };
 
     if (editingVehicle) {
@@ -129,8 +138,19 @@ export default function FleetPage() {
     fetchData();
   };
 
-  const handleDelete = async (id: string) => {
-    await supabase.from('vehicles').delete().eq('id', id);
+  const openDelete = (v: VehicleRow) => {
+    setDeletingVehicle(v);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDelete = async () => {
+    if (!deletingVehicle) return;
+    setSaving(true);
+    // Soft delete: set is_active = false
+    await supabase.from('vehicles').update({ is_active: false }).eq('id', deletingVehicle.id);
+    setSaving(false);
+    setDeleteDialogOpen(false);
+    setDeletingVehicle(null);
     fetchData();
   };
 
@@ -138,6 +158,7 @@ export default function FleetPage() {
     setForm({
       plate_number: v.plate_number, brand: v.brand, model: v.model,
       year: v.year?.toString() || '', satis_device_id: v.satis_device_id || '', notes: v.notes || '',
+      is_active: v.is_active,
     });
     setEditingVehicle(v);
     setDialogOpen(true);
@@ -227,7 +248,7 @@ export default function FleetPage() {
           <motion.div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" variants={ANIM.container} initial="hidden" animate="show">
             {vehicles.map(vehicle => (
               <motion.div key={vehicle.id} variants={ANIM.item} whileHover={{ y: -2 }}>
-                <Card className="rounded-2xl border-gray-100 shadow-sm">
+                <Card className={`rounded-2xl border-gray-100 shadow-sm ${!vehicle.is_active ? 'opacity-50' : ''}`}>
                   <CardContent className="p-5">
                     {/* Header */}
                     <div className="flex items-start justify-between mb-3">
@@ -241,10 +262,10 @@ export default function FleetPage() {
                         </div>
                       </div>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => openEdit(vehicle)}>
-                          <Edit className="h-3.5 w-3.5" />
+                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-orange-500 hover:text-orange-600 hover:bg-orange-50" onClick={() => openEdit(vehicle)}>
+                          <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-red-500" onClick={() => handleDelete(vehicle.id)}>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50" onClick={() => openDelete(vehicle)}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
@@ -271,10 +292,16 @@ export default function FleetPage() {
                               <p className="text-[11px] text-gray-400">Aktualny kierowca</p>
                             </div>
                           </div>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-red-400"
-                            onClick={() => unassignDriver(vehicle.id)} title="Wyloguj kierowcę">
-                            <X className="h-3.5 w-3.5" />
-                          </Button>
+                          <div className="flex gap-1">
+                            <Button variant="outline" size="sm" className="h-7 rounded-lg text-xs"
+                              onClick={() => { setAssigningVehicle(vehicle); setAssignDialogOpen(true); }}>
+                              Zmień
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-red-400"
+                              onClick={() => unassignDriver(vehicle.id)} title="Odepnij kierowcę">
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
                         </div>
                       ) : (
                         <div className="flex items-center justify-between">
@@ -314,9 +341,15 @@ export default function FleetPage() {
             </div>
             <div className="space-y-2"><Label>ID urządzenia Satis GPS</Label><Input value={form.satis_device_id} onChange={e => setForm({ ...form, satis_device_id: e.target.value })} placeholder="np. SATIS-001 lub IMEI urządzenia" /></div>
             <div className="space-y-2"><Label>Notatki</Label><Input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Dodatkowe info..." /></div>
+            {editingVehicle && (
+              <div className="flex items-center gap-3">
+                <Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: !!v })} />
+                <Label>{form.is_active ? 'Aktywny' : 'Nieaktywny'}</Label>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={() => setDialogOpen(false)}>Anuluj</Button>
-              <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">
+              <Button type="submit" disabled={saving} className={editingVehicle ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}>
                 {saving ? 'Zapisywanie...' : 'Zapisz'}
               </Button>
             </div>
@@ -346,6 +379,22 @@ export default function FleetPage() {
                 {saving ? 'Przypisuję...' : 'Przypisz'}
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={o => { setDeleteDialogOpen(o); if (!o) setDeletingVehicle(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Dezaktywuj pojazd</DialogTitle></DialogHeader>
+          <p className="text-sm text-gray-600">
+            Czy na pewno chcesz dezaktywować pojazd <strong>{deletingVehicle?.plate_number}</strong> ({deletingVehicle?.brand} {deletingVehicle?.model})? Pojazd zostanie oznaczony jako nieaktywny.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Anuluj</Button>
+            <Button className="bg-red-500 hover:bg-red-600" onClick={handleDelete} disabled={saving}>
+              {saving ? 'Dezaktywuję...' : 'Dezaktywuj'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

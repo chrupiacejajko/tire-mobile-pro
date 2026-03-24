@@ -16,7 +16,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Wrench, Edit, Trash2, Clock, DollarSign, Tag } from 'lucide-react';
+import { Plus, Wrench, Pencil, Trash2, Clock, DollarSign } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { Service } from '@/lib/types';
 
@@ -41,6 +41,11 @@ export default function ServicesPage() {
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [form, setForm] = useState({ name: '', description: '', duration_minutes: '60', price: '0', category: 'wymiana', is_active: true });
   const [saving, setSaving] = useState(false);
+
+  // Delete confirmation
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingService, setDeletingService] = useState<Service | null>(null);
+
   const supabase = createClient();
 
   const fetchServices = useCallback(async () => {
@@ -67,8 +72,19 @@ export default function ServicesPage() {
     fetchServices();
   };
 
-  const handleDelete = async (id: string) => {
-    await supabase.from('services').delete().eq('id', id);
+  const openDeleteDialog = (s: Service) => {
+    setDeletingService(s);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDelete = async () => {
+    if (!deletingService) return;
+    setSaving(true);
+    // Soft delete: set is_active = false
+    await supabase.from('services').update({ is_active: false }).eq('id', deletingService.id);
+    setSaving(false);
+    setDeleteDialogOpen(false);
+    setDeletingService(null);
     fetchServices();
   };
 
@@ -134,8 +150,8 @@ export default function ServicesPage() {
                           <span className="text-xs text-gray-500">{service.is_active ? 'Aktywna' : 'Nieaktywna'}</span>
                         </div>
                         <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => openEdit(service)}><Edit className="h-3.5 w-3.5" /></Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-red-500" onClick={() => handleDelete(service.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-orange-500 hover:text-orange-600 hover:bg-orange-50" onClick={() => openEdit(service)}><Pencil className="h-3.5 w-3.5" /></Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50" onClick={() => openDeleteDialog(service)}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
                       </div>
                     </CardContent>
@@ -147,6 +163,7 @@ export default function ServicesPage() {
         )}
       </div>
 
+      {/* Add/Edit Service Dialog */}
       <Dialog open={dialogOpen} onOpenChange={o => { setDialogOpen(o); if (!o) resetForm(); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editingService ? 'Edytuj usługę' : 'Nowa usługa'}</DialogTitle></DialogHeader>
@@ -164,11 +181,33 @@ export default function ServicesPage() {
                 </Select>
               </div>
             </div>
+            {editingService && (
+              <div className="flex items-center gap-3">
+                <Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: !!v })} />
+                <Label>{form.is_active ? 'Aktywna' : 'Nieaktywna'}</Label>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={() => setDialogOpen(false)}>Anuluj</Button>
-              <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">{saving ? 'Zapisywanie...' : 'Zapisz'}</Button>
+              <Button type="submit" disabled={saving} className={editingService ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}>{saving ? 'Zapisywanie...' : 'Zapisz'}</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={o => { setDeleteDialogOpen(o); if (!o) setDeletingService(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Dezaktywuj usługę</DialogTitle></DialogHeader>
+          <p className="text-sm text-gray-600">
+            Czy na pewno chcesz dezaktywować usługę <strong>{deletingService?.name}</strong>? Usługa zostanie oznaczona jako nieaktywna.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Anuluj</Button>
+            <Button className="bg-red-500 hover:bg-red-600" onClick={handleDelete} disabled={saving}>
+              {saving ? 'Dezaktywuję...' : 'Dezaktywuj'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
