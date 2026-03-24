@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Phone, User, MapPin, Clock, Zap, Calendar,
   Check, Loader2, AlertCircle, Truck, ChevronDown,
+  CircleAlert, ClockArrowUp, CalendarRange, Shuffle,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -638,22 +639,22 @@ export default function DispatchPage() {
             {/* Scheduling type selector — 4 cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
               {([
-                { type: 'asap' as const, label: 'Na juz (ASAP)', icon: '🔴', desc: 'Dzisiaj, jak najszybciej' },
-                { type: 'fixed_time' as const, label: 'Konkretna godzina', icon: '🕐', desc: 'Dokladny czas' },
-                { type: 'time_window' as const, label: 'Okno czasowe', icon: '📅', desc: 'Zakres godzin' },
-                { type: 'flexible' as const, label: 'Elastyczny', icon: '🔄', desc: 'System wybiera' },
+                { type: 'asap' as const, label: 'Na juz (ASAP)', Icon: CircleAlert, color: 'text-red-500', desc: 'Dzisiaj, jak najszybciej' },
+                { type: 'fixed_time' as const, label: 'Konkretna godzina', Icon: ClockArrowUp, color: 'text-blue-500', desc: 'Dokladny czas' },
+                { type: 'time_window' as const, label: 'Okno czasowe', Icon: CalendarRange, color: 'text-orange-500', desc: 'Zakres godzin' },
+                { type: 'flexible' as const, label: 'Elastyczny', Icon: Shuffle, color: 'text-violet-500', desc: 'System wybiera' },
               ]).map(opt => (
                 <button
                   key={opt.type}
                   onClick={() => setSchedulingType(opt.type)}
-                  className={`rounded-lg border-2 p-3 text-left transition-colors ${
+                  className={`rounded-xl border-2 p-3 text-left transition-all ${
                     schedulingType === opt.type
-                      ? 'border-orange-500 bg-orange-50'
+                      ? 'border-orange-500 bg-orange-50 shadow-sm'
                       : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
-                  <span className="text-lg">{opt.icon}</span>
-                  <p className="text-xs font-semibold text-gray-900 mt-1">{opt.label}</p>
+                  <opt.Icon className={`h-5 w-5 ${schedulingType === opt.type ? 'text-orange-500' : opt.color}`} />
+                  <p className="text-xs font-semibold text-gray-900 mt-1.5">{opt.label}</p>
                   <p className="text-[10px] text-gray-500">{opt.desc}</p>
                 </button>
               ))}
