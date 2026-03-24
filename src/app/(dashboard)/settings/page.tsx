@@ -251,9 +251,14 @@ function CompanyTab() {
   }, [fetchSettings]);
 
   const update = (field: keyof CompanySettings, value: string) => {
-    setSettings((prev) =>
-      prev ? { ...prev, [field]: value } : prev
-    );
+    setSettings((prev) => {
+      const base: CompanySettings = prev ?? {
+        id: '', company_name: 'Wulkanizacja Mobilna', company_short: 'WM',
+        logo_url: null, primary_color: '#f97316', secondary_color: '#3B82F6',
+        address: null, nip: null, phone: null, email: null, website: null, updated_at: '',
+      };
+      return { ...base, [field]: value };
+    });
   };
 
   const handleSave = async () => {

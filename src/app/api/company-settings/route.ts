@@ -5,14 +5,20 @@ import { getAdminClient } from '@/lib/supabase/admin';
 export async function GET() {
   const supabase = getAdminClient();
 
-  const { data, error } = await supabase
+  let { data } = await supabase
     .from('company_settings')
     .select('*')
     .limit(1)
     .single();
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+  // Auto-create default row if none exists
+  if (!data) {
+    const { data: created } = await supabase
+      .from('company_settings')
+      .insert({ company_name: 'Wulkanizacja Mobilna', company_short: 'WM' })
+      .select('*')
+      .single();
+    data = created;
   }
 
   return NextResponse.json(data);
@@ -23,15 +29,24 @@ export async function PUT(request: NextRequest) {
   const supabase = getAdminClient();
   const body = await request.json();
 
-  // Get the first row id
-  const { data: existing, error: fetchError } = await supabase
+  // Get the first row id, or create one if none exists
+  let { data: existing } = await supabase
     .from('company_settings')
     .select('id')
     .limit(1)
     .single();
 
-  if (fetchError || !existing) {
-    return NextResponse.json({ error: 'No company settings found' }, { status: 404 });
+  if (!existing) {
+    const { data: created } = await supabase
+      .from('company_settings')
+      .insert({ company_name: 'Wulkanizacja Mobilna', company_short: 'WM' })
+      .select('id')
+      .single();
+    existing = created;
+  }
+
+  if (!existing) {
+    return NextResponse.json({ error: 'Could not create company settings' }, { status: 500 });
   }
 
   const allowedFields = [
