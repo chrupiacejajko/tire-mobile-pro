@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -93,15 +93,25 @@ function NavSection({ label, items, pathname, onNavigate }: {
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { user, signOut } = useAuth();
+  const [company, setCompany] = useState<{ company_name: string; company_short: string; logo_url: string | null; primary_color: string } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/company-settings').then(r => r.ok ? r.json() : null).then(d => { if (d) setCompany(d); });
+  }, []);
+
+  const cName = company?.company_name || 'Wulkanizacja Mobilna';
+  const cShort = company?.company_short || 'WM';
+  const cLogo = company?.logo_url || '/logo-full.png';
+  const cColor = company?.primary_color || '#f97316';
 
   return (
     <>
       {/* Logo */}
       <div className="px-5 py-4 border-b border-gray-100">
         <div className="flex items-center gap-2.5">
-          <img src="/logo-full.png" alt="RouteTire" className="h-9 w-9 object-contain" />
+          <img src={cLogo} alt={cName} className="h-9 w-9 object-contain rounded-lg" />
           <span className="text-[15px] font-bold tracking-tight text-gray-800">
-            Route<span className="text-orange-500">Tire</span>
+            {cName}
           </span>
         </div>
       </div>
@@ -109,9 +119,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       {/* Company */}
       <div className="px-3 py-3">
         <div className="flex items-center gap-3 rounded-xl bg-gray-50 px-3 py-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-gray-700 to-gray-900 text-white text-sm font-bold">WM</div>
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg text-white text-sm font-bold" style={{ background: `linear-gradient(135deg, ${cColor}, ${cColor}dd)` }}>{cShort}</div>
           <div className="flex-1 text-left">
-            <p className="text-sm font-semibold text-gray-900">Wulkanizacja Mobilna</p>
+            <p className="text-sm font-semibold text-gray-900">{cName}</p>
             <p className="text-xs text-gray-500">{user?.role === 'admin' ? 'Administrator' : 'Zespół'}</p>
           </div>
         </div>
