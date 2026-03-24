@@ -48,6 +48,37 @@ export async function POST(request: NextRequest) {
       notes, priority,
     } = body;
 
+    // ── Duplicate guard: same phone + date + services within 5 min ─────
+    if (client_phone && scheduled_date) {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: recentOrders } = await supabase
+        .from('orders')
+        .select('id, total_price, services, client:clients!inner(phone)')
+        .eq('client.phone', client_phone)
+        .eq('scheduled_date', scheduled_date)
+        .gte('created_at', fiveMinAgo)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (recentOrders && recentOrders.length > 0) {
+        // Check if any recent order has the same set of services
+        const incomingServiceKey = [...(service_ids || []), ...(vehicles || []).flatMap((v: any) => v.service_ids || [])].sort().join(',');
+        const duplicate = recentOrders.find((o: any) => {
+          const existingKey = (o.services || []).map((s: any) => s.service_id).sort().join(',');
+          return existingKey === incomingServiceKey;
+        });
+        if (duplicate) {
+          return NextResponse.json({
+            success: true,
+            order_id: duplicate.id,
+            total_price: duplicate.total_price,
+            message: 'Zlecenie już istnieje (duplikat).',
+            duplicate: true,
+          }, { status: 200 });
+        }
+      }
+    }
+
     // ── Find or create client ───────────────────────────────────────────
     let clientId: string;
     const { data: existingClient } = await supabase
@@ -61,7 +92,7 @@ export async function POST(request: NextRequest) {
     let clientLng: number | null = null;
     if (address) {
       try {
-        const hereKey = process.env.HERE_API_KEY;
+        const hereKey = process.env.HERE_API_KEY || '8AMu0VNMjm8W2p8d8DdULqL5sYywQPbw3aARKJLRY80';
         if (hereKey) {
           const geoQuery = [address, city, 'Polska'].filter(Boolean).join(', ');
           const geoRes = await fetch(`https://geocode.search.hereapi.com/v1/geocode?q=${encodeURIComponent(geoQuery)}&apiKey=${hereKey}`);

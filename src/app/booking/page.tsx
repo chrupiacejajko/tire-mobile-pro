@@ -293,6 +293,7 @@ export default function BookingPage() {
 
   // ── Submit ─────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
+    if (submitting) return;
     setSubmitting(true);
     const vehiclesPayload = vehicles.filter(v => v.serviceIds.length > 0).map(v => ({
       label: v.label,
