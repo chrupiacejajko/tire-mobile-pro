@@ -70,7 +70,7 @@ interface ComplianceSummary {
 
 const STATUS_CONFIG: Record<ComplianceStatus, { label: string; color: string; bg: string; icon: React.ElementType; barColor: string }> = {
   confirmed: { label: 'Potwierdzone', color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200', icon: CheckCircle2, barColor: 'bg-emerald-500' },
-  nearby: { label: 'W pobli\u017cu', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200', icon: Navigation, barColor: 'bg-amber-500' },
+  nearby: { label: 'W pobliżu', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200', icon: Navigation, barColor: 'bg-amber-500' },
   suspicious: { label: 'Podejrzane', color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200', icon: AlertTriangle, barColor: 'bg-orange-500' },
   no_match: { label: 'Brak danych GPS', color: 'text-red-700', bg: 'bg-red-50 border-red-200', icon: XCircle, barColor: 'bg-red-500' },
 };
@@ -161,7 +161,7 @@ function MiniMap({ record }: { record: ComplianceRecord }) {
     return (
       <div className="h-[200px] rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 text-sm">
         <MapPin className="h-5 w-5 mr-2" />
-        Brak wystarczaj\u0105cych danych do wy\u015bwietlenia mapy
+        Brak wystarczających danych do wyświetlenia mapy
       </div>
     );
   }
@@ -196,7 +196,7 @@ function MiniMap({ record }: { record: ComplianceRecord }) {
 
 // ── CSV Export ────────────────────────────────────────────────────────────────
 function exportCsv(records: ComplianceRecord[]) {
-  const header = 'Data,Godzina,Klient,Adres,Pracownik,Pojazd,Status,Odleg\u0142o\u015b\u0107 (m)\n';
+  const header = 'Data,Godzina,Klient,Adres,Pracownik,Pojazd,Status,Odległość (m)\n';
   const rows = records.map(r =>
     [
       r.scheduled_date,
@@ -350,7 +350,7 @@ export default function GpsCompliancePage() {
     <div className="min-h-screen bg-gray-50/50">
       <Topbar
         title="Raport GPS"
-        subtitle="Weryfikacja obecno\u015bci pracownika u klienta"
+        subtitle="Weryfikacja obecności pracownika u klienta"
         icon={<ShieldCheck className="h-5 w-5" />}
         actions={
           <div className="flex items-center gap-2">
@@ -366,7 +366,7 @@ export default function GpsCompliancePage() {
             </Button>
             <Button size="sm" variant="outline" className="rounded-xl text-xs" onClick={load} disabled={loading}>
               <RefreshCw className={cn('h-3.5 w-3.5 mr-1.5', loading && 'animate-spin')} />
-              Od\u015bwie\u017c
+              Odśwież
             </Button>
           </div>
         }
@@ -421,10 +421,10 @@ export default function GpsCompliancePage() {
                 Szybki wybór:
               </span>
               {([
-                ['today', 'Dzi\u015b'],
+                ['today', 'Dziś'],
                 ['7d', 'Ostatnie 7 dni'],
                 ['30d', 'Ostatnie 30 dni'],
-                ['month', 'Ten miesi\u0105c'],
+                ['month', 'Ten miesiąc'],
               ] as const).map(([key, label]) => (
                 <Button
                   key={key}
@@ -454,7 +454,7 @@ export default function GpsCompliancePage() {
                 <Card className="rounded-2xl border-blue-100 shadow-sm bg-gradient-to-br from-blue-50/80 to-white h-full">
                   <CardContent className="p-4 flex flex-col items-center justify-center">
                     <ComplianceDonut pct={summary.compliance_pct} />
-                    <p className="text-xs font-medium text-blue-600 mt-1">Zgodno\u015b\u0107 GPS</p>
+                    <p className="text-xs font-medium text-blue-600 mt-1">Zgodność GPS</p>
                   </CardContent>
                 </Card>
               </motion.div>
@@ -504,7 +504,7 @@ export default function GpsCompliancePage() {
               <Card className="rounded-2xl border-gray-100 shadow-sm">
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-medium text-gray-500">Rozk\u0142ad status\u00f3w</p>
+                    <p className="text-xs font-medium text-gray-500">Rozkład statusów</p>
                     <div className="flex gap-3">
                       {STATUS_ORDER.map(s => (
                         <div key={s} className="flex items-center gap-1">
@@ -529,7 +529,7 @@ export default function GpsCompliancePage() {
                   Filtr aktywny: <strong className={STATUS_CONFIG[statusFilter].color}>{STATUS_CONFIG[statusFilter].label}</strong>
                 </span>
                 <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setStatusFilter(null)}>
-                  Wyczy\u015b\u0107 filtr
+                  Wyczyść filtr
                 </Button>
               </motion.div>
             )}
@@ -546,7 +546,7 @@ export default function GpsCompliancePage() {
             ) : displayRecords.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-gray-400">
                 <MapPin className="h-8 w-8 mb-2" />
-                <p className="text-sm">Brak danych do wy\u015bwietlenia</p>
+                <p className="text-sm">Brak danych do wyświetlenia</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -573,7 +573,7 @@ export default function GpsCompliancePage() {
                         className="text-right px-4 py-3 text-xs font-semibold text-gray-500 cursor-pointer select-none hover:text-gray-700 transition-colors"
                         onClick={() => handleSort('gps_distance_meters')}
                       >
-                        Odleg\u0142o\u015b\u0107 GPS <SortIcon field="gps_distance_meters" />
+                        Odległość GPS <SortIcon field="gps_distance_meters" />
                       </th>
                       <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 w-10"></th>
                     </tr>
@@ -657,7 +657,7 @@ export default function GpsCompliancePage() {
                                             <p className="text-gray-600 text-sm font-mono">
                                               {r.client_lat !== null && r.client_lng !== null
                                                 ? `${r.client_lat.toFixed(6)}, ${r.client_lng.toFixed(6)}`
-                                                : 'Brak wsp\u00f3\u0142rz\u0119dnych'}
+                                                : 'Brak współrzędnych'}
                                             </p>
                                             <p className="text-xs text-gray-400 mt-0.5">{r.address}</p>
                                           </div>
@@ -676,7 +676,7 @@ export default function GpsCompliancePage() {
                                           </div>
                                           <div>
                                             <p className="text-xs text-gray-500">
-                                              Odleg\u0142o\u015b\u0107: <span className="font-semibold">{formatDistance(r.gps_distance_meters)}</span>
+                                              Odległość: <span className="font-semibold">{formatDistance(r.gps_distance_meters)}</span>
                                               {r.client_lat && r.client_lng && r.gps_lat && r.gps_lng && (
                                                 <>
                                                   {' | '}
@@ -687,7 +687,7 @@ export default function GpsCompliancePage() {
                                                     className="text-blue-600 underline"
                                                     onClick={e => e.stopPropagation()}
                                                   >
-                                                    Poka\u017c na mapie
+                                                    Pokaż na mapie
                                                   </a>
                                                 </>
                                               )}
@@ -725,7 +725,7 @@ export default function GpsCompliancePage() {
           ) : displayRecords.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-400">
               <MapPin className="h-8 w-8 mb-2" />
-              <p className="text-sm">Brak danych do wy\u015bwietlenia</p>
+              <p className="text-sm">Brak danych do wyświetlenia</p>
             </div>
           ) : (
             <AnimatePresence initial={false}>
@@ -806,7 +806,7 @@ export default function GpsCompliancePage() {
                                     className="text-xs text-blue-600 underline block"
                                     onClick={e => e.stopPropagation()}
                                   >
-                                    Poka\u017c na Google Maps
+                                    Pokaż na Google Maps
                                   </a>
                                 )}
                               </div>
