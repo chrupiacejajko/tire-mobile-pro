@@ -20,6 +20,8 @@ const TileLayer = dynamic(() => import('react-leaflet').then(m => m.TileLayer), 
 const Popup = dynamic(() => import('react-leaflet').then(m => m.Popup), { ssr: false });
 const CircleMarker = dynamic(() => import('react-leaflet').then(m => m.CircleMarker), { ssr: false });
 const Polyline = dynamic(() => import('react-leaflet').then(m => m.Polyline), { ssr: false });
+const LeafletCircle = dynamic(() => import('react-leaflet').then(m => m.Circle), { ssr: false });
+const Marker = dynamic(() => import('react-leaflet').then(m => m.Marker), { ssr: false });
 
 import 'leaflet/dist/leaflet.css';
 
@@ -114,6 +116,31 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
 const TIME_WINDOW_LABELS: Record<string, string> = {
   morning: '🌅 Rano (8-12)', afternoon: '☀️ Południe (12-16)', evening: '🌇 Wieczór (16-20)',
 };
+
+const HERE_API_KEY = process.env.NEXT_PUBLIC_HERE_API_KEY || '8AMu0VNMjm8W2p8d8DdULqL5sYywQPbw3aARKJLRY80';
+
+/* ─── Address search types ──────────────────────────────────────────── */
+interface HereSuggestion {
+  id: string;
+  title: string;
+  address?: { label?: string };
+}
+interface AddressPin {
+  lat: number;
+  lng: number;
+  label: string;
+}
+interface NearbyWorker {
+  employee_id: string;
+  employee_name: string;
+  plate: string | null;
+  status: string;
+  lat: number;
+  lng: number;
+  distance_km: number;
+  travel_minutes: number;
+  orders_today: number;
+}
 
 /* ─── Helpers ────────────────────────────────────────────────────────── */
 function formatLastUpdate(ts: string | null): string {
@@ -709,7 +736,6 @@ function OrderDetailPanel({ order, onClose, onRefresh }: { order: MapOrder; onCl
           {order.lat && order.lng && (
             <Button variant="outline" className="w-full rounded-xl"
               onClick={async () => {
-                let originParam = '';
                 if (order.employee_id) {
                   try {
                     // Fetch latest GPS position for the assigned employee
@@ -717,12 +743,14 @@ function OrderDetailPanel({ order, onClose, onRefresh }: { order: MapOrder; onCl
                     if (res.ok) {
                       const gps = await res.json();
                       if (gps.lat && gps.lng) {
-                        originParam = `&origin=${gps.lat},${gps.lng}`;
+                        window.open(`https://www.google.com/maps/dir/${gps.lat},${gps.lng}/${order.lat},${order.lng}`, '_blank');
+                        return;
                       }
                     }
-                  } catch { /* fallback: Google Maps uses user's current location */ }
+                  } catch { /* fallback: open client location only */ }
                 }
-                window.open(`https://www.google.com/maps/dir/?api=1${originParam}&destination=${order.lat},${order.lng}&travelmode=driving`, '_blank');
+                // No employee or GPS unavailable — open client location
+                window.open(`https://www.google.com/maps/dir/?api=1&destination=${order.lat},${order.lng}&travelmode=driving`, '_blank');
               }}>
               <Navigation className="h-4 w-4 mr-2" />Nawiguj do klienta
             </Button>
@@ -1044,6 +1072,117 @@ function QuickAddOrderPanel({ onClose, onRefresh }: { onClose: () => void; onRef
   );
 }
 
+/* ─── Haversine distance (km) ────────────────────────────────────────── */
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/* ─── Nearby workers panel ──────────────────────────────────────────── */
+function NearbyWorkersPanel({
+  pin, workers, radiusKm, onRadiusChange, onClose,
+}: {
+  pin: AddressPin;
+  workers: NearbyWorker[];
+  radiusKm: number;
+  onRadiusChange: (km: number) => void;
+  onClose: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ x: 380, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 380, opacity: 0 }}
+      transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+      className="w-[380px] flex-shrink-0 bg-white border-l border-gray-100 flex flex-col overflow-y-auto"
+    >
+      {/* Header */}
+      <div className="p-5 border-b border-gray-100">
+        <div className="flex items-start justify-between">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-bold text-gray-900">Pracownicy w pobliżu</h2>
+            <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-1 truncate">
+              <MapPin className="h-3.5 w-3.5 flex-shrink-0 text-red-500" />{pin.label}
+            </p>
+          </div>
+          <button onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-400 transition-colors flex-shrink-0">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Radius slider */}
+      <div className="px-5 pt-4 pb-2">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Promień wyszukiwania</span>
+          <span className="text-sm font-bold text-gray-700">{radiusKm} km</span>
+        </div>
+        <input
+          type="range"
+          min={5}
+          max={50}
+          step={5}
+          value={radiusKm}
+          onChange={e => onRadiusChange(Number(e.target.value))}
+          className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-500"
+        />
+        <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+          <span>5 km</span><span>50 km</span>
+        </div>
+      </div>
+
+      {/* Workers list */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-2">
+        {workers.length === 0 ? (
+          <div className="text-center py-12 text-gray-400">
+            <User className="h-6 w-6 mx-auto mb-2" />
+            <p className="text-sm">Brak pracowników w promieniu {radiusKm} km</p>
+          </div>
+        ) : (
+          <>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-2">
+              {workers.length} pracownik{workers.length === 1 ? '' : workers.length < 5 ? 'ów' : 'ów'} w zasięgu
+            </p>
+            {workers.map(w => {
+              const statusColor = STATUS_COLORS[w.status] || STATUS_COLORS.offline;
+              return (
+                <div key={w.employee_id} className="border border-gray-100 rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: statusColor }} />
+                        <span className="text-sm font-bold text-gray-900">{w.employee_name}</span>
+                      </div>
+                      {w.plate && <p className="text-xs text-gray-400 font-mono mt-0.5 ml-[18px]">{w.plate}</p>}
+                      <div className="flex items-center gap-3 mt-1 ml-[18px]">
+                        <span className="text-[11px] font-semibold text-blue-600">{w.distance_km.toFixed(1)} km</span>
+                        <span className="text-[11px] text-gray-500">~{Math.round(w.travel_minutes)} min</span>
+                        <span className="text-[11px] text-gray-500">{w.orders_today} zleceń</span>
+                        <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: statusColor + '20', color: statusColor }}>
+                          {STATUS_LABELS[w.status] ?? w.status}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-2 ml-[18px]">
+                    <a
+                      href={`/dispatch?address=${encodeURIComponent(pin.label)}&lat=${pin.lat}&lng=${pin.lng}`}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white rounded-lg text-xs font-medium hover:bg-orange-600 transition-colors"
+                    >
+                      <Plus className="h-3 w-3" />Utwórz zlecenie
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 /* ─── FlyToEffect ────────────────────────────────────────────────────── */
 function FlyToEffect({ lat, lng, mapRef, key: _key }: { lat: number; lng: number; mapRef: React.MutableRefObject<any>; key: string }) {
   useEffect(() => {
@@ -1068,6 +1207,15 @@ export default function MapPage() {
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [orderFilter, setOrderFilter] = useState<string>('all');
   const [countdown, setCountdown] = useState(30);
+  /* Address search state */
+  const [addressQuery, setAddressQuery] = useState('');
+  const [addressSuggestions, setAddressSuggestions] = useState<HereSuggestion[]>([]);
+  const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
+  const [addressPin, setAddressPin] = useState<AddressPin | null>(null);
+  const [nearbyWorkers, setNearbyWorkers] = useState<NearbyWorker[]>([]);
+  const [searchRadiusKm, setSearchRadiusKm] = useState(15);
+  const [addressSearching, setAddressSearching] = useState(false);
+  const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -1113,6 +1261,122 @@ export default function MapPage() {
   }, [fetchAll, resetCountdown]);
 
   const handleRefresh = useCallback(async () => { setLoading(true); await fetchAll(); resetCountdown(); }, [fetchAll, resetCountdown]);
+
+  /* ── Address autocomplete (HERE) ── */
+  const fetchAddressSuggestions = useCallback(async (q: string) => {
+    if (q.length < 3) { setAddressSuggestions([]); setShowAddressSuggestions(false); return; }
+    try {
+      const res = await fetch(
+        `https://autocomplete.search.hereapi.com/v1/autocomplete?q=${encodeURIComponent(q)}&apiKey=${HERE_API_KEY}&in=countryCode:POL&limit=5`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setAddressSuggestions((data.items ?? []) as HereSuggestion[]);
+        setShowAddressSuggestions(true);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleAddressInputChange = useCallback((value: string) => {
+    setAddressQuery(value);
+    if (addressDebounceRef.current) clearTimeout(addressDebounceRef.current);
+    addressDebounceRef.current = setTimeout(() => fetchAddressSuggestions(value), 500);
+  }, [fetchAddressSuggestions]);
+
+  const geocodeAddress = useCallback(async (query: string) => {
+    setAddressSearching(true);
+    setShowAddressSuggestions(false);
+    try {
+      const res = await fetch(
+        `https://geocode.search.hereapi.com/v1/geocode?q=${encodeURIComponent(query)}&apiKey=${HERE_API_KEY}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const item = data.items?.[0];
+        if (item?.position) {
+          const pin: AddressPin = { lat: item.position.lat, lng: item.position.lng, label: item.address?.label ?? query };
+          setAddressPin(pin);
+          setAddressQuery(pin.label);
+          // Fly to location
+          if (mapRef.current) mapRef.current.flyTo([pin.lat, pin.lng], 12, { animate: true, duration: 1 });
+        }
+      }
+    } catch { /* ignore */ }
+    setAddressSearching(false);
+  }, []);
+
+  const handleAddressSuggestionClick = useCallback((suggestion: HereSuggestion) => {
+    const label = suggestion.address?.label ?? suggestion.title;
+    setAddressQuery(label);
+    geocodeAddress(label);
+  }, [geocodeAddress]);
+
+  const handleAddressKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (addressDebounceRef.current) clearTimeout(addressDebounceRef.current);
+      setShowAddressSuggestions(false);
+      geocodeAddress(addressQuery);
+    }
+  }, [addressQuery, geocodeAddress]);
+
+  const clearAddressSearch = useCallback(() => {
+    setAddressQuery('');
+    setAddressPin(null);
+    setNearbyWorkers([]);
+    setAddressSuggestions([]);
+    setShowAddressSuggestions(false);
+  }, []);
+
+  /* ── Compute nearby workers when pin or radius or data changes ── */
+  useEffect(() => {
+    if (!addressPin) { setNearbyWorkers([]); return; }
+    const workers: NearbyWorker[] = [];
+    for (const route of routes) {
+      const pos = route.current_position;
+      if (!pos) continue;
+      const dist = haversineKm(addressPin.lat, addressPin.lng, pos.lat, pos.lng);
+      if (dist <= searchRadiusKm) {
+        // Estimate travel time: haversine * 1.4 road factor / 50 km/h * 60 min
+        const travelMin = (dist * 1.4) / 50 * 60;
+        workers.push({
+          employee_id: route.employee_id,
+          employee_name: route.employee_name,
+          plate: route.plate,
+          status: pos.status ?? 'offline',
+          lat: pos.lat,
+          lng: pos.lng,
+          distance_km: dist,
+          travel_minutes: travelMin,
+          orders_today: route.total_orders,
+        });
+      }
+    }
+    // Also check vehicles that may not have routes
+    for (const v of vehicles) {
+      if (!v.lat || !v.lng) continue;
+      // Skip if already added from routes
+      if (workers.some(w => w.plate === v.plate_number)) continue;
+      const dist = haversineKm(addressPin.lat, addressPin.lng, v.lat, v.lng);
+      if (dist <= searchRadiusKm) {
+        const travelMin = (dist * 1.4) / 50 * 60;
+        const matchRoute = routes.find(r => r.plate === v.plate_number || r.employee_name === v.driver_name);
+        workers.push({
+          employee_id: matchRoute?.employee_id ?? v.id,
+          employee_name: v.driver_name ?? v.plate_number,
+          plate: v.plate_number,
+          status: v.status,
+          lat: v.lat,
+          lng: v.lng,
+          distance_km: dist,
+          travel_minutes: travelMin,
+          orders_today: matchRoute?.total_orders ?? 0,
+        });
+      }
+    }
+    workers.sort((a, b) => a.distance_km - b.distance_km);
+    setNearbyWorkers(workers);
+  }, [addressPin, searchRadiusKm, routes, vehicles]);
 
   const filteredVehicles = [...vehicles]
     .filter(v => {
@@ -1305,6 +1569,45 @@ export default function MapPage() {
 
         {/* ── Map ── */}
         <div className="flex-1 relative overflow-hidden">
+          {/* Address search bar overlay */}
+          <div className="absolute top-4 left-4 right-4 z-[1000] flex justify-center pointer-events-none">
+            <div className="relative w-full max-w-md pointer-events-auto">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Wpisz adres klienta..."
+                  value={addressQuery}
+                  onChange={e => handleAddressInputChange(e.target.value)}
+                  onKeyDown={handleAddressKeyDown}
+                  onFocus={() => { if (addressSuggestions.length > 0) setShowAddressSuggestions(true); }}
+                  className="w-full h-10 pl-10 pr-10 rounded-xl border border-gray-200 bg-white shadow-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400"
+                />
+                {addressSearching && <Loader2 className="absolute right-10 top-1/2 -translate-y-1/2 h-4 w-4 text-orange-500 animate-spin" />}
+                {(addressQuery || addressPin) && (
+                  <button onClick={clearAddressSearch} className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              {/* Autocomplete dropdown */}
+              {showAddressSuggestions && addressSuggestions.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+                  {addressSuggestions.map(s => (
+                    <button
+                      key={s.id}
+                      onClick={() => handleAddressSuggestionClick(s)}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-orange-50 transition-colors flex items-center gap-2 border-b border-gray-50 last:border-b-0"
+                    >
+                      <MapPin className="h-3.5 w-3.5 text-orange-400 flex-shrink-0" />
+                      <span className="truncate">{s.address?.label ?? s.title}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
           <MapContainer center={[52.0, 19.5]} zoom={6} style={{ height: '100%', width: '100%' }} ref={mapRef}>
             <TileLayer
               attribution='&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
@@ -1421,6 +1724,38 @@ export default function MapPage() {
                 </CircleMarker>
               );
             })}
+            {/* Address search pin + radius */}
+            {addressPin && (
+              <>
+                <LeafletCircle
+                  center={[addressPin.lat, addressPin.lng]}
+                  radius={searchRadiusKm * 1000}
+                  pathOptions={{ color: '#F97316', fillColor: '#F97316', fillOpacity: 0.08, weight: 2, dashArray: '6, 4' }}
+                />
+                <CircleMarker
+                  center={[addressPin.lat, addressPin.lng]}
+                  radius={10}
+                  pathOptions={{ color: '#DC2626', fillColor: '#EF4444', fillOpacity: 1, weight: 3 }}
+                >
+                  <Popup>
+                    <div className="text-sm min-w-[180px]">
+                      <p className="font-bold text-red-600">Szukany adres</p>
+                      <p className="text-xs text-gray-600 mt-0.5">{addressPin.label}</p>
+                      <p className="text-[11px] text-gray-400 font-mono mt-0.5">{addressPin.lat.toFixed(5)}, {addressPin.lng.toFixed(5)}</p>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+                {/* Highlight nearby workers with pulse */}
+                {nearbyWorkers.map(w => (
+                  <CircleMarker
+                    key={`nearby-${w.employee_id}`}
+                    center={[w.lat, w.lng]}
+                    radius={16}
+                    pathOptions={{ color: '#F97316', fillColor: '#F97316', fillOpacity: 0.2, weight: 2 }}
+                  />
+                ))}
+              </>
+            )}
           </MapContainer>
 
           {selectedVehicle?.lat && selectedVehicle?.lng && (
@@ -1453,10 +1788,19 @@ export default function MapPage() {
               onRefresh={() => { fetchAll(); resetCountdown(); }}
             />
           )}
-          {showQuickAdd && !selectedVehicle && !selectedOrder && (
+          {showQuickAdd && !selectedVehicle && !selectedOrder && !addressPin && (
             <QuickAddOrderPanel
               onClose={() => setShowQuickAdd(false)}
               onRefresh={() => { fetchAll(); resetCountdown(); }}
+            />
+          )}
+          {addressPin && !selectedVehicle && !selectedOrder && (
+            <NearbyWorkersPanel
+              pin={addressPin}
+              workers={nearbyWorkers}
+              radiusKm={searchRadiusKm}
+              onRadiusChange={setSearchRadiusKm}
+              onClose={clearAddressSearch}
             />
           )}
         </AnimatePresence>

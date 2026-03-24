@@ -11,7 +11,7 @@ const STATUS_STEPS = [
   { key: 'completed', label: 'Zakończone' },
 ] as const;
 
-type OrderStatus = (typeof STATUS_STEPS)[number]['key'];
+type OrderStatus = (typeof STATUS_STEPS)[number]['key'] | 'cancelled';
 
 function getStepIndex(status: string): number {
   const idx = STATUS_STEPS.findIndex((s) => s.key === status);
@@ -41,7 +41,9 @@ function getStatusMessage(
     case 'in_progress':
       return 'Technik jest na miejscu i wykonuje usługę.';
     case 'completed':
-      return 'Usługa zakończona. Dziękujemy! ⭐';
+      return 'Usługa zakończona. Dziękujemy!';
+    case 'cancelled':
+      return 'Wizyta została anulowana.';
     default:
       return 'Status zlecenia nieznany.';
   }
@@ -133,74 +135,91 @@ export default async function TrackingPage({
           </p>
         </div>
 
-        {/* Status stepper */}
-        <div className="relative">
-          <div className="flex items-center justify-between">
-            {STATUS_STEPS.map((step, i) => {
-              const isActive = i <= currentStep;
-              const isCurrent = i === currentStep;
-              return (
-                <div key={step.key} className="flex flex-col items-center flex-1">
-                  <div
-                    className={`
-                      w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold
-                      transition-colors duration-300
-                      ${isCurrent
-                        ? 'bg-orange-500 text-white ring-4 ring-orange-100'
-                        : isActive
-                          ? 'bg-orange-500 text-white'
-                          : 'bg-gray-100 text-gray-400'
-                      }
-                    `}
-                  >
-                    {isActive && i < currentStep ? (
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    ) : (
-                      i + 1
-                    )}
-                  </div>
-                  <p
-                    className={`text-[10px] mt-1.5 text-center leading-tight ${
-                      isActive ? 'text-orange-600 font-semibold' : 'text-gray-400'
-                    }`}
-                  >
-                    {step.label}
-                  </p>
-                </div>
-              );
-            })}
+        {/* Cancelled badge */}
+        {status === 'cancelled' ? (
+          <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
+            <div className="inline-flex items-center gap-2 rounded-full bg-red-100 px-4 py-1.5 mb-3">
+              <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              <span className="text-sm font-bold text-red-600 uppercase tracking-wider">Anulowane</span>
+            </div>
+            <p className="text-lg font-semibold text-red-800 leading-relaxed">
+              {getStatusMessage(status, employeeName, null, null)}
+            </p>
           </div>
-          {/* Progress line */}
-          <div className="absolute top-4 left-0 right-0 h-0.5 bg-gray-100 -z-10 mx-8">
-            <div
-              className="h-full bg-orange-500 transition-all duration-500"
-              style={{
-                width: `${(currentStep / (STATUS_STEPS.length - 1)) * 100}%`,
-              }}
-            />
-          </div>
-        </div>
+        ) : (
+          <>
+            {/* Status stepper */}
+            <div className="relative">
+              <div className="flex items-center justify-between">
+                {STATUS_STEPS.map((step, i) => {
+                  const isActive = i <= currentStep;
+                  const isCurrent = i === currentStep;
+                  return (
+                    <div key={step.key} className="flex flex-col items-center flex-1">
+                      <div
+                        className={`
+                          w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold
+                          transition-colors duration-300
+                          ${isCurrent
+                            ? 'bg-orange-500 text-white ring-4 ring-orange-100'
+                            : isActive
+                              ? 'bg-orange-500 text-white'
+                              : 'bg-gray-100 text-gray-400'
+                          }
+                        `}
+                      >
+                        {isActive && i < currentStep ? (
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : (
+                          i + 1
+                        )}
+                      </div>
+                      <p
+                        className={`text-[10px] mt-1.5 text-center leading-tight ${
+                          isActive ? 'text-orange-600 font-semibold' : 'text-gray-400'
+                        }`}
+                      >
+                        {step.label}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Progress line */}
+              <div className="absolute top-4 left-0 right-0 h-0.5 bg-gray-100 -z-10 mx-8">
+                <div
+                  className="h-full bg-orange-500 transition-all duration-500"
+                  style={{
+                    width: `${(currentStep / (STATUS_STEPS.length - 1)) * 100}%`,
+                  }}
+                />
+              </div>
+            </div>
 
-        {/* Big status message */}
-        <div
-          className={`
-            rounded-2xl p-6 text-center
-            ${status === 'completed'
-              ? 'bg-green-50 border border-green-100'
-              : 'bg-orange-50 border border-orange-100'
-            }
-          `}
-        >
-          <p
-            className={`text-lg font-semibold leading-relaxed ${
-              status === 'completed' ? 'text-green-800' : 'text-gray-800'
-            }`}
-          >
-            {getStatusMessage(status, employeeName, order.scheduled_date ? formatDate(order.scheduled_date) : null, order.time_window)}
-          </p>
-        </div>
+            {/* Big status message */}
+            <div
+              className={`
+                rounded-2xl p-6 text-center
+                ${status === 'completed'
+                  ? 'bg-green-50 border border-green-100'
+                  : 'bg-orange-50 border border-orange-100'
+                }
+              `}
+            >
+              <p
+                className={`text-lg font-semibold leading-relaxed ${
+                  status === 'completed' ? 'text-green-800' : 'text-gray-800'
+                }`}
+              >
+                {getStatusMessage(status, employeeName, order.scheduled_date ? formatDate(order.scheduled_date) : null, order.time_window)}
+              </p>
+            </div>
+          </>
+        )}
 
         {/* Details cards */}
         <div className="space-y-3">

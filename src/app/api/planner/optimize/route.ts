@@ -38,6 +38,7 @@ interface OrderForOptimization {
   time_window: string | null;
   scheduled_time_start: string | null;
   services: string[];
+  service_duration_minutes: number;
 }
 
 /**
@@ -133,7 +134,7 @@ async function optimizeSequence(
 
     // If we arrive before window, we wait
     const serviceStart = Math.max(arrivalMin, windowStart);
-    simMinutes = serviceStart + DEFAULT_SERVICE_DURATION_MIN;
+    simMinutes = serviceStart + order.service_duration_minutes;
     simPos = { lat: order.lat, lng: order.lng };
 
     feasible.push(arrivalMin <= windowEnd + 30); // 30 min grace
@@ -257,6 +258,11 @@ export async function POST(request: NextRequest) {
       .map(o => {
         const c = (o as any).client;
         if (!c?.lat || !c?.lng) return null;
+        // Calculate total service duration from services JSONB
+        const rawServices = (o as any).services as { duration_minutes?: number; quantity?: number }[] | null;
+        const totalDuration = (rawServices ?? []).reduce((sum: number, s: any) => {
+          return sum + (s.duration_minutes || 0) * (s.quantity || 1);
+        }, 0) || DEFAULT_SERVICE_DURATION_MIN;
         return {
           id: o.id,
           employee_id: o.employee_id,
@@ -267,6 +273,7 @@ export async function POST(request: NextRequest) {
           time_window: (o as any).time_window ?? null,
           scheduled_time_start: o.scheduled_time_start,
           services: (o as any).services ?? [],
+          service_duration_minutes: totalDuration,
         };
       })
       .filter(Boolean) as OrderForOptimization[];
@@ -403,6 +410,7 @@ export async function POST(request: NextRequest) {
           scheduled_time_start: order.scheduled_time_start,
           services: order.services,
           travel_from_prev_minutes: routeInfo.duration_minutes,
+          service_duration_minutes: order.service_duration_minutes,
         });
         prevPos = { lat: order.lat, lng: order.lng };
       }

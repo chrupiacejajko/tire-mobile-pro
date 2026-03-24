@@ -10,9 +10,15 @@ interface SelfCareActionsProps {
 
 const TIME_WINDOWS = [
   { key: 'morning', label: 'Rano 8-12' },
-  { key: 'afternoon', label: 'Poludnie 12-16' },
-  { key: 'evening', label: 'Wieczor 16-20' },
+  { key: 'afternoon', label: 'Popołudnie 12-16' },
+  { key: 'evening', label: 'Wieczór 16-20' },
 ];
+
+const TIME_WINDOW_LABELS: Record<string, string> = {
+  morning: 'Rano (8:00-12:00)',
+  afternoon: 'Popołudnie (12:00-16:00)',
+  evening: 'Wieczór (16:00-20:00)',
+};
 
 function generateDates(): { date: string; label: string; dayOfWeek: number }[] {
   const dates: { date: string; label: string; dayOfWeek: number }[] = [];
@@ -34,12 +40,26 @@ function generateDates(): { date: string; label: string; dayOfWeek: number }[] {
   return dates;
 }
 
+function formatDatePL(dateStr: string): string {
+  try {
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('pl-PL', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
 export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) {
   const router = useRouter();
   const [showReschedule, setShowReschedule] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedWindow, setSelectedWindow] = useState('');
+  const [cancelReason, setCancelReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -58,26 +78,32 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
     setSubmitting(true);
     setMessage(null);
     try {
-      const res = await fetch('/api/tracking/actions', {
+      const res = await fetch('/api/orders/reschedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           order_id: orderId,
-          action: 'reschedule',
           new_date: selectedDate,
           new_time_window: selectedWindow,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setMessage({ type: 'error', text: data.error || 'Wystapil blad.' });
+        setMessage({ type: 'error', text: data.error || 'Wystąpił błąd.' });
       } else {
-        setMessage({ type: 'success', text: data.message || 'Termin został zmieniony.' });
+        const windowLabel = TIME_WINDOW_LABELS[selectedWindow] || selectedWindow;
+        const dateLabel = formatDatePL(selectedDate);
+        setMessage({
+          type: 'success',
+          text: `Termin został zmieniony na ${dateLabel}, ${windowLabel}`,
+        });
         setShowReschedule(false);
+        setSelectedDate('');
+        setSelectedWindow('');
         setTimeout(() => router.refresh(), 1500);
       }
     } catch {
-      setMessage({ type: 'error', text: 'Blad polaczenia z serwerem.' });
+      setMessage({ type: 'error', text: 'Błąd połączenia z serwerem.' });
     } finally {
       setSubmitting(false);
     }
@@ -87,24 +113,25 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
     setSubmitting(true);
     setMessage(null);
     try {
-      const res = await fetch('/api/tracking/actions', {
+      const res = await fetch('/api/orders/cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           order_id: orderId,
-          action: 'cancel',
+          reason: cancelReason || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setMessage({ type: 'error', text: data.error || 'Wystapil blad.' });
+        setMessage({ type: 'error', text: data.error || 'Wystąpił błąd.' });
       } else {
-        setMessage({ type: 'success', text: data.message || 'Wizyta zostala anulowana.' });
+        setMessage({ type: 'success', text: 'Wizyta została anulowana.' });
         setShowCancel(false);
+        setCancelReason('');
         setTimeout(() => router.refresh(), 1500);
       }
     } catch {
-      setMessage({ type: 'error', text: 'Blad polaczenia z serwerem.' });
+      setMessage({ type: 'error', text: 'Błąd połączenia z serwerem.' });
     } finally {
       setSubmitting(false);
     }
@@ -130,7 +157,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
         <div className="flex gap-3">
           {canReschedule && (
             <button
-              onClick={() => { setShowReschedule(true); setShowCancel(false); }}
+              onClick={() => { setShowReschedule(true); setShowCancel(false); setMessage(null); }}
               className="flex-1 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-600 hover:bg-orange-100 transition-colors"
             >
               Zmień termin
@@ -138,7 +165,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
           )}
           {canCancel && (
             <button
-              onClick={() => { setShowCancel(true); setShowReschedule(false); }}
+              onClick={() => { setShowCancel(true); setShowReschedule(false); setMessage(null); }}
               className="flex-1 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors"
             >
               Anuluj wizytę
@@ -153,7 +180,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-gray-900">Wybierz nowy termin</h3>
             <button
-              onClick={() => setShowReschedule(false)}
+              onClick={() => { setShowReschedule(false); setSelectedDate(''); setSelectedWindow(''); }}
               className="text-xs text-gray-400 hover:text-gray-600"
             >
               Anuluj
@@ -161,20 +188,25 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
           </div>
 
           {/* Calendar grid */}
-          <div className="grid grid-cols-4 gap-2">
-            {dates.map((d) => (
-              <button
-                key={d.date}
-                onClick={() => setSelectedDate(d.date)}
-                className={`rounded-xl px-2 py-2.5 text-xs font-medium transition-colors ${
-                  selectedDate === d.date
-                    ? 'bg-orange-500 text-white'
-                    : 'bg-gray-50 text-gray-700 hover:bg-orange-50'
-                }`}
-              >
-                {d.label}
-              </button>
-            ))}
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">
+              Data
+            </p>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+              {dates.map((d) => (
+                <button
+                  key={d.date}
+                  onClick={() => setSelectedDate(d.date)}
+                  className={`rounded-xl px-2 py-2.5 text-xs font-medium transition-colors ${
+                    selectedDate === d.date
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-gray-50 text-gray-700 hover:bg-orange-50'
+                  }`}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Time windows */}
@@ -205,7 +237,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
             disabled={!selectedDate || !selectedWindow || submitting}
             className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {submitting ? 'Zapisywanie...' : 'Potwierdź zmianę'}
+            {submitting ? 'Zapisywanie...' : 'Zapisz nowy termin'}
           </button>
         </div>
       )}
@@ -219,12 +251,28 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
           <p className="text-xs text-gray-500 text-center">
             Ta operacja jest nieodwracalna.
           </p>
+
+          {/* Optional reason */}
+          <div>
+            <label htmlFor="cancel-reason" className="text-xs text-gray-400 uppercase tracking-wider block mb-1.5">
+              Powód anulacji (opcjonalnie)
+            </label>
+            <textarea
+              id="cancel-reason"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Podaj powód anulacji..."
+              rows={2}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-400 focus:border-red-300 focus:ring-1 focus:ring-red-200 focus:outline-none resize-none"
+            />
+          </div>
+
           <div className="flex gap-3">
             <button
-              onClick={() => setShowCancel(false)}
+              onClick={() => { setShowCancel(false); setCancelReason(''); }}
               className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
             >
-              Nie, wróć
+              Nie, zostaw
             </button>
             <button
               onClick={handleCancel}

@@ -999,7 +999,21 @@ export default function OrdersPage() {
                               size="sm"
                               variant="outline"
                               className="rounded-lg h-7 text-xs px-2 gap-1 border-blue-200 text-blue-600"
-                              onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedOrder.address)}`, '_blank')}
+                              onClick={async () => {
+                                if (selectedOrder.employee_id) {
+                                  try {
+                                    const res = await fetch(`/api/employee-gps?employee_id=${selectedOrder.employee_id}`);
+                                    if (res.ok) {
+                                      const gps = await res.json();
+                                      if (gps.lat && gps.lng) {
+                                        window.open(`https://www.google.com/maps/dir/${gps.lat},${gps.lng}/${encodeURIComponent(selectedOrder.address)}`, '_blank');
+                                        return;
+                                      }
+                                    }
+                                  } catch { /* fallback */ }
+                                }
+                                window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedOrder.address)}`, '_blank');
+                              }}
                             >
                               <Navigation className="h-3 w-3" /> Nawiguj
                             </Button>

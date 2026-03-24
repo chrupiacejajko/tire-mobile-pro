@@ -108,6 +108,12 @@ export async function GET(request: NextRequest) {
 
         const routeInfo = await getRouteInfo(prevPos.lat, prevPos.lng, dest.lat, dest.lng);
 
+        // Calculate total service duration from services JSONB
+        const rawServices = (order as any).services as { duration_minutes?: number; quantity?: number }[] | null;
+        const serviceDuration = (rawServices ?? []).reduce((sum: number, s: any) => {
+          return sum + (s.duration_minutes || 0) * (s.quantity || 1);
+        }, 0) || DEFAULT_SERVICE_DURATION_MIN;
+
         orderInputs.push({
           order_id: order.id,
           lat: c.lat,
@@ -118,10 +124,11 @@ export async function GET(request: NextRequest) {
           scheduled_time_start: order.scheduled_time_start,
           services: (order as any).services ?? [],
           travel_from_prev_minutes: routeInfo.duration_minutes,
+          service_duration_minutes: serviceDuration,
         });
 
         prevPos = dest;
-        prevDeparture += routeInfo.duration_minutes + DEFAULT_SERVICE_DURATION_MIN;
+        prevDeparture += routeInfo.duration_minutes + serviceDuration;
       }
 
       const schedule = buildSchedule(startMinutes, orderInputs);

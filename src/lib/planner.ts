@@ -96,6 +96,7 @@ export interface OrderInput {
   scheduled_time_start: string | null;
   services: string[];
   travel_from_prev_minutes: number;  // HERE ETA from previous stop
+  service_duration_minutes?: number; // total duration of all services for this order
 }
 
 export interface ScheduledStop {
@@ -131,6 +132,7 @@ export function buildSchedule(
   let currentMinutes = startMinutes;
 
   return orders.map((order, i) => {
+    const duration = order.service_duration_minutes || DEFAULT_SERVICE_DURATION_MIN;
     const arrivalMinutes = currentMinutes + order.travel_from_prev_minutes;
     const window = order.time_window ? TIME_WINDOWS[order.time_window] : null;
 
@@ -141,8 +143,8 @@ export function buildSchedule(
       serviceStartMinutes = window.start;
     }
 
-    const status = getTimeWindowStatus(arrivalMinutes, DEFAULT_SERVICE_DURATION_MIN, order.time_window);
-    const departureMinutes = serviceStartMinutes + DEFAULT_SERVICE_DURATION_MIN;
+    const status = getTimeWindowStatus(arrivalMinutes, duration, order.time_window);
+    const departureMinutes = serviceStartMinutes + duration;
 
     // How many minutes past window end?
     const delayMinutes = window ? Math.max(0, arrivalMinutes - window.end) : 0;
@@ -165,7 +167,7 @@ export function buildSchedule(
       arrival_time: formatTime(arrivalMinutes),
       wait_minutes: waitMinutes,
       service_start: formatTime(serviceStartMinutes),
-      service_duration_minutes: DEFAULT_SERVICE_DURATION_MIN,
+      service_duration_minutes: duration,
       departure_time: formatTime(departureMinutes),
       departure_minutes: departureMinutes,
       delay_minutes: delayMinutes,
@@ -193,7 +195,7 @@ export function scoreRoute(stops: ScheduledStop[], totalKm: number): RouteScore 
 
   const score = total === 0 ? 100 : Math.round(((on_time + tight * 0.5) / total) * 100);
   const lastStop = stops[stops.length - 1];
-  const totalDuration = lastStop ? lastStop.departure_minutes - (stops[0]?.departure_minutes - stops[0]?.travel_minutes - DEFAULT_SERVICE_DURATION_MIN) : 0;
+  const totalDuration = lastStop ? lastStop.departure_minutes - (stops[0]?.departure_minutes - stops[0]?.travel_minutes - stops[0]?.service_duration_minutes) : 0;
 
   return {
     score,
