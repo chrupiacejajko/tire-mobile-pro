@@ -41,61 +41,148 @@ interface OrderForOptimization {
 }
 
 /**
- * Greedy nearest-neighbor insertion that respects time windows.
- * At each step, picks the order that has the best score:
- *   score = -travel_time - time_window_penalty
+ * Time-Window-Aware Optimizer with Earliest-Deadline-First + Nearest-Neighbor.
+ *
+ * Strategy:
+ * 1. Sort orders by earliest deadline (window end time). Morning orders go first.
+ * 2. Group into time buckets (morning, afternoon, evening, no-window).
+ * 3. Within each bucket, use nearest-neighbor to minimize travel.
+ * 4. After initial ordering, do a 2-opt improvement pass.
+ *
+ * This ensures morning-window orders are done in the morning, not at 18:00.
  */
 async function optimizeSequence(
   startPos: LatLng,
   orders: OrderForOptimization[],
+  startMinutes: number = parseTime('08:00'),
 ): Promise<{ sequence: OrderForOptimization[]; totalKm: number }> {
   if (orders.length <= 1) {
     return { sequence: orders, totalKm: 0 };
   }
 
-  const remaining = [...orders];
+  // ── Step 1: Classify orders by time window deadline ──
+  const getWindowEnd = (o: OrderForOptimization): number => {
+    if (o.time_window && TIME_WINDOWS[o.time_window]) return TIME_WINDOWS[o.time_window].end;
+    return 24 * 60; // no window = anytime
+  };
+  const getWindowStart = (o: OrderForOptimization): number => {
+    if (o.time_window && TIME_WINDOWS[o.time_window]) return TIME_WINDOWS[o.time_window].start;
+    return 0;
+  };
+
+  // ── Step 2: Sort by deadline, then group into time buckets ──
+  const sorted = [...orders].sort((a, b) => getWindowEnd(a) - getWindowEnd(b));
+
+  // Group into buckets: each bucket = orders with same time window
+  const buckets: Map<string, OrderForOptimization[]> = new Map();
+  for (const o of sorted) {
+    const key = o.time_window || '__flexible__';
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(o);
+  }
+
+  // Order bucket keys by earliest deadline
+  const bucketOrder = [...buckets.keys()].sort((a, b) => {
+    const aEnd = a === '__flexible__' ? 24 * 60 : (TIME_WINDOWS[a]?.end ?? 24 * 60);
+    const bEnd = b === '__flexible__' ? 24 * 60 : (TIME_WINDOWS[b]?.end ?? 24 * 60);
+    return aEnd - bEnd;
+  });
+
+  // ── Step 3: Within each bucket, nearest-neighbor from current position ──
   const sequence: OrderForOptimization[] = [];
   let currentPos = startPos;
-  let currentMinutes = parseTime('08:00');
   let totalKm = 0;
 
-  while (remaining.length > 0) {
-    let bestIdx = 0;
-    let bestCost = Infinity;
+  for (const bucketKey of bucketOrder) {
+    const bucketOrders = buckets.get(bucketKey)!;
+    const remaining = [...bucketOrders];
 
-    for (let i = 0; i < remaining.length; i++) {
-      const order = remaining[i];
-      const dist = haversineKm(currentPos.lat, currentPos.lng, order.lat, order.lng) * 1.35;
-      const travelMin = Math.round(dist / 50 * 60); // 50km/h estimate for sorting
-      const arrivalMin = currentMinutes + travelMin;
+    while (remaining.length > 0) {
+      // Find nearest order in this bucket
+      let bestIdx = 0;
+      let bestDist = Infinity;
 
-      // Time window penalty
-      let penalty = 0;
-      if (order.time_window && TIME_WINDOWS[order.time_window]) {
-        const { start, end } = TIME_WINDOWS[order.time_window];
-        if (arrivalMin > end) {
-          penalty = (arrivalMin - end) * 3; // heavy penalty for being late
-        } else if (arrivalMin + DEFAULT_SERVICE_DURATION_MIN > end) {
-          penalty = 50; // moderate penalty for tight
-        }
-        if (arrivalMin < start) {
-          penalty += (start - arrivalMin) * 0.5; // small penalty for waiting
+      for (let i = 0; i < remaining.length; i++) {
+        const dist = haversineKm(currentPos.lat, currentPos.lng, remaining[i].lat, remaining[i].lng);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIdx = i;
         }
       }
 
-      const cost = dist * 2 + penalty;
-      if (cost < bestCost) {
-        bestCost = cost;
-        bestIdx = i;
+      const chosen = remaining.splice(bestIdx, 1)[0];
+      const routeInfo = await getRouteInfo(currentPos.lat, currentPos.lng, chosen.lat, chosen.lng);
+      totalKm += routeInfo.distance_km;
+      currentPos = { lat: chosen.lat, lng: chosen.lng };
+      sequence.push(chosen);
+    }
+  }
+
+  // ── Step 4: Feasibility check — can we actually make all windows? ──
+  // Simulate the schedule and check for impossible assignments
+  let simMinutes = startMinutes;
+  let simPos = startPos;
+  const feasible: boolean[] = [];
+
+  for (const order of sequence) {
+    const dist = haversineKm(simPos.lat, simPos.lng, order.lat, order.lng) * 1.35;
+    const travelMin = Math.round(dist / 50 * 60);
+    const arrivalMin = simMinutes + travelMin;
+    const windowEnd = getWindowEnd(order);
+    const windowStart = getWindowStart(order);
+
+    // If we arrive before window, we wait
+    const serviceStart = Math.max(arrivalMin, windowStart);
+    simMinutes = serviceStart + DEFAULT_SERVICE_DURATION_MIN;
+    simPos = { lat: order.lat, lng: order.lng };
+
+    feasible.push(arrivalMin <= windowEnd + 30); // 30 min grace
+  }
+
+  // ── Step 5: 2-opt improvement — try swapping pairs to reduce total cost ──
+  // Only swap within the same time-window bucket to preserve deadline ordering
+  let improved = true;
+  let iterations = 0;
+  while (improved && iterations < 50) {
+    improved = false;
+    iterations++;
+
+    for (let i = 0; i < sequence.length - 1; i++) {
+      for (let j = i + 1; j < sequence.length; j++) {
+        // Only swap if same time window (to preserve deadline order across buckets)
+        if (sequence[i].time_window !== sequence[j].time_window) continue;
+
+        // Calculate cost before swap
+        const prevI = i === 0 ? startPos : { lat: sequence[i - 1].lat, lng: sequence[i - 1].lng };
+        const nextJ = j < sequence.length - 1 ? { lat: sequence[j + 1].lat, lng: sequence[j + 1].lng } : null;
+
+        const costBefore =
+          haversineKm(prevI.lat, prevI.lng, sequence[i].lat, sequence[i].lng) +
+          (nextJ ? haversineKm(sequence[j].lat, sequence[j].lng, nextJ.lat, nextJ.lng) : 0);
+
+        const costAfter =
+          haversineKm(prevI.lat, prevI.lng, sequence[j].lat, sequence[j].lng) +
+          (nextJ ? haversineKm(sequence[i].lat, sequence[i].lng, nextJ.lat, nextJ.lng) : 0);
+
+        if (costAfter < costBefore - 0.5) { // 0.5 km threshold
+          // Reverse the segment between i and j
+          const segment = sequence.slice(i, j + 1).reverse();
+          for (let k = 0; k < segment.length; k++) {
+            sequence[i + k] = segment[k];
+          }
+          improved = true;
+          // Recalculate totalKm would be complex — skip, it'll be recalculated below
+        }
       }
     }
+  }
 
-    const chosen = remaining.splice(bestIdx, 1)[0];
-    const routeInfo = await getRouteInfo(currentPos.lat, currentPos.lng, chosen.lat, chosen.lng);
-    totalKm += routeInfo.distance_km;
-    currentMinutes += routeInfo.duration_minutes + DEFAULT_SERVICE_DURATION_MIN;
-    currentPos = { lat: chosen.lat, lng: chosen.lng };
-    sequence.push(chosen);
+  // ── Step 6: Recalculate totalKm with final sequence ──
+  totalKm = 0;
+  let recalcPos = startPos;
+  for (const order of sequence) {
+    totalKm += haversineKm(recalcPos.lat, recalcPos.lng, order.lat, order.lng) * 1.35;
+    recalcPos = { lat: order.lat, lng: order.lng };
   }
 
   return { sequence, totalKm };
@@ -223,7 +310,65 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Group orders by employee
+    // ── Cross-employee feasibility check ──────────────────────────────
+    // Before grouping by employee, check if any assigned orders are
+    // IMPOSSIBLE for their current employee (can't arrive within window).
+    // If so, try to reassign to a better employee.
+
+    const employeePositions = new Map<string, LatLng>();
+    for (const emp of employees || []) {
+      employeePositions.set(emp.id, gpsMap.get(emp.id) ?? { lat: 52.2297, lng: 21.0122 });
+    }
+
+    // Check feasibility for each order-employee pair
+    for (const order of orders) {
+      if (!order.employee_id || !order.time_window || !TIME_WINDOWS[order.time_window]) continue;
+      const empPos = employeePositions.get(order.employee_id);
+      if (!empPos) continue;
+
+      const dist = haversineKm(empPos.lat, empPos.lng, order.lat, order.lng) * 1.35;
+      const travelMin = Math.round(dist / 50 * 60);
+      const empWs = workScheduleMap.get(order.employee_id);
+      const empStartMin = empWs ? parseTime(empWs.start_time) : parseTime('08:00');
+      const arrivalMin = empStartMin + travelMin;
+      const windowEnd = TIME_WINDOWS[order.time_window].end;
+
+      // If arrival is more than 30 min past window end, try to reassign
+      if (arrivalMin > windowEnd + 30) {
+        // Find a better employee who CAN make it
+        let bestAltEmpId: string | null = null;
+        let bestAltTravel = Infinity;
+
+        for (const emp of employees || []) {
+          if (emp.id === order.employee_id) continue;
+          if (unavailableEmployeeIds.has(emp.id)) continue;
+
+          const altPos = employeePositions.get(emp.id);
+          if (!altPos) continue;
+
+          const altDist = haversineKm(altPos.lat, altPos.lng, order.lat, order.lng) * 1.35;
+          const altTravel = Math.round(altDist / 50 * 60);
+          const altWs = workScheduleMap.get(emp.id);
+          const altStart = altWs ? parseTime(altWs.start_time) : parseTime('08:00');
+          const altArrival = altStart + altTravel;
+
+          if (altArrival <= windowEnd && altTravel < bestAltTravel) {
+            bestAltTravel = altTravel;
+            bestAltEmpId = emp.id;
+          }
+        }
+
+        if (bestAltEmpId) {
+          // Reassign this order
+          order.employee_id = bestAltEmpId;
+          if (commit) {
+            await supabase.from('orders').update({ employee_id: bestAltEmpId }).eq('id', order.id);
+          }
+        }
+      }
+    }
+
+    // Group orders by employee (after potential reassignment)
     const ordersByEmployee = new Map<string, OrderForOptimization[]>();
     for (const order of orders) {
       if (!order.employee_id) continue;
@@ -239,7 +384,9 @@ export async function POST(request: NextRequest) {
       if (!empOrders.length) continue;
 
       const pos = gpsMap.get(emp.id) ?? { lat: 52.2297, lng: 21.0122 };
-      const { sequence, totalKm } = await optimizeSequence(pos, empOrders);
+      const empWs = workScheduleMap.get(emp.id);
+      const empStartMin = empWs ? parseTime(empWs.start_time) : parseTime('08:00');
+      const { sequence, totalKm } = await optimizeSequence(pos, empOrders, empStartMin);
 
       // Build schedule for optimized sequence
       let prevPos: LatLng = pos;
