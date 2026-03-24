@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { sendBookingConfirmationForOrder } from '@/lib/email';
 import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
+import { autoAssignWorker } from '@/lib/auto-assign';
 
 // GET /api/orders - List orders with optional filters
 export async function GET(request: NextRequest) {
@@ -234,25 +235,43 @@ export async function POST(request: NextRequest) {
 
     if (orderError) return NextResponse.json({ error: orderError.message }, { status: 400 });
 
-    // ── Auto-assign if requested (fire-and-forget for speed) ──────────
+    // ── Auto-assign logic ──────────────────────────────────────────────
+    const shouldAutoAssign =
+      auto_assign === true ||
+      finalSchedulingType === 'asap' ||
+      finalPriority === 'urgent';
+
     let assignedEmployee: string | null = null;
-    if (auto_assign && order?.id) {
+    let assignedPlate: string | null = null;
+    let estimatedTravelMinutes: number | null = null;
+    let suggestions: any[] = [];
+
+    if (clientLat && clientLng && order?.id) {
       try {
-        const suggestRes = await fetch(new URL('/api/planner/suggest-insert', request.url).toString(), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order_id: order.id, date: finalDate }),
+        suggestions = await autoAssignWorker({
+          order_lat: clientLat,
+          order_lng: clientLng,
+          scheduled_date: finalDate,
+          scheduling_type: finalSchedulingType as 'asap' | 'fixed_time' | 'time_window' | 'flexible',
+          time_window_start: finalTimeWindowStart,
+          time_window_end: finalTimeWindowEnd,
+          scheduled_time: finalSchedulingType === 'fixed_time' ? scheduled_time : null,
+          priority: finalPriority,
+          service_duration_minutes: totalDuration,
+          exclude_order_id: order.id,
         });
-        const suggestData = await suggestRes.json();
-        if (suggestData.suggestions?.length > 0) {
-          const best = suggestData.suggestions[0];
+
+        if (shouldAutoAssign && suggestions.length > 0) {
+          const best = suggestions[0];
           await supabase.from('orders').update({
             employee_id: best.employee_id,
             status: 'assigned',
             auto_assigned: true,
-            estimated_travel_minutes: best.gps_distance_km ? Math.round(best.gps_distance_km * 2) : null,
+            estimated_travel_minutes: best.travel_minutes,
           }).eq('id', order.id);
           assignedEmployee = best.employee_name;
+          assignedPlate = best.plate_number;
+          estimatedTravelMinutes = best.travel_minutes;
         }
       } catch { /* auto-assign is best-effort */ }
     }
@@ -260,7 +279,7 @@ export async function POST(request: NextRequest) {
     // ── Send booking confirmation email (fire-and-forget) ─────────────
     sendBookingConfirmationForOrder(order.id, clientId, {
       id: order.id,
-      status: order.status,
+      status: assignedEmployee ? 'assigned' : order.status,
       scheduled_date: order.scheduled_date,
       scheduled_time_start: order.scheduled_time_start,
       time_window: order.time_window,
@@ -278,6 +297,10 @@ export async function POST(request: NextRequest) {
       total_price: totalPrice,
       total_duration_minutes: totalDuration,
       assigned_employee: assignedEmployee,
+      assigned_plate: assignedPlate,
+      estimated_travel_minutes: estimatedTravelMinutes,
+      auto_assigned: shouldAutoAssign && !!assignedEmployee,
+      suggestions: suggestions.length > 0 ? suggestions : undefined,
       message: `Zlecenie utworzone na ${finalDate} (${time_window || startTime}). Kwota: ${totalPrice} zł.`,
     }, { status: 201 });
   } catch (err) {
