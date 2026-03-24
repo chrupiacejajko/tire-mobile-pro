@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
 
 export async function POST(request: NextRequest) {
   const supabase = getAdminClient();
@@ -61,6 +62,9 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Fire reschedule notification (fire-and-forget)
+      buildNotificationContext(order_id).then(ctx => fireNotification('reschedule', ctx)).catch(() => {});
+
       return NextResponse.json({ success: true, message: 'Termin został zmieniony.' });
     }
 
@@ -86,6 +90,9 @@ export async function POST(request: NextRequest) {
           { status: 500 },
         );
       }
+
+      // Fire cancellation notification (fire-and-forget)
+      buildNotificationContext(order_id).then(ctx => fireNotification('order_cancelled', ctx)).catch(() => {});
 
       return NextResponse.json({ success: true, message: 'Wizyta została anulowana.' });
     }

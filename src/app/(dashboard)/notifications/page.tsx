@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Topbar } from '@/components/layout/topbar';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +19,7 @@ import {
 import {
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@/components/ui/tabs';
-import { Bell, MessageSquare, Mail, Plus, Edit, Trash2, Send, Clock, Check } from 'lucide-react';
+import { Bell, MessageSquare, Mail, Plus, Edit, Trash2, Clock, Check } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 const ANIM = {
@@ -30,11 +30,13 @@ const ANIM = {
 interface Template {
   id: string;
   name: string;
-  type: 'sms' | 'email';
-  trigger_event: string;
+  trigger: string;
+  channel: 'email' | 'sms' | 'both';
   subject: string | null;
   body: string;
   is_active: boolean;
+  send_after_time: string | null;
+  send_before_time: string | null;
 }
 
 interface NotifRow {
@@ -46,12 +48,24 @@ interface NotifRow {
   created_at: string;
 }
 
-const triggerLabels: Record<string, string> = {
-  order_created: 'Nowe zlecenie',
-  order_reminder: 'Przypomnienie',
-  order_in_progress: 'W drodze',
-  order_completed: 'Ukończone',
-};
+const TRIGGER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'booking_created', label: 'Nowa rezerwacja' },
+  { value: 'order_assigned', label: 'Zlecenie przypisane' },
+  { value: 'order_completed', label: 'Zlecenie zakonczone' },
+  { value: 'order_cancelled', label: 'Zlecenie anulowane' },
+  { value: 'reschedule', label: 'Zmiana terminu' },
+  { value: 'reminder_day_before', label: 'Przypomnienie (dzien przed)' },
+  { value: 'reminder_morning', label: 'Przypomnienie (rano)' },
+  { value: 'en_route', label: 'Pracownik w drodze' },
+];
+
+const PLACEHOLDERS = [
+  '{{client_name}}', '{{date}}', '{{time_window}}', '{{employee_name}}',
+  '{{services}}', '{{total_price}}', '{{tracking_url}}', '{{address}}', '{{order_id}}',
+];
+
+const triggerLabel = (trigger: string) =>
+  TRIGGER_OPTIONS.find(o => o.value === trigger)?.label || trigger;
 
 export default function NotificationsPage() {
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -62,8 +76,14 @@ export default function NotificationsPage() {
   const [saving, setSaving] = useState(false);
 
   const [form, setForm] = useState({
-    name: '', type: 'sms' as 'sms' | 'email', trigger_event: 'order_created',
-    subject: '', body: '', is_active: true,
+    name: '',
+    trigger: 'booking_created',
+    channel: 'email' as 'email' | 'sms' | 'both',
+    subject: '',
+    body: '',
+    is_active: true,
+    send_after_time: '',
+    send_before_time: '',
   });
 
   const supabase = createClient();
@@ -71,10 +91,10 @@ export default function NotificationsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [tplRes, notifRes] = await Promise.all([
-      supabase.from('notification_templates').select('*').order('trigger_event, type'),
+      fetch('/api/notification-templates').then(r => r.json()),
       supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(30),
     ]);
-    if (tplRes.data) setTemplates(tplRes.data as Template[]);
+    setTemplates(tplRes.templates || []);
     if (notifRes.data) setNotifications(notifRes.data as NotifRow[]);
     setLoading(false);
   }, []);
@@ -84,11 +104,30 @@ export default function NotificationsPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    const payload = { ...form, subject: form.type === 'email' ? form.subject : null };
+    const payload: any = {
+      name: form.name,
+      trigger: form.trigger,
+      channel: form.channel,
+      subject: (form.channel === 'email' || form.channel === 'both') ? form.subject : null,
+      body: form.body,
+      is_active: form.is_active,
+      send_after_time: form.send_after_time || null,
+      send_before_time: form.send_before_time || null,
+    };
+
     if (editingTemplate) {
-      await supabase.from('notification_templates').update(payload).eq('id', editingTemplate.id);
+      payload.id = editingTemplate.id;
+      await fetch('/api/notification-templates', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
     } else {
-      await supabase.from('notification_templates').insert(payload);
+      await fetch('/api/notification-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
     }
     setSaving(false);
     setDialogOpen(false);
@@ -97,12 +136,16 @@ export default function NotificationsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('notification_templates').delete().eq('id', id);
+    await fetch(`/api/notification-templates?id=${id}`, { method: 'DELETE' });
     fetchData();
   };
 
-  const toggleTemplate = async (id: string, isActive: boolean) => {
-    await supabase.from('notification_templates').update({ is_active: !isActive }).eq('id', id);
+  const toggleTemplate = async (t: Template) => {
+    await fetch('/api/notification-templates', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: t.id, is_active: !t.is_active }),
+    });
     fetchData();
   };
 
@@ -112,12 +155,43 @@ export default function NotificationsPage() {
   };
 
   const openEdit = (t: Template) => {
-    setForm({ name: t.name, type: t.type, trigger_event: t.trigger_event, subject: t.subject || '', body: t.body, is_active: t.is_active });
+    setForm({
+      name: t.name,
+      trigger: t.trigger,
+      channel: t.channel,
+      subject: t.subject || '',
+      body: t.body,
+      is_active: t.is_active,
+      send_after_time: t.send_after_time || '',
+      send_before_time: t.send_before_time || '',
+    });
     setEditingTemplate(t);
     setDialogOpen(true);
   };
 
+  const openNew = () => {
+    setForm({
+      name: '', trigger: 'booking_created', channel: 'email',
+      subject: '', body: '', is_active: true,
+      send_after_time: '', send_before_time: '',
+    });
+    setEditingTemplate(null);
+    setDialogOpen(true);
+  };
+
   const unreadCount = notifications.filter(n => !n.is_read).length;
+
+  const channelIcon = (ch: string) => {
+    if (ch === 'sms') return <MessageSquare className="h-4 w-4 text-green-500" />;
+    if (ch === 'email') return <Mail className="h-4 w-4 text-violet-500" />;
+    return <Bell className="h-4 w-4 text-orange-500" />;
+  };
+
+  const channelLabel = (ch: string) => {
+    if (ch === 'sms') return 'SMS';
+    if (ch === 'email') return 'Email';
+    return 'Email + SMS';
+  };
 
   return (
     <div className="min-h-screen bg-gray-50/50">
@@ -136,8 +210,7 @@ export default function NotificationsPage() {
                 {unreadCount > 0 && <Badge className="ml-1 h-5 w-5 rounded-full p-0 text-[10px] flex items-center justify-center">{unreadCount}</Badge>}
               </TabsTrigger>
             </TabsList>
-            <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
-              onClick={() => { setForm({ name: '', type: 'sms', trigger_event: 'order_created', subject: '', body: '', is_active: true }); setEditingTemplate(null); setDialogOpen(true); }}>
+            <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700" onClick={openNew}>
               <Plus className="h-4 w-4" /> Nowy szablon
             </Button>
           </div>
@@ -153,18 +226,25 @@ export default function NotificationsPage() {
                       <CardContent className="p-5">
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex items-center gap-2">
-                            {tpl.type === 'sms' ? <MessageSquare className="h-4 w-4 text-blue-500" /> : <Mail className="h-4 w-4 text-violet-500" />}
-                            <Badge variant="outline" className="text-[10px] rounded-lg">{tpl.type.toUpperCase()}</Badge>
+                            {channelIcon(tpl.channel)}
+                            <Badge variant="outline" className="text-[10px] rounded-lg">{channelLabel(tpl.channel)}</Badge>
                           </div>
-                          <Badge className="text-[10px] rounded-lg bg-gray-100 text-gray-600">{triggerLabels[tpl.trigger_event] || tpl.trigger_event}</Badge>
+                          <Badge className="text-[10px] rounded-lg bg-gray-100 text-gray-600">{triggerLabel(tpl.trigger)}</Badge>
                         </div>
                         <h3 className="text-sm font-bold mb-1">{tpl.name}</h3>
                         {tpl.subject && <p className="text-xs text-gray-500 mb-1">Temat: {tpl.subject}</p>}
                         <p className="text-xs text-gray-400 line-clamp-2">{tpl.body}</p>
+                        {(tpl.send_after_time || tpl.send_before_time) && (
+                          <div className="flex items-center gap-2 mt-2 text-[11px] text-gray-400">
+                            <Clock className="h-3 w-3" />
+                            {tpl.send_after_time && <span>od {tpl.send_after_time}</span>}
+                            {tpl.send_before_time && <span>do {tpl.send_before_time}</span>}
+                          </div>
+                        )}
                         <div className="flex items-center justify-between mt-3 pt-3 border-t">
                           <div className="flex items-center gap-2">
-                            <Switch checked={tpl.is_active} onCheckedChange={() => toggleTemplate(tpl.id, tpl.is_active)} />
-                            <span className="text-[11px] text-gray-500">{tpl.is_active ? 'Aktywny' : 'Wyłączony'}</span>
+                            <Switch checked={tpl.is_active} onCheckedChange={() => toggleTemplate(tpl)} />
+                            <span className="text-[11px] text-gray-500">{tpl.is_active ? 'Aktywny' : 'Wylaczony'}</span>
                           </div>
                           <div className="flex gap-1">
                             <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => openEdit(tpl)}><Edit className="h-3.5 w-3.5" /></Button>
@@ -180,15 +260,15 @@ export default function NotificationsPage() {
 
             <Card className="rounded-2xl border-gray-100 shadow-sm mt-6">
               <CardContent className="p-5">
-                <h3 className="text-sm font-bold mb-2">Dostępne placeholdery</h3>
+                <h3 className="text-sm font-bold mb-2">Dostepne placeholdery</h3>
                 <div className="flex flex-wrap gap-2">
-                  {['{client_name}', '{date}', '{time}', '{address}', '{price}', '{services}', '{eta}'].map(p => (
+                  {PLACEHOLDERS.map(p => (
                     <code key={p} className="text-xs bg-gray-100 px-2 py-1 rounded-lg">{p}</code>
                   ))}
                 </div>
                 <p className="text-xs text-gray-400 mt-2">
-                  Aby podłączyć SMS: skonfiguruj SMSAPI.pl lub Twilio w ustawieniach.
-                  Aby podłączyć Email: skonfiguruj Resend lub SendGrid.
+                  Aby podlaczyc SMS: skonfiguruj SMSAPI.pl lub Twilio w ustawieniach.
+                  Email wysylany jest przez Resend (RESEND_API_KEY).
                 </p>
               </CardContent>
             </Card>
@@ -207,7 +287,7 @@ export default function NotificationsPage() {
                 {notifications.length === 0 ? (
                   <div className="text-center py-16 text-gray-400">
                     <Bell className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                    <p className="text-sm font-medium">Brak powiadomień</p>
+                    <p className="text-sm font-medium">Brak powiadomien</p>
                   </div>
                 ) : (
                   <motion.div variants={ANIM.container} initial="hidden" animate="show">
@@ -238,34 +318,65 @@ export default function NotificationsPage() {
           <DialogHeader><DialogTitle>{editingTemplate ? 'Edytuj szablon' : 'Nowy szablon'}</DialogTitle></DialogHeader>
           <form onSubmit={handleSave} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>Nazwa</Label><Input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
               <div className="space-y-2">
-                <Label>Kanał</Label>
-                <Select value={form.type} onValueChange={v => setForm({ ...form, type: (v ?? 'sms') as 'sms' | 'email' })}>
+                <Label>Nazwa</Label>
+                <Input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Kanal</Label>
+                <Select value={form.channel} onValueChange={v => setForm({ ...form, channel: (v ?? 'email') as 'email' | 'sms' | 'both' })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="sms">SMS</SelectItem>
                     <SelectItem value="email">Email</SelectItem>
+                    <SelectItem value="sms">SMS</SelectItem>
+                    <SelectItem value="both">Email + SMS</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
             <div className="space-y-2">
               <Label>Wyzwalacz</Label>
-              <Select value={form.trigger_event} onValueChange={v => setForm({ ...form, trigger_event: v ?? 'order_created' })}>
+              <Select value={form.trigger} onValueChange={v => setForm({ ...form, trigger: v ?? 'booking_created' })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="order_created">Nowe zlecenie</SelectItem>
-                  <SelectItem value="order_reminder">Przypomnienie (1 dzień przed)</SelectItem>
-                  <SelectItem value="order_in_progress">Pracownik w drodze</SelectItem>
-                  <SelectItem value="order_completed">Zlecenie ukończone</SelectItem>
+                  {TRIGGER_OPTIONS.map(o => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-            {form.type === 'email' && (
-              <div className="space-y-2"><Label>Temat emaila</Label><Input value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} /></div>
+            {(form.channel === 'email' || form.channel === 'both') && (
+              <div className="space-y-2">
+                <Label>Temat emaila</Label>
+                <Input value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} placeholder="np. Potwierdzenie wizyty {{date}}" />
+              </div>
             )}
-            <div className="space-y-2"><Label>Treść</Label><Textarea rows={4} required value={form.body} onChange={e => setForm({ ...form, body: e.target.value })} placeholder="Witaj {client_name}! ..." /></div>
+            <div className="space-y-2">
+              <Label>Tresc</Label>
+              <Textarea rows={4} required value={form.body} onChange={e => setForm({ ...form, body: e.target.value })} placeholder="Witaj {{client_name}}! ..." />
+              <div className="flex flex-wrap gap-1 mt-1">
+                {PLACEHOLDERS.map(p => (
+                  <button key={p} type="button" onClick={() => setForm(f => ({ ...f, body: f.body + p }))}
+                    className="text-[10px] bg-gray-100 hover:bg-blue-50 text-gray-500 hover:text-blue-600 px-1.5 py-0.5 rounded transition-colors">
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="flex items-center gap-1"><Clock className="h-3 w-3" />Wysylaj po</Label>
+                <Input type="time" value={form.send_after_time} onChange={e => setForm({ ...form, send_after_time: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label className="flex items-center gap-1"><Clock className="h-3 w-3" />Wysylaj przed</Label>
+                <Input type="time" value={form.send_before_time} onChange={e => setForm({ ...form, send_before_time: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: v })} />
+              <span className="text-sm text-gray-700">{form.is_active ? 'Aktywny' : 'Wylaczony'}</span>
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={() => setDialogOpen(false)}>Anuluj</Button>
               <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">{saving ? 'Zapisywanie...' : 'Zapisz'}</Button>

@@ -6,6 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
 
 export async function POST(request: NextRequest) {
   const supabase = getAdminClient();
@@ -41,6 +42,9 @@ export async function POST(request: NextRequest) {
       }));
       await supabase.from('order_photos').insert(photoRows);
     }
+
+    // Fire completion notification (fire-and-forget)
+    buildNotificationContext(order_id).then(ctx => fireNotification('order_completed', ctx)).catch(() => {});
 
     return NextResponse.json({ success: true, order_id, completed_at: updateData.completed_at });
   } catch (err: any) {

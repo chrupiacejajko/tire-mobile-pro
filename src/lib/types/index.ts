@@ -93,6 +93,7 @@ export interface Service {
   price: number;
   category: string;
   is_active: boolean;
+  form_template_id?: string | null;
 }
 
 // ---- Orders ----
@@ -203,6 +204,40 @@ export interface Subcontractor {
   notes: string | null;
   is_active: boolean;
   created_at: string;
+}
+
+// ---- Form Templates ----
+export type FormFieldType = 'text' | 'number' | 'boolean' | 'select' | 'multiselect' | 'photo' | 'date' | 'signature';
+
+export interface FormField {
+  id: string;
+  type: FormFieldType;
+  label: string;
+  required: boolean;
+  order: number;
+  options?: string[];
+  min?: number;
+  max?: number;
+}
+
+export interface FormTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  fields: FormField[];
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface FormSubmission {
+  id: string;
+  order_id: string;
+  template_id: string;
+  employee_id: string | null;
+  data: Record<string, any>;
+  submitted_at: string;
+  created_at: string;
+  template?: FormTemplate;
 }
 
 // ---- Dashboard Stats ----

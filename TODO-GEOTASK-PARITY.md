@@ -194,4 +194,4 @@ Status: 🔴 Brakuje | 🟡 Mamy uproszczone | 🟢 Mamy pełne
 ### Hasło do demo GeoTask:
 - URL: https://wulkanizacja.geotask.globema.pl
 - Login: admin
-- Hasło: Admin12345! (zmienione z 12345)
+- Hasło: Administacja12345! (zmienione z 12345)

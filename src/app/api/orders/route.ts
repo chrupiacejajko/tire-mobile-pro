@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { sendBookingConfirmationForOrder } from '@/lib/email';
+import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
 
 // GET /api/orders - List orders with optional filters
 export async function GET(request: NextRequest) {
@@ -189,6 +190,9 @@ export async function POST(request: NextRequest) {
       total_price: totalPrice,
       address: order.address,
     }).catch(() => {});
+
+    // ── Fire configurable notification templates (fire-and-forget) ────
+    buildNotificationContext(order.id).then(ctx => fireNotification('booking_created', ctx)).catch(() => {});
 
     return NextResponse.json({
       success: true,

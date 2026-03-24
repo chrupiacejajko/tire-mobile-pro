@@ -187,7 +187,7 @@ function StopCard({ stop, isLast }: { stop: Stop; isLast: boolean }) {
 
 // ── Route Panel ───────────────────────────────────────────────────────────────
 
-function RoutePanel({ route, onOptimize }: { route: EmployeeRoute; onOptimize: (id: string) => void }) {
+function RoutePanel({ route, onOptimize, onReoptimize, reoptimizing }: { route: EmployeeRoute; onOptimize: (id: string) => void; onReoptimize: (id: string) => void; reoptimizing?: boolean }) {
   const [expanded, setExpanded] = useState(true);
   const { score } = route;
 
@@ -263,6 +263,14 @@ function RoutePanel({ route, onOptimize }: { route: EmployeeRoute; onOptimize: (
             </button>
           )}
           <button
+            onClick={() => onReoptimize(route.employee_id)}
+            disabled={reoptimizing}
+            className="px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-medium border border-blue-200 transition-colors flex items-center gap-1 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${reoptimizing ? 'animate-spin' : ''}`} />
+            Przelicz trase
+          </button>
+          <button
             onClick={() => onOptimize(route.employee_id)}
             className="px-3 py-1.5 rounded-lg bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-medium border border-orange-200 transition-colors flex items-center gap-1"
           >
@@ -333,7 +341,7 @@ function DraggableUnassignedCard({ order }: { order: UnassignedOrder }) {
   );
 }
 
-function DroppableRoutePanel({ route, onOptimize }: { route: EmployeeRoute; onOptimize: (id: string) => void }) {
+function DroppableRoutePanel({ route, onOptimize, onReoptimize, reoptimizing }: { route: EmployeeRoute; onOptimize: (id: string) => void; onReoptimize: (id: string) => void; reoptimizing?: boolean }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `route-${route.employee_id}`,
     data: { type: 'route', employeeId: route.employee_id },
@@ -341,7 +349,7 @@ function DroppableRoutePanel({ route, onOptimize }: { route: EmployeeRoute; onOp
 
   return (
     <div ref={setNodeRef} className={cn(isOver && 'ring-2 ring-orange-400 ring-offset-2 rounded-2xl transition-all')}>
-      <RoutePanel route={route} onOptimize={onOptimize} />
+      <RoutePanel route={route} onOptimize={onOptimize} onReoptimize={onReoptimize} reoptimizing={reoptimizing} />
     </div>
   );
 }
@@ -475,6 +483,7 @@ export default function PlannerPage() {
   const [data, setData] = useState<PlannerData | null>(null);
   const [loading, setLoading] = useState(true);
   const [optimizing, setOptimizing] = useState<string | null>(null);
+  const [reoptimizingId, setReoptimizingId] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<UnassignedOrder | null>(null);
   const [inserting, setInserting] = useState(false);
   const [bufferEnabled, setBufferEnabled] = useState(false);
@@ -528,6 +537,20 @@ export default function PlannerPage() {
       if (res.ok) load(date);
     } finally {
       setOptimizing(null);
+    }
+  };
+
+  const handleReoptimize = async (employeeId: string) => {
+    setReoptimizingId(employeeId);
+    try {
+      const res = await fetch('/api/planner/reoptimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_id: employeeId, date }),
+      });
+      if (res.ok) load(date);
+    } finally {
+      setReoptimizingId(null);
     }
   };
 
@@ -749,6 +772,8 @@ export default function PlannerPage() {
                     key={route.employee_id}
                     route={route}
                     onOptimize={handleOptimize}
+                    onReoptimize={handleReoptimize}
+                    reoptimizing={reoptimizingId === route.employee_id}
                   />
                 ))}
               </div>

@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import {
   MapPin, Phone, CheckCircle, Navigation, Camera, ChevronDown,
   ChevronUp, Clock, Circle, Loader2, AlertCircle, Star, ArrowRight, Play,
-  Compass, Check,
+  Compass, Check, Type, Hash, ToggleLeft, CheckSquare, Calendar, PenTool,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
@@ -98,6 +98,282 @@ const STATUS_CONFIG = {
   cancelled:   { label: 'Anulowane', bg: 'bg-red-100',     text: 'text-red-600',     dot: 'bg-red-400' },
 };
 
+// ── Form Field Types ──────────────────────────────────────────────────────────
+
+interface FormField {
+  id: string;
+  type: 'text' | 'number' | 'boolean' | 'select' | 'multiselect' | 'photo' | 'date' | 'signature';
+  label: string;
+  required: boolean;
+  order: number;
+  options?: string[];
+  min?: number;
+  max?: number;
+}
+
+interface FormTemplateData {
+  id: string;
+  name: string;
+  fields: FormField[];
+}
+
+// ── Signature Canvas ──────────────────────────────────────────────────────────
+
+function SignatureCanvas({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (dataUrl: string) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawing = useRef(false);
+
+  const getPos = (e: React.TouchEvent | React.MouseEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    if ('touches' in e) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+    return { x: (e as React.MouseEvent).clientX - rect.left, y: (e as React.MouseEvent).clientY - rect.top };
+  };
+
+  const startDraw = (e: React.TouchEvent | React.MouseEvent) => {
+    e.preventDefault();
+    drawing.current = true;
+    const ctx = canvasRef.current?.getContext('2d');
+    if (!ctx) return;
+    const pos = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+  };
+
+  const draw = (e: React.TouchEvent | React.MouseEvent) => {
+    if (!drawing.current) return;
+    e.preventDefault();
+    const ctx = canvasRef.current?.getContext('2d');
+    if (!ctx) return;
+    const pos = getPos(e);
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+  };
+
+  const endDraw = () => {
+    drawing.current = false;
+    if (canvasRef.current) {
+      onChange(canvasRef.current.toDataURL());
+    }
+  };
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    onChange('');
+  };
+
+  return (
+    <div className="space-y-1">
+      <canvas
+        ref={canvasRef}
+        width={300}
+        height={120}
+        className="w-full border border-gray-300 rounded-xl bg-white touch-none"
+        onMouseDown={startDraw}
+        onMouseMove={draw}
+        onMouseUp={endDraw}
+        onMouseLeave={endDraw}
+        onTouchStart={startDraw}
+        onTouchMove={draw}
+        onTouchEnd={endDraw}
+      />
+      <button type="button" onClick={clearCanvas} className="text-xs text-gray-400 hover:text-red-500">
+        Wyczysc podpis
+      </button>
+    </div>
+  );
+}
+
+// ── Dynamic Form Renderer ─────────────────────────────────────────────────────
+
+function DynamicFormFields({
+  template,
+  formData,
+  onDataChange,
+  errors,
+}: {
+  template: FormTemplateData;
+  formData: Record<string, any>;
+  onDataChange: (fieldId: string, value: any) => void;
+  errors: Record<string, string>;
+}) {
+  const sortedFields = [...template.fields].sort((a, b) => a.order - b.order);
+  const photoFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const handlePhotoFile = (fieldId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      onDataChange(fieldId, ev.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-semibold text-orange-600 uppercase tracking-wider">{template.name}</p>
+      {sortedFields.map(field => {
+        const err = errors[field.id];
+        return (
+          <div key={field.id} className="space-y-1">
+            <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
+              {field.label}
+              {field.required && <span className="text-red-400 text-xs">*</span>}
+            </label>
+
+            {field.type === 'text' && (
+              <input
+                type="text"
+                value={formData[field.id] || ''}
+                onChange={e => onDataChange(field.id, e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-orange-400"
+              />
+            )}
+
+            {field.type === 'number' && (
+              <input
+                type="number"
+                value={formData[field.id] ?? ''}
+                min={field.min}
+                max={field.max}
+                step="any"
+                onChange={e => onDataChange(field.id, e.target.value === '' ? '' : Number(e.target.value))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-orange-400"
+                placeholder={field.min !== undefined && field.max !== undefined ? `${field.min} - ${field.max}` : ''}
+              />
+            )}
+
+            {field.type === 'boolean' && (
+              <button
+                type="button"
+                onClick={() => onDataChange(field.id, !formData[field.id])}
+                className={cn(
+                  'flex items-center gap-3 w-full p-2.5 rounded-xl border transition-colors',
+                  formData[field.id] ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-white'
+                )}
+              >
+                <div className={cn(
+                  'h-6 w-10 rounded-full transition-colors relative',
+                  formData[field.id] ? 'bg-emerald-500' : 'bg-gray-300'
+                )}>
+                  <div className={cn(
+                    'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform',
+                    formData[field.id] ? 'translate-x-4' : 'translate-x-0.5'
+                  )} />
+                </div>
+                <span className="text-sm text-gray-700">{formData[field.id] ? 'Tak' : 'Nie'}</span>
+              </button>
+            )}
+
+            {field.type === 'select' && (
+              <select
+                value={formData[field.id] || ''}
+                onChange={e => onDataChange(field.id, e.target.value)}
+                className="w-full p-2.5 rounded-xl border border-gray-200 text-sm bg-white"
+              >
+                <option value="">Wybierz...</option>
+                {(field.options || []).map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            )}
+
+            {field.type === 'multiselect' && (
+              <div className="space-y-1.5">
+                {(field.options || []).map(opt => {
+                  const selected = Array.isArray(formData[field.id]) && formData[field.id].includes(opt);
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => {
+                        const current: string[] = Array.isArray(formData[field.id]) ? formData[field.id] : [];
+                        const next = selected ? current.filter(v => v !== opt) : [...current, opt];
+                        onDataChange(field.id, next);
+                      }}
+                      className={cn(
+                        'flex items-center gap-2 w-full p-2 rounded-lg border text-sm transition-colors text-left',
+                        selected ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-700'
+                      )}
+                    >
+                      <div className={cn(
+                        'h-4 w-4 rounded border flex items-center justify-center flex-shrink-0',
+                        selected ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'
+                      )}>
+                        {selected && <Check className="h-3 w-3" />}
+                      </div>
+                      {opt}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {field.type === 'photo' && (
+              <div>
+                <input
+                  ref={el => { photoFileRefs.current[field.id] = el; }}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={e => handlePhotoFile(field.id, e)}
+                />
+                <button
+                  type="button"
+                  onClick={() => photoFileRefs.current[field.id]?.click()}
+                  className="w-full border-2 border-dashed border-gray-300 rounded-xl py-3 flex items-center justify-center gap-2 text-gray-400 hover:border-orange-300 hover:text-orange-400 transition-colors text-sm"
+                >
+                  <Camera className="h-5 w-5" />
+                  {formData[field.id] ? 'Zmien zdjecie' : 'Zrob zdjecie'}
+                </button>
+                {formData[field.id] && (
+                  <img src={formData[field.id]} alt="" className="h-20 w-20 mt-2 rounded-lg object-cover" />
+                )}
+              </div>
+            )}
+
+            {field.type === 'date' && (
+              <input
+                type="date"
+                value={formData[field.id] || ''}
+                onChange={e => onDataChange(field.id, e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-orange-400"
+              />
+            )}
+
+            {field.type === 'signature' && (
+              <SignatureCanvas
+                value={formData[field.id] || ''}
+                onChange={v => onDataChange(field.id, v)}
+              />
+            )}
+
+            {err && <p className="text-xs text-red-500">{err}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Complete Modal ─────────────────────────────────────────────────────────────
 
 function CompleteModal({
@@ -105,17 +381,82 @@ function CompleteModal({
   onConfirm,
   onClose,
   closureCodes,
+  employeeId,
 }: {
   task: Task;
   onConfirm: (notes: string, photos: string[], closureCodeId: string) => Promise<void>;
   onClose: () => void;
   closureCodes: ClosureCode[];
+  employeeId: string | null;
 }) {
   const [notes, setNotes] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [closureCode, setClosureCode] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Form templates state
+  const [formTemplates, setFormTemplates] = useState<FormTemplateData[]>([]);
+  const [formDataMap, setFormDataMap] = useState<Record<string, Record<string, any>>>({});
+  const [formErrors, setFormErrors] = useState<Record<string, Record<string, string>>>({});
+  const [formsLoading, setFormsLoading] = useState(true);
+
+  // Fetch form templates linked to this task's services
+  useEffect(() => {
+    const fetchFormTemplates = async () => {
+      setFormsLoading(true);
+      try {
+        const serviceIds = (task.services || [])
+          .map((s: any) => typeof s === 'string' ? null : s?.service_id)
+          .filter(Boolean);
+
+        if (serviceIds.length === 0) {
+          setFormsLoading(false);
+          return;
+        }
+
+        // Fetch services with their form_template_ids
+        const svcRes = await fetch(`/api/form-templates?all=true`);
+        const svcData = await svcRes.json();
+        const allTemplates: FormTemplateData[] = svcData.templates || [];
+
+        // Fetch which services are linked to which template
+        // We need to check the services table for form_template_id
+        const serviceCheckRes = await fetch('/api/form-templates/linked-services?' + serviceIds.map((id: string) => `service_ids=${id}`).join('&'));
+        let linkedTemplateIds: string[] = [];
+
+        if (serviceCheckRes.ok) {
+          const linkData = await serviceCheckRes.json();
+          linkedTemplateIds = linkData.template_ids || [];
+        } else {
+          // Fallback: fetch services directly to check form_template_id
+          // This handles case when linked-services endpoint doesn't exist
+          setFormsLoading(false);
+          return;
+        }
+
+        const templates = allTemplates.filter(t => linkedTemplateIds.includes(t.id));
+        setFormTemplates(templates);
+
+        // Initialize form data
+        const initData: Record<string, Record<string, any>> = {};
+        for (const tpl of templates) {
+          initData[tpl.id] = {};
+          for (const field of tpl.fields) {
+            if (field.type === 'boolean') initData[tpl.id][field.id] = false;
+            else if (field.type === 'multiselect') initData[tpl.id][field.id] = [];
+            else initData[tpl.id][field.id] = '';
+          }
+        }
+        setFormDataMap(initData);
+      } catch {
+        // Silently fail — forms are optional
+      }
+      setFormsLoading(false);
+    };
+
+    fetchFormTemplates();
+  }, [task.services]);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -128,19 +469,100 @@ function CompleteModal({
     });
   };
 
+  const updateFormData = (templateId: string, fieldId: string, value: any) => {
+    setFormDataMap(prev => ({
+      ...prev,
+      [templateId]: { ...prev[templateId], [fieldId]: value },
+    }));
+    // Clear error for this field
+    setFormErrors(prev => {
+      const tplErrors = { ...prev[templateId] };
+      delete tplErrors[fieldId];
+      return { ...prev, [templateId]: tplErrors };
+    });
+  };
+
+  const validateForms = (): boolean => {
+    const allErrors: Record<string, Record<string, string>> = {};
+    let hasErrors = false;
+
+    for (const tpl of formTemplates) {
+      const tplErrors: Record<string, string> = {};
+      const data = formDataMap[tpl.id] || {};
+
+      for (const field of tpl.fields) {
+        const value = data[field.id];
+        if (field.required) {
+          const isEmpty = value === undefined || value === null || value === '' ||
+            (Array.isArray(value) && value.length === 0);
+          if (isEmpty) {
+            tplErrors[field.id] = 'Pole wymagane';
+            hasErrors = true;
+          }
+        }
+      }
+      allErrors[tpl.id] = tplErrors;
+    }
+
+    setFormErrors(allErrors);
+    return !hasErrors;
+  };
+
   const handleConfirm = async () => {
     if (!closureCode) return;
+
+    // Validate forms first
+    if (formTemplates.length > 0 && !validateForms()) return;
+
     setLoading(true);
-    try { await onConfirm(notes, photos, closureCode); }
-    finally { setLoading(false); }
+    try {
+      // Submit form data for each template
+      for (const tpl of formTemplates) {
+        await fetch('/api/form-submissions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            order_id: task.id,
+            template_id: tpl.id,
+            employee_id: employeeId,
+            data: formDataMap[tpl.id] || {},
+          }),
+        });
+      }
+
+      // Then complete the order
+      await onConfirm(notes, photos, closureCode);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center p-0">
-      <div className="bg-white w-full max-w-lg rounded-t-3xl p-6 space-y-4">
+      <div className="bg-white w-full max-w-lg rounded-t-3xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto" />
         <h2 className="text-lg font-bold text-gray-900">Zakończ zlecenie</h2>
         <p className="text-sm text-gray-500">{task.client_name} — {task.address}</p>
+
+        {/* Form Templates */}
+        {formsLoading ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-5 w-5 text-orange-400 animate-spin" />
+            <span className="text-sm text-gray-400 ml-2">Ladowanie formularzy...</span>
+          </div>
+        ) : formTemplates.length > 0 && (
+          <div className="space-y-4 border-b border-gray-100 pb-4">
+            {formTemplates.map(tpl => (
+              <DynamicFormFields
+                key={tpl.id}
+                template={tpl}
+                formData={formDataMap[tpl.id] || {}}
+                onDataChange={(fieldId, value) => updateFormData(tpl.id, fieldId, value)}
+                errors={formErrors[tpl.id] || {}}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Notes */}
         <div>
@@ -850,6 +1272,7 @@ export default function MobilePage() {
           onConfirm={handleComplete}
           onClose={() => setCompleteTask(null)}
           closureCodes={closureCodes}
+          employeeId={employeeId}
         />
       )}
     </div>

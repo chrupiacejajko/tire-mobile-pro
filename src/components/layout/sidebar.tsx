@@ -29,6 +29,7 @@ import {
   Menu,
   X,
   Route,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
@@ -46,6 +47,7 @@ const mainMenu = [
   { name: 'Depozyty', href: '/deposits', icon: PackageCheck },
   { name: 'Podwykonawcy', href: '/subcontractors', icon: Handshake },
   { name: 'Usługi', href: '/services', icon: Wrench },
+  { name: 'Formularze', href: '/forms', icon: FileText },
   { name: 'Integracje', href: '/integrations', icon: Zap },
   { name: 'Raporty', href: '/reports', icon: BarChart3 },
 ];

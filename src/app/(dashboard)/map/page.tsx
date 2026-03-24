@@ -332,9 +332,25 @@ function OrderCard({ order, selected, onClick }: { order: MapOrder; selected: bo
 }
 
 /* ─── Vehicle Detail panel ───────────────────────────────────────────── */
-function VehicleDetailPanel({ vehicle, route, onClose }: { vehicle: VehicleData; route: EmployeeRoute | null; onClose: () => void }) {
+function VehicleDetailPanel({ vehicle, route, onClose, onRefreshRoutes }: { vehicle: VehicleData; route: EmployeeRoute | null; onClose: () => void; onRefreshRoutes?: () => void }) {
   const color = STATUS_COLORS[vehicle.status] || STATUS_COLORS.offline;
   const [showOrders, setShowOrders] = useState(false);
+  const [reoptimizing, setReoptimizing] = useState(false);
+
+  const handleReoptimize = async () => {
+    if (!route?.employee_id) return;
+    setReoptimizing(true);
+    try {
+      const res = await fetch('/api/planner/reoptimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_id: route.employee_id }),
+      });
+      if (res.ok && onRefreshRoutes) onRefreshRoutes();
+    } finally {
+      setReoptimizing(false);
+    }
+  };
 
   return (
     <motion.div
@@ -474,6 +490,17 @@ function VehicleDetailPanel({ vehicle, route, onClose }: { vehicle: VehicleData;
             onClick={() => window.open(`/gps-history?vehicle=${vehicle.id}`, '_blank')}>
             <History className="h-4 w-4 mr-2" />Historia trasy
           </Button>
+          {route && route.orders.length > 0 && (
+            <Button
+              variant="outline"
+              className="w-full rounded-xl text-blue-700 border-blue-200 hover:bg-blue-50"
+              onClick={handleReoptimize}
+              disabled={reoptimizing}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${reoptimizing ? 'animate-spin' : ''}`} />
+              {reoptimizing ? 'Przeliczam...' : 'Przelicz trase'}
+            </Button>
+          )}
         </div>
       </div>
     </motion.div>
@@ -1416,6 +1443,7 @@ export default function MapPage() {
               vehicle={selectedVehicle}
               route={selectedRoute}
               onClose={() => { setSelectedVehicle(null); setSelectedRoute(null); }}
+              onRefreshRoutes={fetchAll}
             />
           )}
           {selectedOrder && !selectedVehicle && (

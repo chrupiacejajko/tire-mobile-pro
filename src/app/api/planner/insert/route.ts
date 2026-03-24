@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { findBestInsertion, haversineKm } from '@/lib/geo';
+import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
 
 const DEFAULT_START_TIME = '08:00';
 const DEFAULT_DURATION_MIN = 45;
@@ -156,6 +157,9 @@ export async function POST(request: NextRequest) {
       console.error('[planner/insert] Update failed:', updateError);
       return NextResponse.json({ error: 'Failed to update order' }, { status: 500 });
     }
+
+    // Fire assignment notification (fire-and-forget)
+    buildNotificationContext(order_id).then(ctx => fireNotification('order_assigned', ctx)).catch(() => {});
 
     return NextResponse.json({
       success: true,
