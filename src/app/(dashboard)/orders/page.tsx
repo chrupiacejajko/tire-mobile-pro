@@ -15,10 +15,13 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Plus, Search, Clock, MapPin, ChevronRight, ClipboardList,
   CheckCircle2, Truck, XCircle, ArrowRight, Calendar, User, Phone,
-  Play, Square, Timer, Wrench, Navigation, Zap, Star,
+  Play, Square, Timer, Wrench, Navigation, Zap, Star, FileText,
+  Camera, PenTool, Save, Check,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { OrderStatus, OrderPriority, Client, Service } from '@/lib/types';
@@ -81,6 +84,367 @@ interface EmployeeSuggestion {
   day_route: { id: string; address: string; time: string; client: string | null }[];
   is_online: boolean;
   gps_status: string | null;
+}
+
+// ── Form types for order detail ──────────────────────────────────────────────
+
+interface TemplateField {
+  id: string;
+  name: string;
+  field_type: string;
+  is_required: boolean;
+  sort_order: number;
+  options?: string[] | null;
+}
+
+interface FormSubmission {
+  id: string;
+  order_id: string;
+  template_id: string;
+  data: Record<string, any>;
+  submitted_at: string;
+  template: { id: string; name: string; description: string | null };
+  template_fields: TemplateField[];
+}
+
+interface LinkedTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  fields: TemplateField[];
+}
+
+// ── OrderFormsSection ────────────────────────────────────────────────────────
+
+function OrderFormsSection({ order, services }: { order: OrderRow; services: Service[] }) {
+  const [templates, setTemplates] = useState<LinkedTemplate[]>([]);
+  const [submissions, setSubmissions] = useState<FormSubmission[]>([]);
+  const [formData, setFormData] = useState<Record<string, Record<string, any>>>({});
+  const [savingTemplate, setSavingTemplate] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchFormsData = useCallback(async () => {
+    setLoading(true);
+    // Get service IDs from order
+    const serviceIds = (order.services || []).map(s => s.service_id).filter(Boolean);
+    if (serviceIds.length === 0) { setLoading(false); return; }
+
+    // Fetch linked template IDs
+    const params = serviceIds.map(id => `service_ids=${id}`).join('&');
+    const linkedRes = await fetch(`/api/form-templates/linked-services?${params}`);
+    const linkedData = await linkedRes.json();
+    const templateIds: string[] = linkedData.template_ids || [];
+
+    if (templateIds.length === 0) { setTemplates([]); setLoading(false); return; }
+
+    // Fetch full templates with fields
+    const tplRes = await fetch('/api/form-templates?all=true');
+    const tplData = await tplRes.json();
+    const allTemplates: LinkedTemplate[] = (tplData.templates || []).filter(
+      (t: any) => templateIds.includes(t.id) && t.is_active
+    );
+    setTemplates(allTemplates);
+
+    // Fetch existing submissions for this order
+    const subRes = await fetch(`/api/form-submissions?order_id=${order.id}`);
+    const subData = await subRes.json();
+    setSubmissions(subData.submissions || []);
+    setLoading(false);
+  }, [order.id, order.services]);
+
+  useEffect(() => { fetchFormsData(); }, [fetchFormsData]);
+
+  const getSubmission = (templateId: string) =>
+    submissions.find(s => s.template_id === templateId);
+
+  const getFormValue = (templateId: string, fieldId: string) =>
+    formData[templateId]?.[fieldId];
+
+  const setFormValue = (templateId: string, fieldId: string, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      [templateId]: { ...prev[templateId], [fieldId]: value },
+    }));
+  };
+
+  const handleSubmitForm = async (templateId: string) => {
+    setSavingTemplate(templateId);
+    const data = formData[templateId] || {};
+    await fetch('/api/form-submissions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_id: order.id, template_id: templateId, data }),
+    });
+    await fetchFormsData();
+    setSavingTemplate(null);
+  };
+
+  if (loading) return null;
+  if (templates.length === 0) return null;
+
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1">
+        <FileText className="h-3 w-3" /> Formularze
+      </p>
+      <div className="space-y-3">
+        {templates.map(tpl => {
+          const existing = getSubmission(tpl.id);
+          if (existing) {
+            // Show filled form (readonly)
+            return (
+              <div key={tpl.id} className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                  <p className="text-sm font-semibold text-emerald-800">{tpl.name}</p>
+                </div>
+                <div className="space-y-1.5">
+                  {tpl.fields.map(field => {
+                    const val = existing.data[field.id];
+                    let display = '';
+                    if (val === undefined || val === null || val === '') {
+                      display = '—';
+                    } else if (typeof val === 'boolean') {
+                      display = val ? 'Tak' : 'Nie';
+                    } else if (Array.isArray(val)) {
+                      display = val.join(', ');
+                    } else {
+                      display = String(val);
+                    }
+                    return (
+                      <div key={field.id} className="flex justify-between text-xs">
+                        <span className="text-gray-600">{field.name}</span>
+                        <span className="font-medium text-gray-800">{display}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-gray-400">
+                  Wypełniony {new Date(existing.submitted_at).toLocaleString('pl')}
+                </p>
+              </div>
+            );
+          }
+
+          // Show form to fill
+          return (
+            <div key={tpl.id} className="rounded-xl border border-gray-200 p-3 space-y-3">
+              <p className="text-sm font-semibold text-gray-800">{tpl.name}</p>
+              {tpl.description && <p className="text-xs text-gray-500">{tpl.description}</p>}
+              <div className="space-y-2.5">
+                {tpl.fields.map(field => (
+                  <FormFieldInput
+                    key={field.id}
+                    field={field}
+                    value={getFormValue(tpl.id, field.id)}
+                    onChange={(val) => setFormValue(tpl.id, field.id, val)}
+                  />
+                ))}
+              </div>
+              <Button
+                size="sm"
+                className="w-full rounded-xl h-8 text-xs bg-orange-500 hover:bg-orange-600 gap-1.5"
+                disabled={savingTemplate === tpl.id}
+                onClick={() => handleSubmitForm(tpl.id)}
+              >
+                <Save className="h-3 w-3" />
+                {savingTemplate === tpl.id ? 'Zapisywanie...' : 'Zapisz formularz'}
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── FormFieldInput ───────────────────────────────────────────────────────────
+
+function FormFieldInput({
+  field,
+  value,
+  onChange,
+}: {
+  field: TemplateField;
+  value: any;
+  onChange: (val: any) => void;
+}) {
+  const label = (
+    <Label className="text-xs">
+      {field.name}
+      {field.is_required && <span className="text-red-500 ml-0.5">*</span>}
+    </Label>
+  );
+
+  switch (field.field_type) {
+    case 'text':
+      return (
+        <div className="space-y-1">
+          {label}
+          <Input
+            value={value || ''}
+            onChange={e => onChange(e.target.value)}
+            placeholder={field.name}
+            className="h-8 text-sm"
+          />
+        </div>
+      );
+    case 'number':
+      return (
+        <div className="space-y-1">
+          {label}
+          <Input
+            type="number"
+            value={value ?? ''}
+            onChange={e => onChange(e.target.value ? Number(e.target.value) : '')}
+            placeholder={field.name}
+            className="h-8 text-sm"
+          />
+        </div>
+      );
+    case 'boolean':
+      return (
+        <div className="flex items-center justify-between">
+          {label}
+          <Switch checked={!!value} onCheckedChange={onChange} />
+        </div>
+      );
+    case 'select':
+      return (
+        <div className="space-y-1">
+          {label}
+          <Select value={value || ''} onValueChange={onChange}>
+            <SelectTrigger className="h-8 text-sm">
+              <SelectValue placeholder="Wybierz..." />
+            </SelectTrigger>
+            <SelectContent>
+              {(field.options || []).map(opt => (
+                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    case 'multiselect':
+      return (
+        <div className="space-y-1">
+          {label}
+          <div className="flex flex-wrap gap-1.5">
+            {(field.options || []).map(opt => {
+              const checked = Array.isArray(value) && value.includes(opt);
+              return (
+                <label key={opt} className="flex items-center gap-1.5 text-xs">
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={(v) => {
+                      const arr = Array.isArray(value) ? [...value] : [];
+                      if (v) arr.push(opt);
+                      else {
+                        const idx = arr.indexOf(opt);
+                        if (idx >= 0) arr.splice(idx, 1);
+                      }
+                      onChange(arr);
+                    }}
+                  />
+                  {opt}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      );
+    case 'date':
+      return (
+        <div className="space-y-1">
+          {label}
+          <Input
+            type="date"
+            value={value || ''}
+            onChange={e => onChange(e.target.value)}
+            className="h-8 text-sm"
+          />
+        </div>
+      );
+    case 'datetime':
+      return (
+        <div className="space-y-1">
+          {label}
+          <Input
+            type="datetime-local"
+            value={value || ''}
+            onChange={e => onChange(e.target.value)}
+            className="h-8 text-sm"
+          />
+        </div>
+      );
+    case 'time':
+      return (
+        <div className="space-y-1">
+          {label}
+          <Input
+            type="time"
+            value={value || ''}
+            onChange={e => onChange(e.target.value)}
+            className="h-8 text-sm"
+          />
+        </div>
+      );
+    case 'photo':
+      return (
+        <div className="space-y-1">
+          {label}
+          <Button type="button" variant="outline" size="sm" className="h-8 text-xs gap-1.5 w-full">
+            <Camera className="h-3 w-3" /> Dodaj zdjęcie
+          </Button>
+        </div>
+      );
+    case 'signature':
+      return (
+        <div className="space-y-1">
+          {label}
+          <Button type="button" variant="outline" size="sm" className="h-8 text-xs gap-1.5 w-full">
+            <PenTool className="h-3 w-3" /> Podpis
+          </Button>
+        </div>
+      );
+    case 'location':
+      return (
+        <div className="space-y-1">
+          {label}
+          {value ? (
+            <p className="text-xs text-gray-600">{typeof value === 'object' ? `${value.lat}, ${value.lng}` : String(value)}</p>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5 w-full"
+              onClick={() => {
+                if (navigator.geolocation) {
+                  navigator.geolocation.getCurrentPosition(
+                    pos => onChange({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                    () => onChange(null)
+                  );
+                }
+              }}
+            >
+              <MapPin className="h-3 w-3" /> Pobierz lokalizację
+            </Button>
+          )}
+        </div>
+      );
+    default:
+      return (
+        <div className="space-y-1">
+          {label}
+          <Input
+            value={value || ''}
+            onChange={e => onChange(e.target.value)}
+            className="h-8 text-sm"
+          />
+        </div>
+      );
+  }
 }
 
 export default function OrdersPage() {
@@ -642,6 +1006,9 @@ export default function OrdersPage() {
                           </div>
                         </div>
                       )}
+
+                      {/* Forms Section */}
+                      <OrderFormsSection order={selectedOrder} services={services} />
 
                       {/* Status Actions */}
                       <div className="pt-2 space-y-2">

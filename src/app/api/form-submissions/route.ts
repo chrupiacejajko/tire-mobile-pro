@@ -1,17 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 
-interface FormField {
-  id: string;
-  type: string;
-  label: string;
-  required: boolean;
-  order: number;
-  options?: string[];
-  min?: number;
-  max?: number;
-}
-
 // GET /api/form-submissions?order_id=X — get all submissions for an order
 export async function GET(request: NextRequest) {
   const supabase = getAdminClient();
@@ -22,12 +11,28 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabase
     .from('form_submissions')
-    .select('*, template:form_templates(name, fields)')
+    .select('*, template:form_templates(id, name, description)')
     .eq('order_id', orderId)
     .order('submitted_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-  return NextResponse.json({ submissions: data });
+
+  // For each submission, also fetch the template's fields
+  const submissions = [];
+  for (const sub of data || []) {
+    const { data: fields } = await supabase
+      .from('form_template_fields')
+      .select('*')
+      .eq('template_id', sub.template_id)
+      .order('sort_order');
+
+    submissions.push({
+      ...sub,
+      template_fields: fields || [],
+    });
+  }
+
+  return NextResponse.json({ submissions });
 }
 
 // POST /api/form-submissions — submit a filled form
@@ -43,27 +48,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'data must be an object' }, { status: 400 });
     }
 
-    // Fetch the template to validate against
-    const { data: template, error: tplErr } = await supabase
-      .from('form_templates')
-      .select('fields')
-      .eq('id', template_id)
-      .single();
+    // Fetch the template fields for validation
+    const { data: fields, error: fieldsErr } = await supabase
+      .from('form_template_fields')
+      .select('*')
+      .eq('template_id', template_id)
+      .order('sort_order');
 
-    if (tplErr || !template) {
-      return NextResponse.json({ error: 'Template not found' }, { status: 404 });
+    if (fieldsErr || !fields || fields.length === 0) {
+      return NextResponse.json({ error: 'Szablon nie znaleziony lub brak pól' }, { status: 404 });
     }
 
-    const fields = template.fields as FormField[];
     const errors: string[] = [];
 
     for (const field of fields) {
       const value = formData[field.id];
 
       // Check required
-      if (field.required) {
+      if (field.is_required) {
         if (value === undefined || value === null || value === '') {
-          errors.push(`Pole "${field.label}" jest wymagane`);
+          errors.push(`Pole "${field.name}" jest wymagane`);
           continue;
         }
       }
@@ -72,48 +76,42 @@ export async function POST(request: NextRequest) {
       if (value === undefined || value === null || value === '') continue;
 
       // Type-specific validation
-      switch (field.type) {
+      switch (field.field_type) {
         case 'number': {
           const num = Number(value);
           if (isNaN(num)) {
-            errors.push(`Pole "${field.label}" musi być liczbą`);
-          } else {
-            if (field.min !== undefined && num < field.min) {
-              errors.push(`Pole "${field.label}" nie może być mniejsze niż ${field.min}`);
-            }
-            if (field.max !== undefined && num > field.max) {
-              errors.push(`Pole "${field.label}" nie może być większe niż ${field.max}`);
-            }
+            errors.push(`Pole "${field.name}" musi być liczbą`);
           }
           break;
         }
         case 'boolean':
           if (typeof value !== 'boolean') {
-            errors.push(`Pole "${field.label}" musi być wartością tak/nie`);
+            errors.push(`Pole "${field.name}" musi być wartością tak/nie`);
           }
           break;
         case 'select':
-          if (field.options && !field.options.includes(value)) {
-            errors.push(`Pole "${field.label}": nieprawidłowa opcja "${value}"`);
+          if (field.options && Array.isArray(field.options) && !field.options.includes(value)) {
+            errors.push(`Pole "${field.name}": nieprawidłowa opcja "${value}"`);
           }
           break;
         case 'multiselect':
           if (!Array.isArray(value)) {
-            errors.push(`Pole "${field.label}" musi być tablicą`);
-          } else if (field.options) {
+            errors.push(`Pole "${field.name}" musi być tablicą`);
+          } else if (field.options && Array.isArray(field.options)) {
             for (const v of value) {
               if (!field.options.includes(v)) {
-                errors.push(`Pole "${field.label}": nieprawidłowa opcja "${v}"`);
+                errors.push(`Pole "${field.name}": nieprawidłowa opcja "${v}"`);
               }
             }
           }
           break;
         case 'date':
+        case 'datetime':
           if (typeof value === 'string' && isNaN(Date.parse(value))) {
-            errors.push(`Pole "${field.label}" musi być prawidłową datą`);
+            errors.push(`Pole "${field.name}" musi być prawidłową datą`);
           }
           break;
-        // text, photo, signature — any string is valid
+        // text, time, photo, signature, location — any string is valid
       }
     }
 

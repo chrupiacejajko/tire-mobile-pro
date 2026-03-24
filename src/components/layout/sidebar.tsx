@@ -31,6 +31,7 @@ import {
   Route,
   FileText,
   CalendarDays,
+  Upload,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
@@ -136,6 +137,37 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               <span>{region.name}</span>
             </Link>
           ))}
+        </nav>
+      </div>
+
+      {/* Narzędzia */}
+      <div className="px-3 pt-5">
+        <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Narzędzia</p>
+        <nav className="space-y-0.5">
+          {[
+            { name: 'Import CSV', href: '/import', icon: Upload },
+          ].map((item) => {
+            const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+            return (
+              <Link key={item.href} href={item.href} className="relative block" onClick={onNavigate}>
+                <motion.div
+                  className={cn(
+                    'flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors relative',
+                    isActive ? 'text-orange-700' : 'text-gray-600 hover:text-gray-900'
+                  )}
+                  whileHover={{ x: 2 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                >
+                  {isActive && (
+                    <motion.div className="absolute inset-0 rounded-xl bg-orange-50" layoutId="activeNav"
+                      transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
+                  )}
+                  <item.icon className={cn('h-[18px] w-[18px] relative z-10', isActive ? 'text-orange-600' : 'text-gray-400')} />
+                  <span className="relative z-10">{item.name}</span>
+                </motion.div>
+              </Link>
+            );
+          })}
         </nav>
       </div>
 

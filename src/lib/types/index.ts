@@ -240,6 +240,81 @@ export interface FormSubmission {
   template?: FormTemplate;
 }
 
+// ---- Warehouses ----
+export interface Warehouse {
+  id: string;
+  name: string;
+  address: string | null;
+  is_active: boolean;
+  created_at: string;
+  equipment_count?: number;
+  material_stock_count?: number;
+}
+
+export type EquipmentStatus = 'available' | 'in_use' | 'maintenance' | 'retired';
+
+export interface EquipmentType {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+}
+
+export interface Equipment {
+  id: string;
+  serial_number: string;
+  type_id: string;
+  warehouse_id: string | null;
+  employee_id: string | null;
+  status: EquipmentStatus;
+  notes: string | null;
+  created_at: string;
+  // Relations
+  type?: EquipmentType;
+  warehouse?: { id: string; name: string } | null;
+  employee?: { id: string; user: { full_name: string } | null } | null;
+}
+
+export interface MaterialType {
+  id: string;
+  name: string;
+  unit: string;
+  created_at: string;
+}
+
+export interface MaterialStock {
+  id: string;
+  material_type_id: string;
+  warehouse_id: string | null;
+  employee_id: string | null;
+  quantity: number;
+  created_at: string;
+  // Relations
+  material_type?: MaterialType;
+  warehouse?: { id: string; name: string } | null;
+  employee?: { id: string; user: { full_name: string } | null } | null;
+}
+
+export interface MaterialMovement {
+  id: string;
+  material_type_id: string;
+  from_warehouse_id: string | null;
+  from_employee_id: string | null;
+  to_warehouse_id: string | null;
+  to_employee_id: string | null;
+  quantity: number;
+  movement_type: 'receive' | 'consume' | 'transfer';
+  order_id: string | null;
+  notes: string | null;
+  created_at: string;
+  // Relations
+  material_type?: MaterialType;
+  from_warehouse?: { id: string; name: string } | null;
+  from_employee?: { id: string; user: { full_name: string } | null } | null;
+  to_warehouse?: { id: string; name: string } | null;
+  to_employee?: { id: string; user: { full_name: string } | null } | null;
+}
+
 // ---- Dashboard Stats ----
 export interface DashboardStats {
   todayOrders: number;

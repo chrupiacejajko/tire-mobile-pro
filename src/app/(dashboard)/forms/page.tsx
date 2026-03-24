@@ -20,20 +20,23 @@ import { Switch } from '@/components/ui/switch';
 import {
   Plus, ClipboardList, Edit, Trash2, Type, Hash, ToggleLeft,
   ChevronDown, CheckSquare, Camera, Calendar, PenTool, ArrowUp, ArrowDown, X, Link2, Unlink,
+  Clock, MapPin,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+type FieldType = 'text' | 'number' | 'boolean' | 'select' | 'multiselect' | 'date' | 'datetime' | 'time' | 'photo' | 'signature' | 'location';
+
 interface FormField {
   id: string;
-  type: 'text' | 'number' | 'boolean' | 'select' | 'multiselect' | 'photo' | 'date' | 'signature';
-  label: string;
-  required: boolean;
-  order: number;
-  options?: string[];
-  min?: number;
-  max?: number;
+  name: string;
+  field_type: FieldType;
+  is_required: boolean;
+  sort_order: number;
+  options?: string[] | null;
+  validation_regex?: string | null;
+  category?: string | null;
 }
 
 interface FormTemplate {
@@ -58,24 +61,27 @@ const ANIM = {
   item: { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0, transition: { duration: 0.3 } } },
 };
 
-const FIELD_TYPES: { value: FormField['type']; label: string; icon: React.ElementType }[] = [
+const FIELD_TYPES: { value: FieldType; label: string; icon: React.ElementType }[] = [
   { value: 'text', label: 'Tekst', icon: Type },
   { value: 'number', label: 'Liczba', icon: Hash },
   { value: 'boolean', label: 'Tak/Nie', icon: ToggleLeft },
   { value: 'select', label: 'Lista wyboru', icon: ChevronDown },
-  { value: 'multiselect', label: 'Wielokrotny wybór', icon: CheckSquare },
-  { value: 'photo', label: 'Zdjęcie', icon: Camera },
+  { value: 'multiselect', label: 'Lista wielokrotnego wyboru', icon: CheckSquare },
   { value: 'date', label: 'Data', icon: Calendar },
+  { value: 'datetime', label: 'Data i godzina', icon: Calendar },
+  { value: 'time', label: 'Godzina', icon: Clock },
+  { value: 'photo', label: 'Zdjęcie', icon: Camera },
   { value: 'signature', label: 'Podpis', icon: PenTool },
+  { value: 'location', label: 'Lokalizacja', icon: MapPin },
 ];
 
-function getFieldIcon(type: FormField['type']) {
+function getFieldIcon(type: FieldType) {
   const cfg = FIELD_TYPES.find(t => t.value === type);
   if (!cfg) return Type;
   return cfg.icon;
 }
 
-function getFieldLabel(type: FormField['type']) {
+function getFieldLabel(type: FieldType) {
   return FIELD_TYPES.find(t => t.value === type)?.label ?? type;
 }
 
@@ -102,21 +108,16 @@ function FieldRow({
   onMove: (dir: -1 | 1) => void;
   onDelete: () => void;
 }) {
-  const Icon = getFieldIcon(field.type);
-  const needsOptions = field.type === 'select' || field.type === 'multiselect';
-  const isNumber = field.type === 'number';
+  const Icon = getFieldIcon(field.field_type);
+  const needsOptions = field.field_type === 'select' || field.field_type === 'multiselect';
   const [optionInput, setOptionInput] = useState('');
+  const [optionsText, setOptionsText] = useState(
+    (field.options || []).join('\n')
+  );
 
-  const addOption = () => {
-    const val = optionInput.trim();
-    if (!val) return;
-    const opts = [...(field.options || []), val];
-    onChange({ ...field, options: opts });
-    setOptionInput('');
-  };
-
-  const removeOption = (i: number) => {
-    const opts = (field.options || []).filter((_, idx) => idx !== i);
+  const updateOptionsFromText = (text: string) => {
+    setOptionsText(text);
+    const opts = text.split('\n').map(s => s.trim()).filter(Boolean);
     onChange({ ...field, options: opts });
   };
 
@@ -128,13 +129,13 @@ function FieldRow({
         </div>
         <div className="flex-1 min-w-0">
           <Input
-            value={field.label}
-            onChange={e => onChange({ ...field, label: e.target.value })}
+            value={field.name}
+            onChange={e => onChange({ ...field, name: e.target.value })}
             placeholder="Nazwa pola"
             className="h-8 text-sm font-medium"
           />
         </div>
-        <Badge variant="outline" className="text-[10px] flex-shrink-0">{getFieldLabel(field.type)}</Badge>
+        <Badge variant="outline" className="text-[10px] flex-shrink-0">{getFieldLabel(field.field_type)}</Badge>
         <div className="flex items-center gap-1 flex-shrink-0">
           <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => onMove(-1)} disabled={index === 0}>
             <ArrowUp className="h-3.5 w-3.5" />
@@ -151,63 +152,23 @@ function FieldRow({
       <div className="flex items-center gap-4">
         <label className="flex items-center gap-2 text-xs text-gray-600">
           <Checkbox
-            checked={field.required}
-            onCheckedChange={(v) => onChange({ ...field, required: !!v })}
+            checked={field.is_required}
+            onCheckedChange={(v) => onChange({ ...field, is_required: !!v })}
           />
           Wymagane
         </label>
       </div>
 
-      {isNumber && (
-        <div className="flex gap-3">
-          <div className="flex-1 space-y-1">
-            <Label className="text-xs">Min</Label>
-            <Input
-              type="number"
-              value={field.min ?? ''}
-              onChange={e => onChange({ ...field, min: e.target.value ? Number(e.target.value) : undefined })}
-              className="h-8 text-sm"
-              placeholder="np. 0"
-            />
-          </div>
-          <div className="flex-1 space-y-1">
-            <Label className="text-xs">Max</Label>
-            <Input
-              type="number"
-              value={field.max ?? ''}
-              onChange={e => onChange({ ...field, max: e.target.value ? Number(e.target.value) : undefined })}
-              className="h-8 text-sm"
-              placeholder="np. 10"
-            />
-          </div>
-        </div>
-      )}
-
       {needsOptions && (
         <div className="space-y-2">
-          <Label className="text-xs">Opcje</Label>
-          <div className="flex flex-wrap gap-1.5">
-            {(field.options || []).map((opt, i) => (
-              <span key={i} className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-lg">
-                {opt}
-                <button type="button" onClick={() => removeOption(i)} className="text-gray-400 hover:text-red-500">
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <Input
-              value={optionInput}
-              onChange={e => setOptionInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addOption(); } }}
-              placeholder="Dodaj opcję..."
-              className="h-8 text-sm flex-1"
-            />
-            <Button type="button" variant="outline" size="sm" className="h-8" onClick={addOption}>
-              <Plus className="h-3 w-3" />
-            </Button>
-          </div>
+          <Label className="text-xs">Opcje (jedna na linię)</Label>
+          <Textarea
+            value={optionsText}
+            onChange={e => updateOptionsFromText(e.target.value)}
+            placeholder="Opcja 1&#10;Opcja 2&#10;Opcja 3"
+            rows={4}
+            className="text-sm"
+          />
         </div>
       )}
     </div>
@@ -308,15 +269,13 @@ export default function FormsPage() {
   const [addFieldOpen, setAddFieldOpen] = useState(false);
   const [linkDialogTemplate, setLinkDialogTemplate] = useState<FormTemplate | null>(null);
 
-  const supabase = createClient();
-
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [tplRes, svcRes] = await Promise.all([
-      supabase.from('form_templates').select('*').order('name'),
-      supabase.from('services').select('id, name, form_template_id'),
+      fetch('/api/form-templates?all=true').then(r => r.json()),
+      createClient().from('services').select('id, name, form_template_id'),
     ]);
-    if (tplRes.data) setTemplates(tplRes.data as FormTemplate[]);
+    if (tplRes.templates) setTemplates(tplRes.templates);
     if (svcRes.data) setServices(svcRes.data as ServiceRow[]);
     setLoading(false);
   }, []);
@@ -333,7 +292,7 @@ export default function FormsPage() {
   const openEdit = (t: FormTemplate) => {
     setName(t.name);
     setDescription(t.description || '');
-    setFields([...t.fields]);
+    setFields(t.fields.map(f => ({ ...f })));
     setEditingTemplate(t);
     setDialogOpen(true);
   };
@@ -343,7 +302,16 @@ export default function FormsPage() {
     if (!name.trim() || fields.length === 0) return;
     setSaving(true);
 
-    const orderedFields = fields.map((f, i) => ({ ...f, order: i + 1 }));
+    const orderedFields = fields.map((f, i) => ({
+      name: f.name,
+      field_type: f.field_type,
+      is_required: f.is_required,
+      sort_order: i,
+      options: f.options || null,
+      validation_regex: f.validation_regex || null,
+      category: f.category || null,
+    }));
+
     const payload = { name: name.trim(), description: description.trim() || null, fields: orderedFields };
 
     if (editingTemplate) {
@@ -367,7 +335,7 @@ export default function FormsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('form_templates').delete().eq('id', id);
+    await fetch(`/api/form-templates?id=${id}`, { method: 'DELETE' });
     fetchData();
   };
 
@@ -380,13 +348,13 @@ export default function FormsPage() {
     fetchData();
   };
 
-  const addField = (type: FormField['type']) => {
+  const addField = (type: FieldType) => {
     const newField: FormField = {
       id: nextFieldId(),
-      type,
-      label: '',
-      required: false,
-      order: fields.length + 1,
+      name: '',
+      field_type: type,
+      is_required: false,
+      sort_order: fields.length,
     };
     if (type === 'select' || type === 'multiselect') {
       newField.options = [];
@@ -465,10 +433,10 @@ export default function FormsPage() {
                       {/* Field type pills */}
                       <div className="flex flex-wrap gap-1 mb-3">
                         {tpl.fields.slice(0, 5).map(f => {
-                          const Icon = getFieldIcon(f.type);
+                          const Icon = getFieldIcon(f.field_type);
                           return (
                             <span key={f.id} className="inline-flex items-center gap-1 text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-                              <Icon className="h-2.5 w-2.5" /> {f.label || f.type}
+                              <Icon className="h-2.5 w-2.5" /> {f.name || f.field_type}
                             </span>
                           );
                         })}
