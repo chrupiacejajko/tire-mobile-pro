@@ -10,10 +10,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { haversineKm, etaMinutes, totalRouteKm } from '@/lib/geo';
+import { checkAuth } from '@/lib/api/auth-guard';
 import { buildSchedule, scoreRoute, formatTime, parseTime } from '@/lib/planner';
 import type { OrderInput } from '@/lib/planner';
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
 
   try {

@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { getRouteInfo } from '@/lib/here-routing';
+import { checkAuth } from '@/lib/api/auth-guard';
 import {
   buildSchedule,
   buildGoogleMapsUrlDriving,
@@ -23,6 +24,8 @@ import {
 } from '@/lib/planner';
 
 export async function GET(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
   const { searchParams } = new URL(request.url);
   const date = searchParams.get('date') || new Date().toISOString().split('T')[0];

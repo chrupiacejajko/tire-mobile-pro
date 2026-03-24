@@ -3,18 +3,44 @@
  * Body: { order_id, notes?, photos?: string[] (base64 or URLs), closure_code_id?, closure_notes? }
  *
  * Marks order as completed, saves notes, closure code, and optional photo URLs.
+ *
+ * Auth: worker JWT — verifies the order belongs to the calling worker.
+ *       Admin may complete any order.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'worker']);
+  if (!auth.ok) return auth.response;
+
   const supabase = getAdminClient();
   try {
     const body = await request.json();
     const { order_id, notes, photos, closure_code_id, closure_notes } = body;
 
     if (!order_id) return NextResponse.json({ error: 'order_id required' }, { status: 400 });
+
+    // Ownership check: worker can only complete orders assigned to them
+    if (auth.role === 'worker') {
+      const { data: order } = await supabase
+        .from('orders')
+        .select('employee_id')
+        .eq('id', order_id)
+        .maybeSingle();
+
+      if (!order) {
+        return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+      }
+      if (order.employee_id !== auth.employeeId) {
+        return NextResponse.json(
+          { error: 'Forbidden', code: 'NOT_YOUR_ORDER' },
+          { status: 403 }
+        );
+      }
+    }
 
     // Update order status
     const updateData: Record<string, any> = {

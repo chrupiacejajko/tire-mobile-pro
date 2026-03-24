@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { findBestInsertion, haversineKm } from '@/lib/geo';
+import { checkAuth } from '@/lib/api/auth-guard';
 import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
 
 const DEFAULT_START_TIME = '08:00';
@@ -31,6 +32,8 @@ function formatTime(minutes: number): string {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
 
   try {

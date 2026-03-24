@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { getRouteInfo } from '@/lib/here-routing';
+import { checkAuth } from '@/lib/api/auth-guard';
 import {
   buildSchedule,
   scoreRoute,
@@ -190,6 +191,8 @@ async function optimizeSequence(
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
   try {
     const body = await request.json();

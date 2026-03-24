@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { haversineKm } from '@/lib/geo';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 /**
  * GET /api/dispatcher/workers?date=2025-01-01&address=...&city=...
@@ -10,6 +11,9 @@ import { haversineKm } from '@/lib/geo';
  * Does NOT require an order_id (unlike suggest-insert).
  */
 export async function GET(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
+
   const supabase = getAdminClient();
   const { searchParams } = new URL(request.url);
   const date = searchParams.get('date') || new Date().toISOString().split('T')[0];

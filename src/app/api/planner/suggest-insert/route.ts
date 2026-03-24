@@ -11,8 +11,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { autoAssignWorker } from '@/lib/auto-assign';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
 
   try {

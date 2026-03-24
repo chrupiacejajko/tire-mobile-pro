@@ -5,6 +5,7 @@ import {
   buildNotificationContext,
   fireNotification,
 } from '@/lib/notification-dispatcher';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 const TIME_WINDOW_RANGES: Record<string, { start: string; end: string }> = {
   morning: { start: '08:00', end: '12:00' },
@@ -13,6 +14,8 @@ const TIME_WINDOW_RANGES: Record<string, { start: string; end: string }> = {
 };
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
 
   try {

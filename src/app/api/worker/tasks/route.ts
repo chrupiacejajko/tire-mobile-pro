@@ -3,19 +3,40 @@
  *
  * Returns today's tasks for a field worker, sorted by optimized sequence.
  * Includes navigation URLs and distance to each task from current GPS.
+ *
+ * Auth: worker JWT — employee_id is validated against the caller's JWT.
+ *       Admin may pass any employee_id.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { haversineKm } from '@/lib/geo';
 import { buildGoogleMapsUrl } from '@/lib/planner';
+import { checkAuth } from '@/lib/api/auth-guard';
+import { assertEmployeeOwnership } from '@/lib/api/resolve-employee';
 
 export async function GET(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'worker']);
+  if (!auth.ok) return auth.response;
+
   const supabase = getAdminClient();
   const { searchParams } = new URL(request.url);
   const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
-  const employeeId = searchParams.get('employee_id');
+  const requestedEmployeeId = searchParams.get('employee_id');
 
-  if (!employeeId) return NextResponse.json({ error: 'employee_id required' }, { status: 400 });
+  if (!requestedEmployeeId) {
+    return NextResponse.json({ error: 'employee_id required' }, { status: 400 });
+  }
+
+  // Ownership check: worker can only view their own tasks
+  const ownership = await assertEmployeeOwnership(auth.userId, auth.role, requestedEmployeeId);
+  if (!ownership.ok) {
+    return NextResponse.json(
+      { error: 'Forbidden', code: 'NOT_YOUR_EMPLOYEE_ID' },
+      { status: 403 }
+    );
+  }
+
+  const employeeId = requestedEmployeeId;
 
   // Get today's orders for this employee
   const { data: orders } = await supabase

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 export async function GET() {
   const supabase = getAdminClient();
@@ -19,6 +20,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
   try {
     const body = await request.json();
@@ -83,6 +86,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
   try {
     const body = await request.json();

@@ -5,8 +5,11 @@ import {
   buildNotificationContext,
   fireNotification,
 } from '@/lib/notification-dispatcher';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
 
   try {

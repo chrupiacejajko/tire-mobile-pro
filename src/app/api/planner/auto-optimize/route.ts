@@ -7,8 +7,11 @@
  * then optionally triggers recurring order generation.
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
   try {
     const body = await request.json().catch(() => ({}));
     const { date: inputDate } = body as { date?: string };

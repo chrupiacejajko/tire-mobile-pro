@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { notifyWorker } from '@/lib/notifications';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 /**
  * POST /api/orders/assign-worker
@@ -8,6 +9,8 @@ import { notifyWorker } from '@/lib/notifications';
  * Body: { order_id: string, employee_id: string }
  */
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
 
   try {
