@@ -44,12 +44,17 @@ export async function GET(request: NextRequest) {
     const speed = vehicle.speed ?? 0;
     const status = speed > 5 ? 'driving' : speed === 0 ? 'working' : 'online';
 
-    // Match by plate_number or satis_device_id
-    const { data: dbVehicle } = await supabase
-      .from('vehicles')
-      .select('id')
-      .or(`plate_number.eq.${vehicle.plate},satis_device_id.eq.${vehicle.satisId}`)
-      .single();
+    // Match by plate_number first, fallback to satis_device_id
+    let dbVehicle: { id: string } | null = null;
+    const { data: byPlate } = await supabase
+      .from('vehicles').select('id').eq('plate_number', vehicle.plate).limit(1).maybeSingle();
+    if (byPlate) {
+      dbVehicle = byPlate;
+    } else if (vehicle.satisId) {
+      const { data: byDevice } = await supabase
+        .from('vehicles').select('id').eq('satis_device_id', vehicle.satisId).limit(1).maybeSingle();
+      dbVehicle = byDevice;
+    }
 
     if (!dbVehicle) {
       unknownPlates.push(vehicle.plate);
@@ -62,7 +67,8 @@ export async function GET(request: NextRequest) {
       .select('employee_id')
       .eq('vehicle_id', dbVehicle.id)
       .eq('is_active', true)
-      .single();
+      .limit(1)
+      .maybeSingle();
 
     const { error } = await supabase.from('employee_locations').insert({
       employee_id: assignment?.employee_id ?? null,
@@ -74,6 +80,7 @@ export async function GET(request: NextRequest) {
       direction: vehicle.direction ?? null,
       rpm: vehicle.rpm ?? null,
       driving_time: vehicle.drivingTime ?? null,
+      location_address: vehicle.location ?? null,
       timestamp: new Date().toISOString(),
     });
 
