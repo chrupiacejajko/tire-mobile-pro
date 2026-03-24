@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     // ── Fetch the target order with client coords ───────────────────────────
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .select('id, scheduled_date, priority, required_skills, client:clients(lat, lng)')
+      .select('id, scheduled_date, priority, client:clients(lat, lng)')
       .eq('id', order_id)
       .single();
 
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
 
     const orderPoint = { lat: orderClient.lat as number, lng: orderClient.lng as number };
     const targetDate = date || order.scheduled_date || new Date().toISOString().split('T')[0];
-    const requiredSkills: string[] = (order as any).required_skills ?? [];
+    const requiredSkills: string[] = [];
     const isUrgent = order.priority === 'urgent' || order.priority === 'high';
 
     // ── Fetch all active employees ──────────────────────────────────────────
