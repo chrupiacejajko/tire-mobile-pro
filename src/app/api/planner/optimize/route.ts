@@ -279,7 +279,18 @@ export async function POST(request: NextRequest) {
       .filter(Boolean) as OrderForOptimization[];
 
     // Get employees + GPS (excluding unavailable ones)
-    const candidateEmployeeIds = (employee_ids?.length ? employee_ids : orders.map(o => o.employee_id).filter(Boolean) as string[])
+    // Include ALL active employees, not just those with assigned orders
+    let candidateEmployeeIds: string[];
+    if (employee_ids?.length) {
+      candidateEmployeeIds = employee_ids;
+    } else {
+      const { data: allActiveEmps } = await supabase
+        .from('employees')
+        .select('id')
+        .eq('is_active', true);
+      candidateEmployeeIds = (allActiveEmps || []).map((e: { id: string }) => e.id);
+    }
+    candidateEmployeeIds = candidateEmployeeIds
       .filter((id: string) => !unavailableEmployeeIds.has(id))
       .filter((id: string) => !hasAnySchedules || scheduledEmployeeIds.has(id));
 
@@ -382,6 +393,93 @@ export async function POST(request: NextRequest) {
       const list = ordersByEmployee.get(order.employee_id) || [];
       list.push(order);
       ordersByEmployee.set(order.employee_id, list);
+    }
+
+    // ── REBALANCING: redistribute orders from overloaded employees ──
+    const avgOrdersPerEmployee = orders.length / (employees?.length || 1);
+    const maxOrdersBeforeRebalance = Math.ceil(avgOrdersPerEmployee * 1.5);
+
+    for (const emp of employees || []) {
+      const empOrders = ordersByEmployee.get(emp.id) || [];
+      if (empOrders.length <= maxOrdersBeforeRebalance) continue;
+
+      const empPos = employeePositions.get(emp.id);
+      if (!empPos) continue;
+
+      const ordersWithDist = empOrders.map(o => ({
+        ...o,
+        dist: haversineKm(empPos.lat, empPos.lng, o.lat, o.lng),
+      })).sort((a, b) => a.dist - b.dist);
+
+      const ordersToMove = ordersWithDist.slice(maxOrdersBeforeRebalance);
+
+      for (const order of ordersToMove) {
+        let bestAltEmpId: string | null = null;
+        let bestAltDist = Infinity;
+
+        for (const altEmp of employees || []) {
+          if (altEmp.id === emp.id) continue;
+          const altOrders = ordersByEmployee.get(altEmp.id) || [];
+          if (altOrders.length >= maxOrdersBeforeRebalance) continue;
+
+          const altPos = employeePositions.get(altEmp.id);
+          if (!altPos) continue;
+
+          const altDist = haversineKm(altPos.lat, altPos.lng, order.lat, order.lng);
+          if (altDist < bestAltDist) {
+            bestAltDist = altDist;
+            bestAltEmpId = altEmp.id;
+          }
+        }
+
+        if (bestAltEmpId && bestAltDist < order.dist * 0.8) {
+          order.employee_id = bestAltEmpId;
+          const fromList = ordersByEmployee.get(emp.id) || [];
+          ordersByEmployee.set(emp.id, fromList.filter(o => o.id !== order.id));
+          const toList = ordersByEmployee.get(bestAltEmpId) || [];
+          toList.push(order);
+          ordersByEmployee.set(bestAltEmpId, toList);
+
+          if (commit) {
+            await supabase.from('orders').update({ employee_id: bestAltEmpId }).eq('id', order.id);
+          }
+        }
+      }
+    }
+
+    // ── Assign unassigned orders to nearest employee with capacity ──
+    const unassignedOrders = orders.filter(o => !o.employee_id);
+    for (const order of unassignedOrders) {
+      let bestEmpId: string | null = null;
+      let bestDist = Infinity;
+
+      for (const emp of employees || []) {
+        const empOrdrs = ordersByEmployee.get(emp.id) || [];
+        if (empOrdrs.length >= maxOrdersBeforeRebalance) continue;
+
+        const empPos = employeePositions.get(emp.id);
+        if (!empPos) continue;
+
+        const dist = haversineKm(empPos.lat, empPos.lng, order.lat, order.lng);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestEmpId = emp.id;
+        }
+      }
+
+      if (bestEmpId) {
+        order.employee_id = bestEmpId;
+        const list = ordersByEmployee.get(bestEmpId) || [];
+        list.push(order);
+        ordersByEmployee.set(bestEmpId, list);
+
+        if (commit) {
+          await supabase.from('orders').update({
+            employee_id: bestEmpId,
+            status: 'assigned',
+          }).eq('id', order.id);
+        }
+      }
     }
 
     const results = [];

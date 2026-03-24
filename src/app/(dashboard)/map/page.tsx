@@ -9,7 +9,7 @@ import {
   MapPin, Navigation, RefreshCw, X, Gauge, Compass,
   Clock, Truck, User, Search, ExternalLink, History,
   Activity, Route, ChevronRight, AlertCircle,
-  Plus, Phone, Briefcase, Target, Zap, ArrowRight, Package, CheckCircle2, Loader2, ChevronDown,
+  Plus, Phone, Briefcase, Target, Zap, ArrowRight, Package, CheckCircle2, Loader2, ChevronDown, Unlink,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { cn } from '@/lib/utils';
@@ -577,6 +577,19 @@ function OrderDetailPanel({ order, onClose, onRefresh }: { order: MapOrder; onCl
     setAssigning(null);
   };
 
+  const handleUnassign = async () => {
+    if (!confirm('Czy na pewno chcesz odpiąć pracownika od tego zlecenia?')) return;
+    try {
+      await fetch('/api/orders/unassign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: order.id }),
+      });
+      onRefresh();
+      onClose();
+    } catch { /* ignore */ }
+  };
+
   const statusColor = order.priority === 'urgent' ? '#EF4444' : ORDER_STATUS_COLORS[order.status] || '#9CA3AF';
 
   return (
@@ -681,9 +694,14 @@ function OrderDetailPanel({ order, onClose, onRefresh }: { order: MapOrder; onCl
                 </div>
                 <span className="text-sm font-semibold text-gray-900">{order.employee_name}</span>
               </div>
-              <button onClick={handleSuggest} className="text-xs text-blue-500 font-medium hover:underline">
-                Zmień
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={handleUnassign} className="flex items-center gap-1 text-xs text-red-500 font-medium hover:underline" title="Odepnij pracownika">
+                  <Unlink className="h-3 w-3" />
+                </button>
+                <button onClick={handleSuggest} className="text-xs text-blue-500 font-medium hover:underline">
+                  Zmień
+                </button>
+              </div>
             </div>
           ) : (
             <div>

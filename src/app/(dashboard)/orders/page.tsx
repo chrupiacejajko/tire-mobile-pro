@@ -21,7 +21,7 @@ import {
   Plus, Search, Clock, MapPin, ChevronRight, ClipboardList,
   CheckCircle2, Truck, XCircle, ArrowRight, Calendar, User, Phone,
   Play, Square, Timer, Wrench, Navigation, Zap, Star, FileText,
-  Camera, PenTool, Save, Check,
+  Camera, PenTool, Save, Check, Unlink,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { OrderStatus, OrderPriority, Client, Service } from '@/lib/types';
@@ -531,6 +531,20 @@ export default function OrdersPage() {
     setSelectedOrder({ ...selectedOrder, employee_id: empId, status: selectedOrder.status === 'new' ? 'assigned' : selectedOrder.status });
   };
 
+  const unassignEmployee = async () => {
+    if (!selectedOrder) return;
+    if (!confirm('Czy na pewno chcesz odpiąć pracownika od tego zlecenia?')) return;
+    try {
+      await fetch('/api/orders/unassign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: selectedOrder.id }),
+      });
+      fetchData();
+      setSelectedOrder({ ...selectedOrder, employee_id: null, employee: null, status: 'new' as OrderStatus });
+    } catch { /* ignore */ }
+  };
+
   const buildRouteUrl = (emp: EmployeeSuggestion, orderAddress: string) => {
     const stops = [
       ...emp.day_route.map(o => o.address),
@@ -1011,6 +1025,16 @@ export default function OrdersPage() {
                           </p>
                           <div className="flex items-center justify-between rounded-xl bg-blue-50 border border-blue-100 px-3 py-2">
                             <p className="text-sm font-medium text-blue-800">{selectedOrder.employee.user.full_name}</p>
+                            <div className="flex items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="rounded-lg h-7 text-xs px-2 gap-1 border-red-200 text-red-500 hover:bg-red-50"
+                              onClick={unassignEmployee}
+                              title="Odepnij pracownika"
+                            >
+                              <Unlink className="h-3 w-3" />
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"
@@ -1033,6 +1057,7 @@ export default function OrdersPage() {
                             >
                               <Navigation className="h-3 w-3" /> Nawiguj
                             </Button>
+                            </div>
                           </div>
                         </div>
                       )}
