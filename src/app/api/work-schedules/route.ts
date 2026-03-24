@@ -47,7 +47,75 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // ── Bulk generation ──
+    // ── Bulk generation: 48/48 duty pattern ──
+    if (body.bulk && body.pattern === '48_48') {
+      const { employees: empList, from_date, to_date, start_time, end_time } = body;
+
+      if (!Array.isArray(empList) || empList.length === 0 || !from_date || !to_date) {
+        return NextResponse.json(
+          { error: 'employees array, from_date, and to_date are required for 48_48 pattern' },
+          { status: 400 },
+        );
+      }
+
+      const patternStartTime = start_time || '07:00';
+      const patternEndTime = end_time || '23:00';
+
+      const rows: Array<{
+        employee_id: string;
+        date: string;
+        start_time: string;
+        end_time: string;
+        notes: string;
+      }> = [];
+
+      for (const emp of empList) {
+        const { employee_id: empId, first_on_date } = emp;
+        if (!empId || !first_on_date) continue;
+
+        const firstOn = new Date(first_on_date + 'T00:00:00');
+        const current = new Date(from_date + 'T00:00:00');
+        const end = new Date(to_date + 'T00:00:00');
+
+        while (current <= end) {
+          // Calculate how many days since first_on_date
+          const diffDays = Math.round((current.getTime() - firstOn.getTime()) / 86400000);
+          // Pattern repeats every 4 days: 2 on, 2 off
+          // diffDays mod 4: 0,1 = ON; 2,3 = OFF
+          const posInCycle = ((diffDays % 4) + 4) % 4; // handle negative modulo
+          const isOnDuty = posInCycle === 0 || posInCycle === 1;
+
+          if (isOnDuty) {
+            rows.push({
+              employee_id: empId,
+              date: current.toISOString().split('T')[0],
+              start_time: patternStartTime,
+              end_time: patternEndTime,
+              notes: 'DYZUR_48_48',
+            });
+          }
+
+          current.setDate(current.getDate() + 1);
+        }
+      }
+
+      if (rows.length === 0) {
+        return NextResponse.json({ message: 'No schedules generated', count: 0 });
+      }
+
+      const { data, error } = await supabase
+        .from('work_schedules')
+        .upsert(rows, { onConflict: 'employee_id,date' })
+        .select();
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ schedules: data, count: data?.length ?? 0 }, { status: 201 });
+    }
+
+    // ── Bulk generation (standard) ──
     if (body.bulk) {
       const {
         employee_id,

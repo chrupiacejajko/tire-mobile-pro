@@ -16,7 +16,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Copy,
+  CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Copy, Shield,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -104,6 +104,7 @@ export default function SchedulePage() {
   // Dialogs
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [dutyDialogOpen, setDutyDialogOpen] = useState(false);
 
   // Edit form
   const [editForm, setEditForm] = useState({
@@ -125,6 +126,15 @@ export default function SchedulePage() {
     start_time: '08:00',
     end_time: '16:00',
     skip_weekends: true,
+  });
+
+  // 48/48 duty form
+  const [dutyForm, setDutyForm] = useState({
+    employee_groups: {} as Record<string, 'A' | 'B'>, // employee_id -> group
+    from_date: '',
+    to_date: '',
+    start_time: '07:00',
+    end_time: '23:00',
   });
 
   const today = formatDate(new Date());
@@ -312,6 +322,71 @@ export default function SchedulePage() {
     }));
   };
 
+  // ── 48/48 Duty handlers ──
+
+  function openDutyDialog() {
+    const todayStr = formatDate(new Date());
+    const in30 = formatDate(addDays(new Date(), 30));
+    setDutyForm({
+      employee_groups: {},
+      from_date: todayStr,
+      to_date: in30,
+      start_time: '07:00',
+      end_time: '23:00',
+    });
+    setDutyDialogOpen(true);
+  }
+
+  function toggleDutyEmployee(empId: string) {
+    setDutyForm(prev => {
+      const groups = { ...prev.employee_groups };
+      if (groups[empId]) {
+        delete groups[empId];
+      } else {
+        groups[empId] = 'A';
+      }
+      return { ...prev, employee_groups: groups };
+    });
+  }
+
+  function setDutyGroup(empId: string, group: 'A' | 'B') {
+    setDutyForm(prev => ({
+      ...prev,
+      employee_groups: { ...prev.employee_groups, [empId]: group },
+    }));
+  }
+
+  async function handleDutyGenerate() {
+    const selectedEmployees = Object.entries(dutyForm.employee_groups);
+    if (selectedEmployees.length === 0) return;
+
+    const fromDate = dutyForm.from_date;
+    // Group A starts ON on from_date, Group B starts ON 2 days later
+    const groupBStart = formatDate(addDays(new Date(fromDate + 'T00:00:00'), 2));
+
+    const empPayload = selectedEmployees.map(([empId, group]) => ({
+      employee_id: empId,
+      first_on_date: group === 'A' ? fromDate : groupBStart,
+    }));
+
+    await fetch('/api/work-schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bulk: true,
+        pattern: '48_48',
+        employees: empPayload,
+        from_date: dutyForm.from_date,
+        to_date: dutyForm.to_date,
+        start_time: dutyForm.start_time,
+        end_time: dutyForm.end_time,
+      }),
+    });
+
+    setDutyDialogOpen(false);
+    fetchData();
+  }
+
   // ── Rendering ──
 
   const monthLabel = useMemo(() => {
@@ -334,12 +409,20 @@ export default function SchedulePage() {
         subtitle="Planowanie zmian pracownikow"
         icon={<CalendarDays className="h-5 w-5" />}
         actions={
-          <Button
-            className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
-            onClick={openBulkDialog}
-          >
-            <Copy className="h-4 w-4" /> Zastosuj szablon
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              className="h-9 rounded-xl text-sm gap-2 bg-emerald-600 hover:bg-emerald-700"
+              onClick={openDutyDialog}
+            >
+              <Shield className="h-4 w-4" /> Generuj dyzury 48/48
+            </Button>
+            <Button
+              className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
+              onClick={openBulkDialog}
+            >
+              <Copy className="h-4 w-4" /> Zastosuj szablon
+            </Button>
+          </div>
         }
       />
 
@@ -453,28 +536,58 @@ export default function SchedulePage() {
                               )}
                               onClick={() => handleCellClick(emp.id, dateStr)}
                             >
-                              {isUnavailable ? (
-                                <div className="mx-auto h-8 w-full rounded-md bg-red-100 flex items-center justify-center"
-                                  style={{
-                                    backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, rgba(239,68,68,0.15) 3px, rgba(239,68,68,0.15) 6px)',
-                                  }}
-                                >
-                                  <span className="text-[9px] font-medium text-red-500">Niedost.</span>
-                                </div>
-                              ) : schedule ? (
-                                <div className={cn(
-                                  'mx-auto h-8 w-full rounded-md flex items-center justify-center',
-                                  schedule.is_night_shift
-                                    ? 'bg-indigo-100 text-indigo-700'
-                                    : 'bg-blue-100 text-blue-700',
-                                )}>
-                                  <span className="text-[10px] font-semibold whitespace-nowrap">
-                                    {timeStr(schedule.start_time)}-{timeStr(schedule.end_time)}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="mx-auto h-8 w-full rounded-md hover:bg-gray-100 transition-colors" />
-                              )}
+                              {(() => {
+                                const isDuty48 = schedule?.notes === 'DYZUR_48_48';
+                                // Check if this is an "off" day in a 48/48 pattern (no schedule but other employees have duty)
+                                const isOffDay48 = !schedule && !isUnavailable && schedules.some(
+                                  s => s.notes === 'DYZUR_48_48' && s.date === dateStr && s.employee_id !== emp.id
+                                );
+
+                                if (isUnavailable) {
+                                  return (
+                                    <div className="mx-auto h-8 w-full rounded-md bg-red-100 flex items-center justify-center"
+                                      style={{
+                                        backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, rgba(239,68,68,0.15) 3px, rgba(239,68,68,0.15) 6px)',
+                                      }}
+                                    >
+                                      <span className="text-[9px] font-medium text-red-500">Niedost.</span>
+                                    </div>
+                                  );
+                                }
+                                if (isDuty48) {
+                                  return (
+                                    <div className="mx-auto h-8 w-full rounded-md bg-emerald-200 text-emerald-800 flex items-center justify-center">
+                                      <span className="text-[9px] font-bold whitespace-nowrap">
+                                        DYZUR {timeStr(schedule.start_time)}-{timeStr(schedule.end_time)}
+                                      </span>
+                                    </div>
+                                  );
+                                }
+                                if (schedule) {
+                                  return (
+                                    <div className={cn(
+                                      'mx-auto h-8 w-full rounded-md flex items-center justify-center',
+                                      schedule.is_night_shift
+                                        ? 'bg-indigo-100 text-indigo-700'
+                                        : 'bg-blue-100 text-blue-700',
+                                    )}>
+                                      <span className="text-[10px] font-semibold whitespace-nowrap">
+                                        {timeStr(schedule.start_time)}-{timeStr(schedule.end_time)}
+                                      </span>
+                                    </div>
+                                  );
+                                }
+                                if (isOffDay48) {
+                                  return (
+                                    <div className="mx-auto h-8 w-full rounded-md bg-gray-100 flex items-center justify-center">
+                                      <span className="text-[9px] font-medium text-gray-400">WOLNE</span>
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div className="mx-auto h-8 w-full rounded-md hover:bg-gray-100 transition-colors" />
+                                );
+                              })()}
                             </td>
                           );
                         })}
@@ -502,6 +615,14 @@ export default function SchedulePage() {
               backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, rgba(239,68,68,0.15) 3px, rgba(239,68,68,0.15) 6px)',
             }} />
             <span>Niedostepnosc</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-4 w-8 rounded bg-emerald-200" />
+            <span>Dyzur 48/48</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-4 w-8 rounded bg-gray-100" />
+            <span>Wolne (48/48)</span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="h-4 w-8 rounded border-2 border-orange-400" />
@@ -594,6 +715,126 @@ export default function SchedulePage() {
                   Zapisz
                 </Button>
               </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── 48/48 Duty Dialog ── */}
+      <Dialog open={dutyDialogOpen} onOpenChange={setDutyDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Generuj dyzury 48/48</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Employee selection with group assignment */}
+            <div className="space-y-2">
+              <Label>Pracownicy i grupy</Label>
+              <p className="text-[11px] text-gray-400">
+                Grupa A: dyzur zaczyna sie od daty poczatkowej. Grupa B: dyzur zaczyna sie 2 dni pozniej.
+              </p>
+              <div className="max-h-52 overflow-y-auto border rounded-lg p-2 space-y-1">
+                {employees.map(e => {
+                  const selected = !!dutyForm.employee_groups[e.id];
+                  return (
+                    <div key={e.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50">
+                      <Checkbox
+                        checked={selected}
+                        onCheckedChange={() => toggleDutyEmployee(e.id)}
+                      />
+                      <span className="text-sm flex-1">{e.name}</span>
+                      {selected && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setDutyGroup(e.id, 'A')}
+                            className={cn(
+                              'px-2 py-0.5 text-[10px] font-bold rounded',
+                              dutyForm.employee_groups[e.id] === 'A'
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200',
+                            )}
+                          >
+                            Grupa A
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDutyGroup(e.id, 'B')}
+                            className={cn(
+                              'px-2 py-0.5 text-[10px] font-bold rounded',
+                              dutyForm.employee_groups[e.id] === 'B'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200',
+                            )}
+                          >
+                            Grupa B
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {Object.keys(dutyForm.employee_groups).length > 0 && (
+                <p className="text-[11px] text-gray-400">
+                  Wybrano: {Object.keys(dutyForm.employee_groups).length} pracownikow
+                  (A: {Object.values(dutyForm.employee_groups).filter(g => g === 'A').length},
+                  B: {Object.values(dutyForm.employee_groups).filter(g => g === 'B').length})
+                </p>
+              )}
+            </div>
+
+            {/* Date range */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Od</Label>
+                <Input
+                  type="date"
+                  value={dutyForm.from_date}
+                  onChange={e => setDutyForm(f => ({ ...f, from_date: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Do</Label>
+                <Input
+                  type="date"
+                  value={dutyForm.to_date}
+                  onChange={e => setDutyForm(f => ({ ...f, to_date: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {/* Working hours */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Godzina rozpoczecia</Label>
+                <Input
+                  type="time"
+                  value={dutyForm.start_time}
+                  onChange={e => setDutyForm(f => ({ ...f, start_time: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Godzina zakonczenia</Label>
+                <Input
+                  type="time"
+                  value={dutyForm.end_time}
+                  onChange={e => setDutyForm(f => ({ ...f, end_time: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDutyDialogOpen(false)}>
+                Anuluj
+              </Button>
+              <Button
+                className="bg-emerald-600 hover:bg-emerald-700"
+                disabled={Object.keys(dutyForm.employee_groups).length === 0 || !dutyForm.from_date || !dutyForm.to_date}
+                onClick={handleDutyGenerate}
+              >
+                <Shield className="h-4 w-4 mr-1" /> Generuj
+              </Button>
             </div>
           </div>
         </DialogContent>

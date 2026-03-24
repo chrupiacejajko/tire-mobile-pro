@@ -3,6 +3,7 @@ import { getAdminClient } from '@/lib/supabase/admin';
 import { sendBookingConfirmationForOrder } from '@/lib/email';
 import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
 import { autoAssignWorker } from '@/lib/auto-assign';
+import { notifyWorker } from '@/lib/notifications';
 
 // GET /api/orders - List orders with optional filters
 export async function GET(request: NextRequest) {
@@ -272,6 +273,23 @@ export async function POST(request: NextRequest) {
           assignedEmployee = best.employee_name;
           assignedPlate = best.plate_number;
           estimatedTravelMinutes = best.travel_minutes;
+
+          // Notify the assigned worker
+          const serviceNames = resolvedServices.map(s => s.name).join(', ');
+          const shortId = order.id.slice(0, 8).toUpperCase();
+          notifyWorker({
+            employee_id: best.employee_id,
+            order_id: order.id,
+            type: 'order_assigned',
+            title: `Nowe zlecenie #${shortId}`,
+            body: [
+              `${client_name || 'Klient'}, ${address || 'adres do ustalenia'}`,
+              serviceNames,
+              `Termin: ${finalDate} ${time_window || startTime}`,
+              `Szacowany dojazd: ~${best.travel_minutes} min`,
+              client_phone ? `Telefon: ${client_phone}` : '',
+            ].filter(Boolean).join('\n'),
+          }).catch(() => {}); // fire-and-forget
         }
       } catch { /* auto-assign is best-effort */ }
     }
