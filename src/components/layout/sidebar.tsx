@@ -6,73 +6,89 @@ import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  LayoutDashboard,
-  Calendar,
-  ClipboardList,
-  MapPin,
-  Users,
-  UserCog,
-  BarChart3,
-  Settings,
-  Wrench,
-  LogOut,
-  ChevronDown,
-  Search,
-  Bell,
-  Truck,
-  HelpCircle,
-  Plus,
-  Package,
-  PackageCheck,
-  Handshake,
-  Zap,
-  Menu,
-  X,
-  Route,
-  FileText,
-  CalendarDays,
-  Upload,
-  PhoneCall,
-  Repeat,
+  LayoutDashboard, Calendar, ClipboardList, MapPin, Users, UserCog,
+  BarChart3, Settings, Wrench, LogOut, Bell, Truck, Menu, X, Route,
+  FileText, CalendarDays, Upload, PhoneCall, Repeat, Package,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 
-const mainMenu = [
-  { name: 'Nowe zlecenie', href: '/dispatch', icon: PhoneCall },
+// ── SIDEBAR MENU STRUCTURE ──────────────────────────────────────────
+// Grouped logically for dispatchers
+
+const quickAction = { name: 'Nowe zlecenie', href: '/dispatch', icon: PhoneCall };
+
+const operationsMenu = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Zlecenia', href: '/orders', icon: ClipboardList },
-  { name: 'Zlecenia cykliczne', href: '/recurring', icon: Repeat },
-  { name: 'Kalendarz', href: '/calendar', icon: Calendar },
   { name: 'Mapa', href: '/map', icon: MapPin },
   { name: 'Planowanie', href: '/planner', icon: Route },
-  { name: 'Klienci', href: '/clients', icon: Users },
+  { name: 'Kalendarz', href: '/calendar', icon: Calendar },
+  { name: 'Zlecenia', href: '/orders', icon: ClipboardList },
+  { name: 'Zlecenia cykliczne', href: '/recurring', icon: Repeat },
+];
+
+const resourcesMenu = [
   { name: 'Pracownicy', href: '/employees', icon: UserCog },
   { name: 'Grafik', href: '/schedule', icon: CalendarDays },
   { name: 'Flota', href: '/fleet', icon: Truck },
-  { name: 'Magazyn', href: '/warehouse', icon: Package },
-  { name: 'Depozyty', href: '/deposits', icon: PackageCheck },
-  { name: 'Podwykonawcy', href: '/subcontractors', icon: Handshake },
-  { name: 'Usługi', href: '/services', icon: Wrench },
-  { name: 'Formularze', href: '/forms', icon: FileText },
-  { name: 'Integracje', href: '/integrations', icon: Zap },
-  { name: 'Raporty', href: '/reports', icon: BarChart3, children: [
-    { name: 'Raport GPS', href: '/reports/gps-compliance', icon: MapPin },
-  ] },
+  { name: 'Klienci', href: '/clients', icon: Users },
+  { name: 'Regiony', href: '/regions', icon: MapPin },
 ];
 
-const otherMenu = [
-  { name: 'Historia GPS', href: '/gps-history', icon: MapPin },
+const configMenu = [
+  { name: 'Usługi', href: '/services', icon: Wrench },
+  { name: 'Magazyn', href: '/warehouse', icon: Package },
+  { name: 'Formularze', href: '/forms', icon: FileText },
+];
+
+const reportsMenu = [
+  { name: 'Raporty', href: '/reports', icon: BarChart3 },
+  { name: 'Raport GPS', href: '/reports/gps-compliance', icon: MapPin },
+  { name: 'Historia GPS', href: '/gps-history', icon: Route },
+];
+
+const toolsMenu = [
+  { name: 'Import CSV', href: '/import', icon: Upload },
   { name: 'Powiadomienia', href: '/notifications', icon: Bell },
   { name: 'Ustawienia', href: '/settings', icon: Settings },
 ];
 
-const regions = [
-  { name: 'Warszawa', color: '#3B82F6' },
-  { name: 'Kraków', color: '#10B981' },
-  { name: 'Gdańsk', color: '#F59E0B' },
-  { name: 'Wrocław', color: '#8B5CF6' },
-];
+function NavSection({ label, items, pathname, onNavigate }: {
+  label: string;
+  items: { name: string; href: string; icon: any }[];
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  return (
+    <div className="px-3 pt-3">
+      <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">{label}</p>
+      <nav className="space-y-0.5">
+        {items.map((item) => {
+          const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+          return (
+            <Link key={item.href} href={item.href} className="relative block" onClick={onNavigate}>
+              <motion.div
+                className={cn(
+                  'flex items-center gap-3 rounded-xl px-3 py-1.5 text-[13px] font-medium transition-colors relative',
+                  isActive ? 'text-orange-700' : 'text-gray-600 hover:text-gray-900'
+                )}
+                whileHover={{ x: 2 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              >
+                {isActive && (
+                  <motion.div className="absolute inset-0 rounded-xl bg-orange-50" layoutId="activeNav"
+                    transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
+                )}
+                <item.icon className={cn('h-[17px] w-[17px] relative z-10', isActive ? 'text-orange-600' : 'text-gray-400')} />
+                <span className="relative z-10">{item.name}</span>
+              </motion.div>
+            </Link>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -101,124 +117,41 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
 
-      {/* Main Menu */}
-      <div className="px-3 pt-2">
-        <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Menu główne</p>
-        <nav className="space-y-0.5">
-          {mainMenu.map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
-            return (
-              <div key={item.href}>
-                <Link href={item.href} className="relative block" onClick={onNavigate}>
-                  <motion.div
-                    className={cn(
-                      'flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors relative',
-                      isActive ? 'text-orange-700' : 'text-gray-600 hover:text-gray-900'
-                    )}
-                    whileHover={{ x: 2 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                  >
-                    {isActive && !item.children && (
-                      <motion.div className="absolute inset-0 rounded-xl bg-orange-50" layoutId="activeNav"
-                        transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
-                    )}
-                    <item.icon className={cn('h-[18px] w-[18px] relative z-10', isActive ? 'text-orange-600' : 'text-gray-400')} />
-                    <span className="relative z-10">{item.name}</span>
-                  </motion.div>
-                </Link>
-                {item.children && isActive && (
-                  <div className="ml-7 mt-0.5 space-y-0.5">
-                    {item.children.map((child) => {
-                      const childActive = pathname === child.href;
-                      return (
-                        <Link key={child.href} href={child.href} className="relative block" onClick={onNavigate}>
-                          <motion.div
-                            className={cn(
-                              'flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors relative',
-                              childActive ? 'text-orange-700' : 'text-gray-500 hover:text-gray-800'
-                            )}
-                            whileHover={{ x: 2 }}
-                            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                          >
-                            {childActive && (
-                              <motion.div className="absolute inset-0 rounded-lg bg-orange-50" layoutId="activeNav"
-                                transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
-                            )}
-                            <child.icon className={cn('h-[15px] w-[15px] relative z-10', childActive ? 'text-orange-600' : 'text-gray-400')} />
-                            <span className="relative z-10">{child.name}</span>
-                          </motion.div>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
+      {/* Quick Action */}
+      <div className="px-3 pt-2 pb-1">
+        <Link href={quickAction.href} className="block" onClick={onNavigate}>
+          <motion.div
+            className={cn(
+              'flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-colors',
+              pathname === quickAction.href
+                ? 'bg-orange-500 text-white shadow-md shadow-orange-500/25'
+                : 'bg-orange-50 text-orange-700 hover:bg-orange-100'
+            )}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <PhoneCall className="h-4 w-4" />
+            {quickAction.name}
+          </motion.div>
+        </Link>
       </div>
 
-      {/* Regions */}
-      <div className="px-3 pt-5">
-        <div className="flex items-center justify-between px-3 pb-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Regiony</p>
-          <button className="flex h-5 w-5 items-center justify-center rounded-md hover:bg-gray-100 text-gray-400"><Plus className="h-3.5 w-3.5" /></button>
-        </div>
-        <nav className="space-y-0.5">
-          {regions.map((region) => (
-            <Link key={region.name} href="/regions" className="flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50 transition-all" onClick={onNavigate}>
-              <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: region.color }} />
-              <span>{region.name}</span>
-            </Link>
-          ))}
-        </nav>
-      </div>
+      {/* Operacje */}
+      <NavSection label="Operacje" items={operationsMenu} pathname={pathname} onNavigate={onNavigate} />
 
-      {/* Narzędzia */}
-      <div className="px-3 pt-5">
-        <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Narzędzia</p>
-        <nav className="space-y-0.5">
-          {[
-            { name: 'Import CSV', href: '/import', icon: Upload },
-          ].map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
-            return (
-              <Link key={item.href} href={item.href} className="relative block" onClick={onNavigate}>
-                <motion.div
-                  className={cn(
-                    'flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors relative',
-                    isActive ? 'text-orange-700' : 'text-gray-600 hover:text-gray-900'
-                  )}
-                  whileHover={{ x: 2 }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                >
-                  {isActive && (
-                    <motion.div className="absolute inset-0 rounded-xl bg-orange-50" layoutId="activeNav"
-                      transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
-                  )}
-                  <item.icon className={cn('h-[18px] w-[18px] relative z-10', isActive ? 'text-orange-600' : 'text-gray-400')} />
-                  <span className="relative z-10">{item.name}</span>
-                </motion.div>
-              </Link>
-            );
-          })}
-        </nav>
-      </div>
+      {/* Zasoby */}
+      <NavSection label="Zasoby" items={resourcesMenu} pathname={pathname} onNavigate={onNavigate} />
+
+      {/* Konfiguracja */}
+      <NavSection label="Konfiguracja" items={configMenu} pathname={pathname} onNavigate={onNavigate} />
+
+      {/* Raporty */}
+      <NavSection label="Raporty" items={reportsMenu} pathname={pathname} onNavigate={onNavigate} />
 
       <div className="flex-1" />
 
-      {/* Other */}
-      <div className="px-3 pb-2">
-        <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Inne</p>
-        <nav className="space-y-0.5">
-          {otherMenu.map((item) => (
-            <Link key={item.href} href={item.href} className="flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50 transition-all" onClick={onNavigate}>
-              <item.icon className="h-[18px] w-[18px] text-gray-400" />
-              <span>{item.name}</span>
-            </Link>
-          ))}
-        </nav>
-      </div>
+      {/* Narzędzia (bottom) */}
+      <NavSection label="Narzędzia" items={toolsMenu} pathname={pathname} onNavigate={onNavigate} />
 
       {/* User */}
       <div className="border-t border-gray-100 px-3 py-3">

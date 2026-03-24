@@ -1099,6 +1099,531 @@ function QuickAddOrderPanel({ onClose, onRefresh }: { onClose: () => void; onRef
   );
 }
 
+/* ─── Types for CreateOrderPanel ─────────────────────────────────────── */
+interface ServiceOption {
+  id: string;
+  name: string;
+  description: string | null;
+  duration_minutes: number;
+  price: number;
+  category: string;
+}
+interface ClientResult {
+  id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  address: string | null;
+  city: string | null;
+  lat: number | null;
+  lng: number | null;
+}
+type SchedulingType = 'asap' | 'fixed_time' | 'time_window' | 'flexible';
+type Priority = 'normal' | 'high' | 'urgent';
+type TimeWindowPreset = 'morning' | 'afternoon' | 'evening' | 'custom';
+
+const SCHED_WINDOW_PRESETS: Record<string, { label: string; start: string; end: string }> = {
+  morning:   { label: 'Rano 8-12',       start: '08:00', end: '12:00' },
+  afternoon: { label: 'Południe 12-16',  start: '12:00', end: '16:00' },
+  evening:   { label: 'Wieczór 16-20',   start: '16:00', end: '20:00' },
+};
+
+function groupServicesByCategory(services: ServiceOption[]) {
+  const groups: Record<string, ServiceOption[]> = {};
+  for (const s of services) {
+    const cat = s.category || 'Inne';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(s);
+  }
+  return groups;
+}
+
+function todayStr() {
+  return new Date().toISOString().split('T')[0];
+}
+
+/* ─── Create Order Panel (inline on map) ─────────────────────────────── */
+function CreateOrderPanel({
+  pin,
+  prefilledWorker,
+  onClose,
+  onSuccess,
+}: {
+  pin: AddressPin;
+  prefilledWorker: { id: string; name: string; plate: string | null } | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  // Client
+  const [phoneInput, setPhoneInput] = useState('');
+  const [clientResults, setClientResults] = useState<ClientResult[]>([]);
+  const [searchingClient, setSearchingClient] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<ClientResult | null>(null);
+  const [clientName, setClientName] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
+  const phoneRef = useRef<HTMLInputElement>(null);
+  const clientSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Address (pre-filled)
+  const [address, setAddress] = useState(pin.label);
+  const [addressLat] = useState(pin.lat);
+  const [addressLng] = useState(pin.lng);
+
+  // Worker
+  const [workerName, setWorkerName] = useState(prefilledWorker?.name ?? '');
+  const [workerId] = useState(prefilledWorker?.id ?? '');
+
+  // Services
+  const [services, setServices] = useState<ServiceOption[]>([]);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
+
+  // Scheduling
+  const [schedulingType, setSchedulingType] = useState<SchedulingType>('time_window');
+  const [selectedDate, setSelectedDate] = useState(todayStr());
+  const [selectedTime, setSelectedTime] = useState('10:00');
+  const [windowPreset, setWindowPreset] = useState<TimeWindowPreset>('morning');
+  const [customWindowStart, setCustomWindowStart] = useState('08:00');
+  const [customWindowEnd, setCustomWindowEnd] = useState('12:00');
+
+  // Extra
+  const [priority, setPriority] = useState<Priority>('normal');
+  const [notes, setNotes] = useState('');
+
+  // Submit
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  // Auto-focus phone
+  useEffect(() => {
+    setTimeout(() => phoneRef.current?.focus(), 100);
+  }, []);
+
+  // Load services
+  useEffect(() => {
+    fetch('/api/services')
+      .then(r => r.json())
+      .then(data => {
+        const list = data.services || data;
+        if (Array.isArray(list)) setServices(list);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Client search (debounce 500ms, 4+ digits)
+  useEffect(() => {
+    if (clientSearchTimer.current) clearTimeout(clientSearchTimer.current);
+    const digits = phoneInput.replace(/\D/g, '');
+    if (digits.length < 4) { setClientResults([]); return; }
+    setSearchingClient(true);
+    clientSearchTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/clients/search?phone=${encodeURIComponent(digits)}`);
+        const data = await res.json();
+        setClientResults(data.clients ?? []);
+      } catch { setClientResults([]); }
+      setSearchingClient(false);
+    }, 500);
+  }, [phoneInput]);
+
+  const selectClient = useCallback((c: ClientResult) => {
+    setSelectedClient(c);
+    setPhoneInput(c.phone);
+    setClientName(c.name || '');
+    setClientEmail(c.email || '');
+    setClientResults([]);
+  }, []);
+
+  // ASAP auto-set
+  useEffect(() => {
+    if (schedulingType === 'asap') {
+      setSelectedDate(todayStr());
+      setPriority('urgent');
+    }
+  }, [schedulingType]);
+
+  const toggleService = (id: string) => {
+    setSelectedServiceIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectedServices = services.filter(s => selectedServiceIds.has(s.id));
+  const totalPrice = selectedServices.reduce((sum, s) => sum + Number(s.price), 0);
+  const totalDuration = selectedServices.reduce((sum, s) => sum + s.duration_minutes, 0);
+  const grouped = groupServicesByCategory(services);
+
+  function getTimeWindowValues() {
+    if (schedulingType === 'time_window') {
+      if (windowPreset === 'custom') return { start: customWindowStart, end: customWindowEnd };
+      const preset = SCHED_WINDOW_PRESETS[windowPreset];
+      return preset ? { start: preset.start, end: preset.end } : { start: '08:00', end: '12:00' };
+    }
+    return { start: null, end: null };
+  }
+
+  const handleSubmit = async () => {
+    if (submitting) return;
+    if (!clientName.trim()) { setError('Podaj imię i nazwisko klienta'); return; }
+    if (!phoneInput.trim()) { setError('Podaj numer telefonu'); return; }
+    if (selectedServiceIds.size === 0) { setError('Wybierz przynajmniej jedną usługę'); return; }
+    setError('');
+    setSubmitting(true);
+
+    const tw = getTimeWindowValues();
+    const timeWindowName = schedulingType === 'time_window' && windowPreset !== 'custom' ? windowPreset : undefined;
+
+    const payload: Record<string, unknown> = {
+      client_name: clientName,
+      client_phone: phoneInput,
+      client_email: clientEmail || undefined,
+      address,
+      city: '',
+      lat: addressLat,
+      lng: addressLng,
+      scheduled_date: selectedDate,
+      service_ids: Array.from(selectedServiceIds),
+      notes: notes || undefined,
+      priority,
+      scheduling_type: schedulingType,
+      source: 'dispatcher',
+      auto_assign: !!workerId,
+      employee_id_hint: workerId || undefined,
+    };
+
+    if (schedulingType === 'fixed_time') {
+      payload.scheduled_time = selectedTime;
+    } else if (schedulingType === 'time_window') {
+      payload.time_window = timeWindowName;
+      payload.time_window_start = tw.start;
+      payload.time_window_end = tw.end;
+    }
+
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+
+      if (data.success || data.order_id || data.id) {
+        const orderId = data.order_id ?? data.id;
+        // If worker pre-selected, assign
+        if (workerId && orderId) {
+          try {
+            await fetch('/api/orders/assign-worker', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ order_id: orderId, employee_id: workerId }),
+            });
+          } catch { /* best effort */ }
+        }
+        onSuccess();
+      } else {
+        setError(data.error || 'Nie udało się utworzyć zlecenia');
+      }
+    } catch {
+      setError('Błąd serwera');
+    }
+    setSubmitting(false);
+  };
+
+  return (
+    <motion.div
+      initial={{ x: 400, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 400, opacity: 0 }}
+      transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+      className="w-[400px] flex-shrink-0 bg-white border-l border-gray-100 flex flex-col overflow-hidden"
+    >
+      {/* Header */}
+      <div className="p-5 border-b border-gray-100 flex-shrink-0">
+        <div className="flex items-start justify-between">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-bold text-gray-900">Nowe zlecenie</h2>
+            <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-1 truncate">
+              <MapPin className="h-3.5 w-3.5 flex-shrink-0 text-red-500" />{pin.label}
+            </p>
+          </div>
+          <button onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-400 transition-colors flex-shrink-0">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Scrollable form */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        {/* Pre-filled address */}
+        <div>
+          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Adres</label>
+          <input
+            type="text"
+            value={address}
+            onChange={e => setAddress(e.target.value)}
+            className="w-full h-9 px-3 border border-gray-200 rounded-xl text-sm text-gray-700 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
+          />
+        </div>
+
+        {/* Pre-filled worker */}
+        {prefilledWorker && (
+          <div>
+            <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Przypisany pracownik</label>
+            <div className="flex items-center gap-2 h-9 px-3 border border-blue-200 rounded-xl bg-blue-50">
+              <User className="h-3.5 w-3.5 text-blue-500" />
+              <span className="text-sm font-medium text-blue-700">{workerName}</span>
+              {prefilledWorker.plate && <span className="text-xs text-blue-400 font-mono">({prefilledWorker.plate})</span>}
+            </div>
+          </div>
+        )}
+
+        {/* Phone with client search */}
+        <div className="relative">
+          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">
+            <Phone className="h-3 w-3 inline mr-1" />Telefon
+          </label>
+          <input
+            ref={phoneRef}
+            type="tel"
+            value={phoneInput}
+            onChange={e => { setPhoneInput(e.target.value); setSelectedClient(null); }}
+            placeholder="Wpisz numer telefonu..."
+            className="w-full h-9 px-3 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
+          />
+          {searchingClient && <Loader2 className="absolute right-3 top-7 h-4 w-4 animate-spin text-gray-400" />}
+          {clientResults.length > 0 && !selectedClient && (
+            <div className="absolute z-20 mt-1 w-full rounded-xl border border-gray-200 bg-white shadow-lg max-h-36 overflow-y-auto">
+              {clientResults.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => selectClient(c)}
+                  className="w-full text-left px-3 py-2 hover:bg-orange-50 border-b border-gray-100 last:border-0"
+                >
+                  <p className="text-sm font-medium text-gray-900">{c.name}</p>
+                  <p className="text-xs text-gray-500">{c.phone}{c.address ? ` - ${c.address}` : ''}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Name + Email */}
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Imię i nazwisko</label>
+            <input
+              type="text"
+              value={clientName}
+              onChange={e => setClientName(e.target.value)}
+              placeholder="Jan Kowalski"
+              className="w-full h-9 px-3 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Email (opcj.)</label>
+            <input
+              type="email"
+              value={clientEmail}
+              onChange={e => setClientEmail(e.target.value)}
+              placeholder="jan@example.com"
+              className="w-full h-9 px-3 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
+            />
+          </div>
+        </div>
+
+        {/* Services */}
+        <div>
+          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5 block">
+            <Briefcase className="h-3 w-3 inline mr-1" />Usługi
+          </label>
+          {Object.entries(grouped).map(([cat, svcs]) => (
+            <div key={cat} className="mb-2 last:mb-0">
+              <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">{cat}</p>
+              <div className="space-y-0.5">
+                {svcs.map(s => {
+                  const sel = selectedServiceIds.has(s.id);
+                  return (
+                    <label
+                      key={s.id}
+                      className={cn(
+                        'flex items-center gap-2 rounded-lg px-2 py-1.5 cursor-pointer transition-colors text-sm',
+                        sel ? 'bg-orange-50 border border-orange-200' : 'hover:bg-gray-50 border border-transparent',
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={sel}
+                        onChange={() => toggleService(s.id)}
+                        className="h-3.5 w-3.5 rounded border-gray-300 text-orange-500 focus:ring-orange-500"
+                      />
+                      <span className="flex-1 text-gray-700 text-xs">{s.name}</span>
+                      <span className="text-[10px] text-gray-400">{s.duration_minutes}min</span>
+                      <span className="text-xs font-semibold text-gray-700">{Number(s.price)}zł</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {selectedServiceIds.size > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between">
+              <span className="text-xs text-gray-500">{selectedServiceIds.size} usług, {totalDuration} min</span>
+              <span className="text-sm font-bold text-orange-600">{totalPrice} zł</span>
+            </div>
+          )}
+        </div>
+
+        {/* Scheduling */}
+        <div>
+          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5 block">
+            <Clock className="h-3 w-3 inline mr-1" />Termin
+          </label>
+          <div className="grid grid-cols-4 gap-1 mb-3">
+            {([
+              { type: 'asap' as const, label: 'Na już' },
+              { type: 'fixed_time' as const, label: 'Godzina' },
+              { type: 'time_window' as const, label: 'Okno' },
+              { type: 'flexible' as const, label: 'Elastyczny' },
+            ]).map(opt => (
+              <button
+                key={opt.type}
+                onClick={() => setSchedulingType(opt.type)}
+                className={cn(
+                  'py-1.5 px-1 rounded-lg text-[11px] font-medium transition-all border text-center',
+                  schedulingType === opt.type
+                    ? 'border-orange-400 bg-orange-50 text-orange-700 shadow-sm'
+                    : 'border-gray-100 text-gray-500 hover:bg-gray-50',
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {schedulingType !== 'asap' && (
+            <div className="mb-2">
+              <label className="text-[10px] font-medium text-gray-500 mb-0.5 block">Data</label>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={e => setSelectedDate(e.target.value)}
+                min={todayStr()}
+                className="w-full h-8 px-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
+              />
+            </div>
+          )}
+
+          {schedulingType === 'fixed_time' && (
+            <div className="mb-2">
+              <label className="text-[10px] font-medium text-gray-500 mb-0.5 block">Godzina</label>
+              <input
+                type="time"
+                value={selectedTime}
+                onChange={e => setSelectedTime(e.target.value)}
+                className="w-full h-8 px-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
+              />
+            </div>
+          )}
+
+          {schedulingType === 'time_window' && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-4 gap-1">
+                {(['morning', 'afternoon', 'evening', 'custom'] as const).map(w => (
+                  <button
+                    key={w}
+                    onClick={() => setWindowPreset(w)}
+                    className={cn(
+                      'py-1 px-1 rounded-lg text-[10px] font-medium transition-all border text-center',
+                      windowPreset === w
+                        ? 'bg-orange-500 text-white border-orange-500'
+                        : 'bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-100',
+                    )}
+                  >
+                    {w === 'custom' ? 'Własne' : SCHED_WINDOW_PRESETS[w].label}
+                  </button>
+                ))}
+              </div>
+              {windowPreset === 'custom' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-medium text-gray-500 mb-0.5 block">Od</label>
+                    <input type="time" value={customWindowStart} onChange={e => setCustomWindowStart(e.target.value)}
+                      className="w-full h-8 px-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-medium text-gray-500 mb-0.5 block">Do</label>
+                    <input type="time" value={customWindowEnd} onChange={e => setCustomWindowEnd(e.target.value)}
+                      className="w-full h-8 px-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400" />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {schedulingType === 'asap' && (
+            <p className="text-xs text-orange-600 font-medium">Dzisiaj ({todayStr()}), priorytet: pilny</p>
+          )}
+        </div>
+
+        {/* Priority */}
+        <div>
+          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5 block">Priorytet</label>
+          <div className="grid grid-cols-3 gap-1.5">
+            {([
+              { value: 'normal' as const, label: 'Normalny', color: '#6B7280' },
+              { value: 'high' as const, label: 'Wysoki', color: '#F97316' },
+              { value: 'urgent' as const, label: 'Pilny', color: '#EF4444' },
+            ]).map(p => (
+              <button
+                key={p.value}
+                onClick={() => setPriority(p.value)}
+                className={cn(
+                  'py-1.5 px-2 rounded-lg text-xs font-medium transition-all border',
+                  priority === p.value ? 'border-opacity-100 shadow-sm' : 'border-gray-100 text-gray-500 hover:bg-gray-50',
+                )}
+                style={priority === p.value ? { borderColor: p.color, backgroundColor: p.color + '15', color: p.color } : {}}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Notes */}
+        <div>
+          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Notatki</label>
+          <textarea
+            placeholder="Dodatkowe informacje..."
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            rows={2}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
+          />
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="flex items-center gap-2 p-2.5 bg-red-50 border border-red-200 rounded-xl">
+            <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+            <p className="text-xs text-red-600">{error}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Fixed submit button */}
+      <div className="p-4 border-t border-gray-100 flex-shrink-0">
+        <Button
+          onClick={handleSubmit}
+          disabled={submitting}
+          className="w-full rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white h-10"
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+          {submitting ? 'Tworzenie...' : 'Utwórz zlecenie'}
+        </Button>
+      </div>
+    </motion.div>
+  );
+}
+
 /* ─── Haversine distance (km) ────────────────────────────────────────── */
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
@@ -1110,13 +1635,14 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 
 /* ─── Nearby workers panel ──────────────────────────────────────────── */
 function NearbyWorkersPanel({
-  pin, workers, radiusKm, onRadiusChange, onClose,
+  pin, workers, radiusKm, onRadiusChange, onClose, onCreateOrder,
 }: {
   pin: AddressPin;
   workers: NearbyWorker[];
   radiusKm: number;
   onRadiusChange: (km: number) => void;
   onClose: () => void;
+  onCreateOrder: (worker: NearbyWorker) => void;
 }) {
   return (
     <motion.div
@@ -1193,12 +1719,12 @@ function NearbyWorkersPanel({
                     </div>
                   </div>
                   <div className="mt-2 ml-[18px]">
-                    <a
-                      href={`/dispatch?address=${encodeURIComponent(pin.label)}&lat=${pin.lat}&lng=${pin.lng}`}
+                    <button
+                      onClick={() => onCreateOrder(w)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white rounded-lg text-xs font-medium hover:bg-orange-600 transition-colors"
                     >
                       <Plus className="h-3 w-3" />Utwórz zlecenie
-                    </a>
+                    </button>
                   </div>
                 </div>
               );
@@ -1234,6 +1760,8 @@ export default function MapPage() {
   const [showRegions, setShowRegions] = useState(false);
   const [mapRegions, setMapRegions] = useState<MapRegion[]>([]);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [createOrderOpen, setCreateOrderOpen] = useState(false);
+  const [prefilledWorker, setPrefilledWorker] = useState<{ id: string; name: string; plate: string | null } | null>(null);
   const [orderFilter, setOrderFilter] = useState<string>('all');
   const [countdown, setCountdown] = useState(30);
   /* Address search state */
@@ -1850,13 +2378,30 @@ export default function MapPage() {
               onRefresh={() => { fetchAll(); resetCountdown(); }}
             />
           )}
-          {addressPin && !selectedVehicle && !selectedOrder && (
+          {addressPin && !selectedVehicle && !selectedOrder && !createOrderOpen && (
             <NearbyWorkersPanel
               pin={addressPin}
               workers={nearbyWorkers}
               radiusKm={searchRadiusKm}
               onRadiusChange={setSearchRadiusKm}
               onClose={clearAddressSearch}
+              onCreateOrder={(w) => {
+                setPrefilledWorker({ id: w.employee_id, name: w.employee_name, plate: w.plate });
+                setCreateOrderOpen(true);
+              }}
+            />
+          )}
+          {addressPin && createOrderOpen && !selectedVehicle && !selectedOrder && (
+            <CreateOrderPanel
+              pin={addressPin}
+              prefilledWorker={prefilledWorker}
+              onClose={() => { setCreateOrderOpen(false); setPrefilledWorker(null); }}
+              onSuccess={() => {
+                setCreateOrderOpen(false);
+                setPrefilledWorker(null);
+                fetchAll();
+                resetCountdown();
+              }}
             />
           )}
         </AnimatePresence>
