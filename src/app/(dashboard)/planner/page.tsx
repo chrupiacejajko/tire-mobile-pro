@@ -95,6 +95,27 @@ const STATUS_STYLES = {
   no_window:  { bg: 'bg-gray-50',     border: 'border-gray-200',   dot: 'bg-gray-400',    text: 'text-gray-600',    label: 'Brak okna' },
 };
 
+function WorkerStatusDot({ pos, orders }: { pos: EmployeeRoute['current_position']; orders: number }) {
+  let color: string;
+  let label: string;
+  if (pos === null) {
+    color = 'bg-yellow-400';
+    label = 'Brak GPS';
+  } else if (orders === 0) {
+    color = 'bg-gray-400';
+    label = 'Brak zleceń';
+  } else {
+    color = 'bg-emerald-500';
+    label = 'Aktywny';
+  }
+  return (
+    <span
+      className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${color}`}
+      title={label}
+    />
+  );
+}
+
 function ScoreBadge({ score }: { score: number }) {
   const color = score >= 80 ? 'text-emerald-600 bg-emerald-50' : score >= 50 ? 'text-amber-600 bg-amber-50' : 'text-red-600 bg-red-50';
   return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold ${color}`}>{score}%</span>;
@@ -201,7 +222,10 @@ function RoutePanel({ route, onOptimize, onReoptimize, reoptimizing }: { route: 
               <Car className="h-4 w-4 text-orange-600" />
             </div>
             <div>
-              <p className="font-semibold text-gray-900 text-sm">{route.employee_name}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="font-semibold text-gray-900 text-sm">{route.employee_name}</p>
+                <WorkerStatusDot pos={route.current_position} orders={route.total_orders} />
+              </div>
               <p className="text-xs text-gray-400">{route.plate ?? 'Brak tablicy'}</p>
             </div>
           </div>
@@ -761,9 +785,11 @@ function GanttView({
             )}
           >
             <div className="w-40 flex-shrink-0 border-r border-gray-200 px-3 py-2 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-orange-400" />
               <div className="min-w-0">
-                <p className="text-xs font-semibold text-gray-800 truncate">{route.employee_name}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-semibold text-gray-800 truncate">{route.employee_name}</p>
+                  <WorkerStatusDot pos={route.current_position} orders={route.total_orders} />
+                </div>
                 {route.plate && <p className="text-[10px] text-gray-400 font-mono">{route.plate}</p>}
               </div>
             </div>
@@ -1197,6 +1223,20 @@ export default function PlannerPage() {
 
           {/* Right: Routes */}
           <div className="flex-1 overflow-y-auto p-6">
+            {/* No-GPS warning bar */}
+            {!loading && data?.routes && (() => {
+              const noGpsCount = data.routes.filter(r => r.current_position === null).length;
+              if (noGpsCount === 0) return null;
+              return (
+                <div className="flex items-center gap-2 mb-4 px-4 py-2.5 rounded-xl bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm">
+                  <AlertTriangle className="h-4 w-4 text-yellow-500 flex-shrink-0" />
+                  <span>
+                    <strong>{noGpsCount}</strong> pracownik{noGpsCount === 1 ? '' : noGpsCount < 5 ? 'ów' : 'ów'} bez GPS · Kliknij &quot;Sugeruj&quot; aby zobaczyć powody
+                  </span>
+                </div>
+              );
+            })()}
+
             {/* Summary bar */}
             {summary && !loading && (
               <div className="grid grid-cols-4 gap-4 mb-6">

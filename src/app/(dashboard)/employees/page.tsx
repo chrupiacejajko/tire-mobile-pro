@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/tabs';
 import {
   Plus, Search, Pencil, UserCog, Users, Clock,
-  CalendarOff, Trash2, Award,
+  CalendarOff, Trash2, Award, Mail, RotateCcw, Link,
 } from 'lucide-react';
 import type { Region, Skill } from '@/lib/types';
 
@@ -88,6 +88,7 @@ interface EmployeeRow {
   region?: { name: string; color: string } | null;
   default_vehicle?: { id: string; plate_number: string; brand: string | null; model: string | null } | null;
   employee_skills?: { skill_id: string; skill: { id: string; name: string; is_active: boolean } }[];
+  account_status?: 'invited' | 'active' | 'blocked' | null;
 }
 
 interface EmployeeForm {
@@ -154,6 +155,26 @@ export default function EmployeesPage() {
     employee_id: '', type: 'vacation', start_date: '', end_date: '',
     start_time: '', end_time: '', notes: '',
   });
+
+  // Invite state
+  const [inviteToast, setInviteToast] = useState<{ message: string; url?: string } | null>(null);
+
+  const handleInvite = async (employeeId: string, action: 'create' | 'resend') => {
+    const res = await fetch('/api/admin/workers/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employee_id: employeeId, action }),
+    });
+    const data = await res.json();
+    if (res.ok && data.invite_url) {
+      await navigator.clipboard.writeText(data.invite_url).catch(() => {});
+      setInviteToast({ message: 'Link zaproszenia skopiowany do schowka', url: data.invite_url });
+      setTimeout(() => setInviteToast(null), 4000);
+    } else {
+      setInviteToast({ message: data.error || 'Błąd podczas generowania zaproszenia' });
+      setTimeout(() => setInviteToast(null), 4000);
+    }
+  };
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -558,14 +579,14 @@ export default function EmployeesPage() {
                 ) : (
                   <motion.div variants={ANIM.container} initial="hidden" animate="show">
                     {/* Header */}
-                    <div className="grid grid-cols-[1fr_100px_100px_1fr_100px_80px_80px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                      <span>Pracownik</span><span>Telefon</span><span>Obszar</span><span>Umiejętności</span><span>Stawka</span><span>Status</span><span></span>
+                    <div className="grid grid-cols-[1fr_100px_100px_1fr_100px_100px_80px_80px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      <span>Pracownik</span><span>Telefon</span><span>Obszar</span><span>Umiejętności</span><span>Stawka</span><span>Konto</span><span>Status</span><span></span>
                     </div>
                     {filtered.map(emp => (
                       <motion.div
                         key={emp.id}
                         variants={ANIM.item}
-                        className="grid grid-cols-[1fr_100px_100px_1fr_100px_80px_80px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
+                        className="grid grid-cols-[1fr_100px_100px_1fr_100px_100px_80px_80px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
                       >
                         {/* Name + email */}
                         <div className="flex items-center gap-3 min-w-0">
@@ -605,6 +626,17 @@ export default function EmployeesPage() {
                           {emp.shift_rate != null ? `${Number(emp.shift_rate)} zł` : '-'}
                         </span>
 
+                        {/* Account / invite status */}
+                        {emp.account_status === 'invited' ? (
+                          <Badge className="text-[10px] rounded-lg bg-amber-100 text-amber-700 border-0">Zaproszony</Badge>
+                        ) : emp.account_status === 'active' ? (
+                          <Badge className="text-[10px] rounded-lg bg-emerald-100 text-emerald-700 border-0">Aktywny</Badge>
+                        ) : emp.account_status === 'blocked' ? (
+                          <Badge className="text-[10px] rounded-lg bg-red-100 text-red-700 border-0">Zablokowany</Badge>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+
                         {/* Status */}
                         <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-[10px] rounded-lg">
                           {emp.is_active ? 'Aktywny' : 'Nieaktywny'}
@@ -615,6 +647,27 @@ export default function EmployeesPage() {
                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-orange-500 hover:text-orange-600 hover:bg-orange-50" onClick={() => openEdit(emp)}>
                             <Pencil className="h-4 w-4" />
                           </Button>
+                          {emp.account_status === 'invited' ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 rounded-lg text-amber-500 hover:text-amber-600 hover:bg-amber-50"
+                              title="Ponów zaproszenie"
+                              onClick={() => handleInvite(emp.id, 'resend')}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 rounded-lg text-blue-400 hover:text-blue-600 hover:bg-blue-50"
+                              title="Wyślij zaproszenie"
+                              onClick={() => handleInvite(emp.id, 'create')}
+                            >
+                              <Mail className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50" onClick={() => openDelete(emp)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -725,6 +778,20 @@ export default function EmployeesPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* ── Invite toast ── */}
+      {inviteToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-900 text-white text-sm px-5 py-3 rounded-2xl shadow-2xl">
+          <Link className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+          <span>{inviteToast.message}</span>
+          <button
+            onClick={() => setInviteToast(null)}
+            className="ml-2 text-gray-400 hover:text-white text-xs"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* ── Add Unavailability Dialog ── */}
       <Dialog open={unavailDialogOpen} onOpenChange={setUnavailDialogOpen}>
