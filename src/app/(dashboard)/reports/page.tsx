@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Topbar } from '@/components/layout/topbar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,7 +10,7 @@ import {
   BarChart3, TrendingUp, DollarSign, Clock, FileDown, Calendar,
   CheckCircle2, XCircle, Loader2, RefreshCw, Car, User,
   MapPin, AlertTriangle, Activity, Zap, Navigation, Wallet,
-  Fuel, Briefcase, PieChart,
+  Fuel, Briefcase, PieChart, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
@@ -301,6 +301,221 @@ function OperationalView({ date }: { date: string }) {
           <Activity className="h-10 w-10 mx-auto mb-3 text-gray-200" />
           <p>Brak aktywnych pracowników na ten dzień</p>
         </div>
+      )}
+
+      {/* Plan vs Execution section */}
+      <PlanVsExecutionSection date={date} />
+    </div>
+  );
+}
+
+// ── Plan vs Execution section ─────────────────────────────────────────────────
+
+interface PvEOrder {
+  order_id: string;
+  client_name: string;
+  planned_time: string | null;
+  actual_start: string | null;
+  planned_duration_min: number;
+  actual_duration_min: number | null;
+  delay_minutes: number;
+  status: string;
+}
+
+interface PvEEmployee {
+  employee_id: string;
+  employee_name: string;
+  planned_orders: number;
+  completed_orders: number;
+  cancelled_orders: number;
+  completion_rate: number;
+  planned_km: number;
+  actual_km: number;
+  km_variance_pct: number;
+  avg_delay_minutes: number;
+  on_time_count: number;
+  late_count: number;
+  orders: PvEOrder[];
+}
+
+interface PvEData {
+  date: string;
+  employees: PvEEmployee[];
+  summary: {
+    total_planned: number;
+    total_completed: number;
+    total_cancelled: number;
+    avg_completion_rate: number;
+    avg_delay_minutes: number;
+    planned_km_total: number;
+    actual_km_total: number;
+  };
+}
+
+function PlanVsExecutionSection({ date }: { date: string }) {
+  const [pveDate, setPveDate] = useState(date);
+  const [data, setData] = useState<PvEData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/reports/plan-vs-execution?date=${pveDate}`);
+      const json = await res.json();
+      setData(json);
+    } catch {
+      /* ignore */
+    }
+    setLoading(false);
+  }, [pveDate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="mt-8">
+      <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+        <Navigation className="h-4 w-4 text-orange-500" />
+        Plan vs Wykonanie
+      </h3>
+
+      {/* Date picker */}
+      <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2">
+          <Calendar className="h-4 w-4 text-gray-400" />
+          <input
+            type="date"
+            value={pveDate}
+            onChange={e => setPveDate(e.target.value)}
+            className="text-sm bg-transparent outline-none text-gray-700 font-medium"
+          />
+        </div>
+      </div>
+
+      {loading && (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 text-orange-500 animate-spin" />
+        </div>
+      )}
+
+      {!loading && data && (
+        <>
+          {/* Summary cards */}
+          <motion.div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5" variants={ANIM.container} initial="hidden" animate="show">
+            {[
+              { label: 'Zaplanowane', value: data.summary.total_planned, icon: BarChart3, color: 'text-gray-900', bg: 'bg-gray-50' },
+              { label: 'Ukończone', value: data.summary.total_completed, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+              { label: 'Anulowane', value: data.summary.total_cancelled, icon: XCircle, color: 'text-red-600', bg: 'bg-red-50' },
+              { label: 'Śr. opóźnienie', value: `${data.summary.avg_delay_minutes} min`, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50' },
+            ].map(s => (
+              <motion.div key={s.label} variants={ANIM.item}
+                className={`${s.bg} rounded-2xl border border-gray-100 p-4 flex items-center gap-3`}>
+                <s.icon className={`h-5 w-5 ${s.color} flex-shrink-0`} />
+                <div>
+                  <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                  <p className="text-xs text-gray-400">{s.label}</p>
+                </div>
+              </motion.div>
+            ))}
+          </motion.div>
+
+          {/* Per-employee table */}
+          {data.employees.length > 0 && (
+            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="text-left py-2.5 px-3 font-semibold text-gray-600">Pracownik</th>
+                        <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Plan</th>
+                        <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Wykonane</th>
+                        <th className="text-right py-2.5 px-3 font-semibold text-gray-600">%</th>
+                        <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Plan km</th>
+                        <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Real km</th>
+                        <th className="text-right py-2.5 px-3 font-semibold text-gray-600">&Delta; km</th>
+                        <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Śr. opóźn.</th>
+                        <th className="w-8 px-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.employees.map(emp => {
+                        const isExpanded = expandedEmp === emp.employee_id;
+                        const rateColor = emp.completion_rate >= 80 ? 'text-emerald-600' : emp.completion_rate >= 50 ? 'text-amber-600' : 'text-red-600';
+                        const kmVarColor = Math.abs(emp.km_variance_pct) <= 10 ? 'text-gray-600' : emp.km_variance_pct > 10 ? 'text-red-600' : 'text-emerald-600';
+                        return (
+                          <Fragment key={emp.employee_id}>
+                            <tr
+                              className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors cursor-pointer"
+                              onClick={() => setExpandedEmp(isExpanded ? null : emp.employee_id)}
+                            >
+                              <td className="py-2.5 px-3 font-medium text-gray-800">{emp.employee_name}</td>
+                              <td className="py-2.5 px-3 text-right text-gray-600">{emp.planned_orders}</td>
+                              <td className="py-2.5 px-3 text-right text-gray-600">{emp.completed_orders}</td>
+                              <td className={`py-2.5 px-3 text-right font-bold ${rateColor}`}>{emp.completion_rate}%</td>
+                              <td className="py-2.5 px-3 text-right text-gray-600">{emp.planned_km}</td>
+                              <td className="py-2.5 px-3 text-right text-gray-600">{emp.actual_km}</td>
+                              <td className={`py-2.5 px-3 text-right font-medium ${kmVarColor}`}>
+                                {emp.km_variance_pct > 0 ? '+' : ''}{emp.km_variance_pct}%
+                              </td>
+                              <td className="py-2.5 px-3 text-right text-gray-600">{emp.avg_delay_minutes} min</td>
+                              <td className="py-2.5 px-2 text-gray-400">
+                                {isExpanded
+                                  ? <ChevronUp className="h-4 w-4" />
+                                  : <ChevronDown className="h-4 w-4" />
+                                }
+                              </td>
+                            </tr>
+                            {/* Expanded order details */}
+                            {isExpanded && (
+                              <tr>
+                                <td colSpan={9} className="bg-gray-50/70 px-3 py-2">
+                                  <div className="space-y-1.5">
+                                    {emp.orders.map(ord => {
+                                      const statusBg = ord.status === 'completed'
+                                        ? 'bg-emerald-100 text-emerald-700'
+                                        : ord.status === 'cancelled'
+                                        ? 'bg-red-100 text-red-700'
+                                        : 'bg-gray-100 text-gray-600';
+                                      return (
+                                        <div key={ord.order_id} className="flex items-center gap-4 text-xs bg-white rounded-lg p-2 border border-gray-100">
+                                          <span className="font-medium text-gray-800 w-36 truncate">{ord.client_name}</span>
+                                          <span className="text-gray-500">Plan: <strong>{ord.planned_time ?? '—'}</strong></span>
+                                          <span className="text-gray-500">Real: <strong>{ord.actual_start ?? '—'}</strong></span>
+                                          <span className="text-gray-500">Plan: {ord.planned_duration_min} min</span>
+                                          <span className="text-gray-500">Real: {ord.actual_duration_min ?? '—'} min</span>
+                                          {ord.delay_minutes > 0 && (
+                                            <span className="flex items-center gap-0.5 text-red-600">
+                                              <AlertTriangle className="h-3 w-3" />+{ord.delay_minutes} min
+                                            </span>
+                                          )}
+                                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusBg}`}>
+                                            {ord.status}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {data.employees.length === 0 && !loading && (
+            <div className="text-center py-8 text-gray-400">
+              <Navigation className="h-8 w-8 mx-auto mb-2 text-gray-200" />
+              <p className="text-sm">Brak danych plan vs wykonanie na wybrany dzień</p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

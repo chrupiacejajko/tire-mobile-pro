@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import {
   Route, ExternalLink, RefreshCw, Zap, Clock, MapPin,
   CheckCircle, AlertTriangle, XCircle, ChevronDown, ChevronUp,
   Navigation, Calendar, Copy, Car, User, TrendingUp,
-  Loader2,
+  Loader2, List, BarChart3,
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, useDraggable, useDroppable,
@@ -360,6 +360,114 @@ function DragOverlayCard({ order }: { order: UnassignedOrder }) {
   );
 }
 
+// ── Gantt View ───────────────────────────────────────────────────────────────
+
+function GanttView({ routes, date }: { routes: EmployeeRoute[]; date: string }) {
+  const START_HOUR = 7;
+  const END_HOUR = 20;
+  const TOTAL_MINUTES = (END_HOUR - START_HOUR) * 60;
+  const HOUR_WIDTH = 80;
+  const TOTAL_WIDTH = (END_HOUR - START_HOUR) * HOUR_WIDTH;
+  const ROW_HEIGHT = 48;
+
+  function timeToX(timeStr: string): number {
+    const [h, m] = timeStr.split(':').map(Number);
+    const minutes = (h - START_HOUR) * 60 + m;
+    return (minutes / TOTAL_MINUTES) * TOTAL_WIDTH;
+  }
+
+  const now = new Date();
+  const nowMinutes = (now.getHours() - START_HOUR) * 60 + now.getMinutes();
+  const nowX = (nowMinutes / TOTAL_MINUTES) * TOTAL_WIDTH;
+  const isToday = date === new Date().toISOString().split('T')[0];
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+      {/* Header with hours */}
+      <div className="flex border-b border-gray-200">
+        <div className="w-40 flex-shrink-0 bg-gray-50 border-r border-gray-200 px-3 py-2">
+          <span className="text-xs font-medium text-gray-400">Pracownik</span>
+        </div>
+        <div className="relative overflow-x-auto" style={{ width: TOTAL_WIDTH }}>
+          <div className="flex">
+            {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
+              <div key={i} className="border-r border-gray-100 text-center py-2 flex-shrink-0" style={{ width: HOUR_WIDTH }}>
+                <span className="text-[11px] text-gray-400">{String(START_HOUR + i).padStart(2, '0')}:00</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Rows per employee */}
+      {routes.map(route => (
+        <div key={route.employee_id} className="flex border-b border-gray-50 group hover:bg-gray-50/50">
+          <div className="w-40 flex-shrink-0 border-r border-gray-200 px-3 py-2 flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-orange-400" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-gray-800 truncate">{route.employee_name}</p>
+              {route.plate && <p className="text-[10px] text-gray-400 font-mono">{route.plate}</p>}
+            </div>
+          </div>
+          <div className="relative overflow-x-auto" style={{ width: TOTAL_WIDTH, height: ROW_HEIGHT }}>
+            {/* Grid lines */}
+            {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
+              <div key={i} className="absolute top-0 bottom-0 border-r border-gray-50" style={{ left: i * HOUR_WIDTH }} />
+            ))}
+
+            {/* Travel + service blocks */}
+            {route.schedule.map((stop, i) => {
+              const arrivalX = timeToX(stop.arrival_time);
+              const serviceStartX = timeToX(stop.service_start);
+              const departureX = timeToX(stop.departure_time);
+              const st = STATUS_STYLES[stop.time_window_status];
+              const serviceWidth = Math.max(departureX - serviceStartX, 4);
+
+              const prevDeparture = i > 0 ? timeToX(route.schedule[i - 1].departure_time) : null;
+
+              return (
+                <Fragment key={stop.order_id}>
+                  {/* Travel bar */}
+                  {prevDeparture !== null && (
+                    <div
+                      className="absolute top-1/2 -translate-y-1/2 h-1.5 bg-gray-200 rounded-full"
+                      style={{ left: prevDeparture, width: Math.max(arrivalX - prevDeparture, 2) }}
+                    />
+                  )}
+                  {/* Wait time */}
+                  {stop.wait_minutes > 0 && (
+                    <div
+                      className="absolute top-1/2 -translate-y-1/2 h-3 bg-blue-100 rounded border border-blue-200"
+                      style={{ left: arrivalX, width: Math.max(serviceStartX - arrivalX, 2) }}
+                    />
+                  )}
+                  {/* Service block */}
+                  <div
+                    className={`absolute top-1/2 -translate-y-1/2 h-7 rounded-md border cursor-pointer transition-all hover:scale-y-110 hover:shadow-sm ${st.bg} ${st.border}`}
+                    style={{ left: serviceStartX, width: serviceWidth }}
+                    title={`${stop.client_name}\n${stop.services.map((s: any) => typeof s === 'string' ? s : s?.name).join(', ')}\n${stop.arrival_time} — ${stop.departure_time}`}
+                  >
+                    <span className={`text-[10px] font-medium px-1 truncate block leading-7 ${st.text}`}>
+                      {stop.sequence}. {stop.client_name}
+                    </span>
+                  </div>
+                </Fragment>
+              );
+            })}
+
+            {/* Current time indicator */}
+            {isToday && nowX > 0 && nowX < TOTAL_WIDTH && (
+              <div className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-10" style={{ left: nowX }}>
+                <div className="w-2 h-2 rounded-full bg-red-500 -translate-x-[3px] -translate-y-0.5" />
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function PlannerPage() {
@@ -369,6 +477,8 @@ export default function PlannerPage() {
   const [optimizing, setOptimizing] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<UnassignedOrder | null>(null);
   const [inserting, setInserting] = useState(false);
+  const [bufferEnabled, setBufferEnabled] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'gantt'>('list');
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -409,7 +519,11 @@ export default function PlannerPage() {
       const res = await fetch('/api/planner/optimize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, commit: true }),
+        body: JSON.stringify({
+          date,
+          commit: true,
+          ...(bufferEnabled ? { buffer_pct: 0.4 } : {}),
+        }),
       });
       if (res.ok) load(date);
     } finally {
@@ -502,13 +616,23 @@ export default function PlannerPage() {
               Odśwież
             </button>
 
+            <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={bufferEnabled}
+                onChange={e => setBufferEnabled(e.target.checked)}
+                className="accent-orange-500 h-4 w-4"
+              />
+              <span className="text-xs text-gray-600 whitespace-nowrap">Bufor 40% na nagle zlecenia</span>
+            </label>
+
             <button
               onClick={handleOptimizeAll}
               disabled={!!optimizing || loading}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium transition-colors disabled:opacity-50"
             >
               <Zap className="h-4 w-4" />
-              {optimizing === 'all' ? 'Optymalizuję...' : 'Optymalizuj wszystko'}
+              {optimizing === 'all' ? 'Optymalizuje...' : 'Optymalizuj wszystko'}
             </button>
           </div>
         </div>
@@ -580,7 +704,33 @@ export default function PlannerPage() {
               ))}
             </div>
 
-            {/* Route cards */}
+            {/* View mode toggle */}
+            <div className="flex items-center gap-2 mb-4">
+              <button
+                onClick={() => setViewMode('list')}
+                className={cn(
+                  'flex items-center px-3 py-1.5 rounded-lg text-xs font-medium transition-all border',
+                  viewMode === 'list'
+                    ? 'bg-white shadow text-gray-900 border-gray-200'
+                    : 'text-gray-500 hover:text-gray-700 border-transparent hover:bg-gray-100'
+                )}
+              >
+                <List className="h-3.5 w-3.5 mr-1" />Lista
+              </button>
+              <button
+                onClick={() => setViewMode('gantt')}
+                className={cn(
+                  'flex items-center px-3 py-1.5 rounded-lg text-xs font-medium transition-all border',
+                  viewMode === 'gantt'
+                    ? 'bg-white shadow text-gray-900 border-gray-200'
+                    : 'text-gray-500 hover:text-gray-700 border-transparent hover:bg-gray-100'
+                )}
+              >
+                <BarChart3 className="h-3.5 w-3.5 mr-1" />Gantt
+              </button>
+            </div>
+
+            {/* Route cards / Gantt */}
             {loading ? (
               <div className="space-y-4">
                 {[1,2,3].map(i => <div key={i} className="h-48 bg-white animate-pulse rounded-2xl border border-gray-200" />)}
@@ -590,6 +740,8 @@ export default function PlannerPage() {
                 <Route className="h-12 w-12 text-gray-200 mx-auto mb-3" />
                 <p className="text-gray-400">Brak tras na wybrany dzień</p>
               </div>
+            ) : viewMode === 'gantt' ? (
+              <GanttView routes={data!.routes} date={date} />
             ) : (
               <div className="space-y-4">
                 {data?.routes?.map(route => (

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { sendBookingConfirmationForOrder } from '@/lib/email';
 
 // GET /api/orders - List orders with optional filters
 export async function GET(request: NextRequest) {
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const {
-      client_name, client_phone, address, city,
+      client_name, client_phone, client_email, address, city,
       scheduled_date, scheduled_time, time_window,
       service_ids, service_names, vehicles,
       notes, priority,
@@ -56,14 +57,15 @@ export async function POST(request: NextRequest) {
 
     if (existingClient) {
       clientId = existingClient.id;
-      // Update name/address if changed
-      await supabase.from('clients').update({ name: client_name, address: address || undefined, city: city || undefined }).eq('id', clientId);
+      // Update name/address/email if changed
+      await supabase.from('clients').update({ name: client_name, address: address || undefined, city: city || undefined, ...(client_email ? { email: client_email } : {}) }).eq('id', clientId);
     } else {
       const { data: newClient, error: clientError } = await supabase
         .from('clients')
         .insert({
           name: client_name || 'Klient online',
           phone: client_phone,
+          email: client_email || null,
           address: address || 'Do ustalenia',
           city: city || 'Do ustalenia',
           vehicles: [],
@@ -151,6 +153,18 @@ export async function POST(request: NextRequest) {
     }).select().single();
 
     if (orderError) return NextResponse.json({ error: orderError.message }, { status: 400 });
+
+    // ── Send booking confirmation email (fire-and-forget) ─────────────
+    sendBookingConfirmationForOrder(order.id, clientId, {
+      id: order.id,
+      status: order.status,
+      scheduled_date: order.scheduled_date,
+      scheduled_time_start: order.scheduled_time_start,
+      time_window: order.time_window,
+      services: resolvedServices,
+      total_price: totalPrice,
+      address: order.address,
+    }).catch(() => {});
 
     return NextResponse.json({
       success: true,

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Wrench, Calendar, Clock, MapPin, Phone, User, ChevronRight, ChevronLeft,
   Check, Car, Sun, Sunrise, Sunset, Plus, Trash2, Zap, ShoppingBag,
-  AlertCircle, Loader2, Star,
+  AlertCircle, Loader2, Star, Mail,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
@@ -140,7 +140,7 @@ export default function BookingPage() {
   const [selectedSlot, setSelectedSlot] = useState('');
 
   // Step 3 — contact
-  const [form, setForm] = useState({ name: '', phone: '', notes: '' });
+  const [form, setForm] = useState({ name: '', phone: '', email: '', notes: '' });
 
   // Submission
   const [submitting, setSubmitting] = useState(false);
@@ -304,6 +304,7 @@ export default function BookingPage() {
       body: JSON.stringify({
         client_name: form.name,
         client_phone: form.phone,
+        client_email: form.email || undefined,
         address,
         city,
         scheduled_date: selectedDate,
@@ -370,7 +371,20 @@ export default function BookingPage() {
               Łącznie: {totalPrice} zł
             </motion.p>
           </motion.div>
-          <p className="text-xs text-gray-600">Nr zlecenia: {orderId?.slice(0, 8).toUpperCase()}</p>
+          <p className="text-xs text-gray-600 mb-4">Nr zlecenia: {orderId?.slice(0, 8).toUpperCase()}</p>
+          {orderId && (
+            <a
+              href={`/tracking/${orderId}`}
+              className="inline-block rounded-xl bg-orange-500 px-6 py-2.5 text-sm font-semibold text-white hover:bg-orange-600 transition-colors"
+            >
+              Sledz zlecenie
+            </a>
+          )}
+          {form.email && (
+            <p className="text-xs text-gray-500 mt-3">
+              Potwierdzenie wyslano na {form.email}
+            </p>
+          )}
         </motion.div>
       </div>
     );
@@ -780,9 +794,10 @@ export default function BookingPage() {
               {[
                 { label: 'Imię i nazwisko', key: 'name', icon: User, type: 'text', required: true, placeholder: 'Jan Kowalski' },
                 { label: 'Telefon', key: 'phone', icon: Phone, type: 'tel', required: true, placeholder: '+48 600 000 000' },
+                { label: 'Email (opcjonalnie)', key: 'email', icon: Mail, type: 'email', required: false, placeholder: 'jan@example.com' },
               ].map(field => (
                 <div key={field.key}>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">{field.label} *</label>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">{field.label}{field.required ? ' *' : ''}</label>
                   <div className="relative">
                     <field.icon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
                     <input

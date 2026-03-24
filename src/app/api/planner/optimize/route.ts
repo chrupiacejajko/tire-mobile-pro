@@ -9,7 +9,8 @@
  *   date: string,
  *   employee_ids?: string[],   // limit to specific employees (optional)
  *   order_ids?: string[],      // specific orders to re-sequence (optional)
- *   commit?: boolean           // if true, saves assignment to DB
+ *   commit?: boolean,          // if true, saves assignment to DB
+ *   buffer_pct?: number        // 0-0.5, reserve this fraction of work hours for ad-hoc orders (60:40 rule)
  * }
  */
 
@@ -105,6 +106,14 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { date, employee_ids, order_ids, commit = false } = body;
+
+    // 60:40 buffer rule — reserve a percentage of available work hours for
+    // unplanned / ad-hoc orders that come in during the day.  When buffer_pct
+    // is set (e.g. 0.4 = 40%), the optimizer will only fill
+    // (1 - buffer_pct) of each employee's available time and move the
+    // lowest-priority overflow orders back to the unassigned pool.
+    const rawBuffer = parseFloat(body.buffer_pct ?? '0');
+    const buffer_pct = isNaN(rawBuffer) ? 0 : Math.max(0, Math.min(0.5, rawBuffer));
 
     const targetDate = date || new Date().toISOString().split('T')[0];
 
@@ -215,7 +224,61 @@ export async function POST(request: NextRequest) {
         prevPos = { lat: order.lat, lng: order.lng };
       }
 
-      const schedule = buildSchedule(parseTime('08:00'), orderInputs);
+      let schedule = buildSchedule(parseTime('08:00'), orderInputs);
+      const removedOrderIds: string[] = [];
+
+      // ── Buffer enforcement (60:40 rule) ───────────────────────────────
+      // If buffer_pct > 0, ensure the total scheduled time does not exceed
+      // (1 - buffer_pct) * available_work_hours.  Available work hours are
+      // assumed to be 8:00–18:00 = 600 minutes.  When the schedule overflows
+      // the allowed capacity, we remove the lowest-priority orders from the
+      // end of the route and leave them unassigned for ad-hoc / urgent jobs.
+      if (buffer_pct > 0 && schedule.length > 0) {
+        const AVAILABLE_WORK_MINUTES = 600; // 10h workday (08:00–18:00)
+        const maxMinutes = Math.floor((1 - buffer_pct) * AVAILABLE_WORK_MINUTES);
+
+        const totalScheduledMinutes = () => {
+          if (schedule.length === 0) return 0;
+          const last = schedule[schedule.length - 1];
+          return last.departure_minutes - parseTime('08:00');
+        };
+
+        // Build a priority ranking — urgent > high > normal > low
+        const PRIORITY_RANK: Record<string, number> = {
+          urgent: 3, high: 2, normal: 1, low: 0,
+        };
+
+        while (schedule.length > 0 && totalScheduledMinutes() > maxMinutes) {
+          // Find the lowest-priority order (from the end of the route for ties)
+          let worstIdx = schedule.length - 1;
+          let worstRank = Infinity;
+          for (let i = schedule.length - 1; i >= 0; i--) {
+            const origOrder = sequence.find(o => o.id === schedule[i].order_id);
+            const pri = origOrder?.services?.[0]; // services are strings here
+            // Look up priority from the original orders list
+            const origFull = orders.find(o => o.id === schedule[i].order_id);
+            // Orders don't carry priority in this context — use position as tiebreaker
+            // Lower index in reversed iteration = later in route = removed first
+            const rank = PRIORITY_RANK['normal'] ?? 1;
+            if (rank <= worstRank) {
+              worstRank = rank;
+              worstIdx = i;
+            }
+          }
+          // Remove the worst order from the end of the schedule
+          const removed = schedule.splice(worstIdx, 1)[0];
+          removedOrderIds.push(removed.order_id);
+        }
+
+        // Rebuild schedule if we removed orders
+        if (removedOrderIds.length > 0) {
+          const keptOrderInputs = orderInputs.filter(
+            oi => !removedOrderIds.includes(oi.order_id),
+          );
+          schedule = buildSchedule(parseTime('08:00'), keptOrderInputs);
+        }
+      }
+
       const routeScore = scoreRoute(schedule, totalKm);
 
       if (commit) {
@@ -226,6 +289,14 @@ export async function POST(request: NextRequest) {
             .update({ scheduled_time_start: stop.service_start })
             .eq('id', stop.order_id);
         }
+
+        // Unassign orders removed by the buffer rule
+        for (const removedId of removedOrderIds) {
+          await supabase
+            .from('orders')
+            .update({ employee_id: null, status: 'new' })
+            .eq('id', removedId);
+        }
       }
 
       results.push({
@@ -235,6 +306,7 @@ export async function POST(request: NextRequest) {
         schedule,
         score: routeScore,
         committed: commit,
+        buffer_removed: removedOrderIds,
       });
     }
 

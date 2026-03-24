@@ -5,7 +5,7 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // booking.routetire.pl → rewrite to /booking
-  if (hostname.startsWith('booking.') && !pathname.startsWith('/booking') && !pathname.startsWith('/api')) {
+  if (hostname.startsWith('booking.') && !pathname.startsWith('/booking') && !pathname.startsWith('/api') && !pathname.startsWith('/tracking')) {
     const url = request.nextUrl.clone();
     url.pathname = '/booking';
     return NextResponse.rewrite(url);
@@ -25,7 +25,8 @@ export async function proxy(request: NextRequest) {
     request.nextUrl.pathname.startsWith('/login') ||
     request.nextUrl.pathname.startsWith('/register') ||
     request.nextUrl.pathname.startsWith('/booking') ||
-    request.nextUrl.pathname.startsWith('/mobile')
+    request.nextUrl.pathname.startsWith('/mobile') ||
+    request.nextUrl.pathname.startsWith('/tracking')
   ) {
     return NextResponse.next();
   }

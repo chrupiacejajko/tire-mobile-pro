@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import {
   MapPin, Phone, CheckCircle, Navigation, Camera, ChevronDown,
   ChevronUp, Clock, Circle, Loader2, AlertCircle, Star, ArrowRight, Play,
+  Compass,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 
@@ -53,6 +54,17 @@ interface WorkerData {
   tasks: Task[];
   stats: { total: number; completed: number; remaining: number; progress_pct: number };
   next_task_id: string | null;
+}
+
+interface NearbyOrder {
+  id: string;
+  client_name: string;
+  address: string;
+  distance_km: number;
+  services: string[];
+  time_window: string | null;
+  priority: string;
+  total_price: number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -289,6 +301,71 @@ function TaskCard({
   );
 }
 
+// ── Nearby Order Card ──────────────────────────────────────────────────────────
+
+function NearbyOrderCard({
+  order,
+  onAccept,
+  accepting,
+}: {
+  order: NearbyOrder;
+  onAccept: (orderId: string) => void;
+  accepting: string | null;
+}) {
+  return (
+    <div className="rounded-2xl border border-blue-200 bg-blue-50/40 p-4 space-y-2">
+      <div className="flex items-start justify-between">
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-sm text-gray-900">{order.client_name}</p>
+          <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5">
+            <MapPin className="h-3 w-3 flex-shrink-0" />{order.address}
+          </p>
+        </div>
+        <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full flex-shrink-0 ml-2">
+          {order.distance_km} km
+        </span>
+      </div>
+
+      {order.services.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {order.services.map((s, i) => (
+            <span key={i} className="text-xs bg-white text-gray-600 px-2 py-0.5 rounded-lg border border-gray-200">
+              {s}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3 text-xs text-gray-500">
+        {order.time_window && (
+          <span className="flex items-center gap-1">
+            <Clock className="h-3 w-3" />{TIME_WINDOW_LABELS[order.time_window] ?? order.time_window}
+          </span>
+        )}
+        {order.priority === 'urgent' && (
+          <span className="text-red-600 font-bold">PILNE</span>
+        )}
+        {order.total_price > 0 && (
+          <span>{order.total_price} zl</span>
+        )}
+      </div>
+
+      <button
+        onClick={() => onAccept(order.id)}
+        disabled={accepting === order.id}
+        className="w-full py-3 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+      >
+        {accepting === order.id ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <CheckCircle className="h-4 w-4" />
+        )}
+        Przyjmij zlecenie
+      </button>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function MobilePage() {
@@ -301,6 +378,10 @@ export default function MobilePage() {
   const [shift, setShift] = useState<Shift | null>(null);
   const [shiftLoading, setShiftLoading] = useState(false);
   const [shiftSeconds, setShiftSeconds] = useState(0);
+  const [nearbyOrders, setNearbyOrders] = useState<NearbyOrder[]>([]);
+  const [nearbyExpanded, setNearbyExpanded] = useState(false);
+  const [nearbyLoading, setNearbyLoading] = useState(false);
+  const [acceptingOrder, setAcceptingOrder] = useState<string | null>(null);
 
   // Get employee_id from user profile
   useEffect(() => {
@@ -333,6 +414,50 @@ export default function MobilePage() {
       .then(d => { if (d?.shift) setShift(d.shift); })
       .catch(() => {});
   }, [employeeId]);
+
+  // Fetch nearby unassigned orders using GPS
+  const loadNearby = useCallback(async () => {
+    setNearbyLoading(true);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 }),
+      );
+      const today = new Date().toISOString().split('T')[0];
+      const res = await fetch(
+        `/api/worker/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&date=${today}&radius=15`,
+      );
+      const json = await res.json();
+      setNearbyOrders(json.nearby || []);
+    } catch {
+      // GPS denied or fetch failed — silently ignore
+      setNearbyOrders([]);
+    } finally {
+      setNearbyLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!employeeId) return;
+    loadNearby();
+  }, [employeeId, loadNearby]);
+
+  const handleAcceptOrder = async (orderId: string) => {
+    if (!employeeId) return;
+    setAcceptingOrder(orderId);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const res = await fetch('/api/planner/insert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: orderId, employee_id: employeeId, date: today }),
+      });
+      if (res.ok) {
+        // Refresh both task list and nearby orders
+        await Promise.all([load(employeeId), loadNearby()]);
+      }
+    } catch { /* ignore */ }
+    finally { setAcceptingOrder(null); }
+  };
 
   // Timer effect: tick every second while shift is active
   useEffect(() => {
@@ -541,6 +666,57 @@ export default function MobilePage() {
             onComplete={setCompleteTask}
           />
         ))}
+      </div>
+
+      {/* Nearby unassigned orders */}
+      <div className="px-4 pb-4">
+        <button
+          onClick={() => setNearbyExpanded(e => !e)}
+          className="w-full flex items-center justify-between py-3"
+        >
+          <div className="flex items-center gap-2">
+            <Compass className="h-5 w-5 text-blue-500" />
+            <span className="font-semibold text-gray-800 text-sm">
+              Zlecenia w okolicy
+              {nearbyOrders.length > 0 && (
+                <span className="ml-1 text-blue-600">({nearbyOrders.length})</span>
+              )}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {nearbyLoading && <Loader2 className="h-4 w-4 text-blue-400 animate-spin" />}
+            {nearbyExpanded
+              ? <ChevronUp className="h-4 w-4 text-gray-400" />
+              : <ChevronDown className="h-4 w-4 text-gray-400" />
+            }
+          </div>
+        </button>
+
+        {nearbyExpanded && (
+          <div className="space-y-3">
+            {nearbyOrders.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">
+                {nearbyLoading ? 'Szukam zlecen w okolicy...' : 'Brak zlecen w poblizu'}
+              </p>
+            ) : (
+              nearbyOrders.map(order => (
+                <NearbyOrderCard
+                  key={order.id}
+                  order={order}
+                  onAccept={handleAcceptOrder}
+                  accepting={acceptingOrder}
+                />
+              ))
+            )}
+            <button
+              onClick={loadNearby}
+              disabled={nearbyLoading}
+              className="w-full py-2 text-sm text-blue-500 font-medium"
+            >
+              {nearbyLoading ? 'Odswiezam...' : 'Odswiez lokalizacje'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Complete modal */}
