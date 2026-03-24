@@ -78,8 +78,6 @@ interface EmployeeRow {
   hourly_rate: number;
   shift_rate: number | null;
   phone_secondary: string | null;
-  mobile_login: string | null;
-  mobile_password: string | null;
   vehicle_info: string | null;
   is_active: boolean;
   working_hours: Record<string, { start: string; end: string } | null>;
@@ -100,8 +98,6 @@ interface EmployeeForm {
   region_id: string;
   default_vehicle_id: string;
   shift_rate: string;
-  mobile_login: string;
-  mobile_password: string;
   role: string;
   skill_ids: string[];
 }
@@ -109,7 +105,7 @@ interface EmployeeForm {
 const emptyForm: EmployeeForm = {
   first_name: '', last_name: '', email: '', phone: '', phone_secondary: '',
   region_id: '', default_vehicle_id: '', shift_rate: '',
-  mobile_login: '', mobile_password: '', role: 'worker', skill_ids: [],
+  role: 'worker', skill_ids: [],
 };
 
 const SKILL_BADGE_COLORS = [
@@ -236,8 +232,6 @@ export default function EmployeesPage() {
         region_id: form.region_id || null,
         default_vehicle_id: form.default_vehicle_id || null,
         shift_rate: form.shift_rate || null,
-        mobile_login: form.mobile_login,
-        mobile_password: form.mobile_password,
         role: form.role,
         skill_ids: form.skill_ids,
       }),
@@ -261,8 +255,6 @@ export default function EmployeesPage() {
       region_id: emp.region_id || '',
       default_vehicle_id: emp.default_vehicle_id || '',
       shift_rate: emp.shift_rate != null ? String(emp.shift_rate) : '',
-      mobile_login: emp.mobile_login || '',
-      mobile_password: emp.mobile_password || '',
       role: emp.user?.role || 'worker',
       skill_ids: emp.employee_skills?.map(es => es.skill_id) || [],
     });
@@ -287,8 +279,6 @@ export default function EmployeesPage() {
         region_id: editForm.region_id || null,
         default_vehicle_id: editForm.default_vehicle_id || null,
         shift_rate: editForm.shift_rate || null,
-        mobile_login: editForm.mobile_login,
-        mobile_password: editForm.mobile_password,
         skill_ids: editForm.skill_ids,
       }),
     });
@@ -507,16 +497,6 @@ export default function EmployeesPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label>Login mobilny</Label>
-          <Input value={formData.mobile_login} onChange={e => setFormData(f => ({ ...f, mobile_login: e.target.value }))} />
-        </div>
-        <div className="space-y-2">
-          <Label>Hasło mobilne</Label>
-          <Input type="password" value={formData.mobile_password} onChange={e => setFormData(f => ({ ...f, mobile_password: e.target.value }))} />
-        </div>
-      </div>
     </>
   );
 

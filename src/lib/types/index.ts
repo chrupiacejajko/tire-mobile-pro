@@ -56,8 +56,6 @@ export interface Employee {
   vehicle_info: string | null;
   default_vehicle_id: string | null;
   phone_secondary: string | null;
-  mobile_login: string | null;
-  mobile_password: string | null;
   is_active: boolean;
   working_hours: WorkingHours;
   created_at: string;

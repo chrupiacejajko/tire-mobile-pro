@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     const {
       first_name, last_name, email, phone, phone_secondary,
       region_id, default_vehicle_id, shift_rate,
-      mobile_login, mobile_password, role, skill_ids,
+      role, skill_ids,
     } = body;
 
     const full_name = `${first_name || ''} ${last_name || ''}`.trim();
@@ -60,8 +60,6 @@ export async function POST(request: NextRequest) {
       default_vehicle_id: default_vehicle_id || null,
       shift_rate: shift_rate ? Number(shift_rate) : null,
       phone_secondary: phone_secondary || null,
-      mobile_login: mobile_login || null,
-      mobile_password: mobile_password || null,
       skills: [],
       hourly_rate: 0,
     }).select().single();
@@ -94,7 +92,7 @@ export async function PUT(request: NextRequest) {
     const {
       id, first_name, last_name, phone, phone_secondary, role,
       region_id, default_vehicle_id, shift_rate,
-      mobile_login, mobile_password, is_active, skill_ids,
+      is_active, skill_ids,
       start_time, end_time, skills, hourly_rate,
     } = body;
 
@@ -141,8 +139,6 @@ export async function PUT(request: NextRequest) {
     if (phone_secondary !== undefined) employeeUpdate.phone_secondary = phone_secondary || null;
     if (default_vehicle_id !== undefined) employeeUpdate.default_vehicle_id = default_vehicle_id || null;
     if (shift_rate !== undefined) employeeUpdate.shift_rate = shift_rate ? Number(shift_rate) : null;
-    if (mobile_login !== undefined) employeeUpdate.mobile_login = mobile_login || null;
-    if (mobile_password !== undefined) employeeUpdate.mobile_password = mobile_password || null;
     if (is_active !== undefined) employeeUpdate.is_active = is_active;
     if (region_id !== undefined) employeeUpdate.region_id = region_id || null;
     if (hourly_rate !== undefined) employeeUpdate.hourly_rate = Number(hourly_rate);
