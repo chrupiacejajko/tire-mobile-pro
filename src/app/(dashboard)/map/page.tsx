@@ -681,7 +681,22 @@ function OrderDetailPanel({ order, onClose, onRefresh }: { order: MapOrder; onCl
           )}
           {order.lat && order.lng && (
             <Button variant="outline" className="w-full rounded-xl"
-              onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${order.lat},${order.lng}`, '_blank')}>
+              onClick={async () => {
+                let originParam = '';
+                if (order.employee_id) {
+                  try {
+                    // Fetch latest GPS position for the assigned employee
+                    const res = await fetch(`/api/employee-gps?employee_id=${order.employee_id}`);
+                    if (res.ok) {
+                      const gps = await res.json();
+                      if (gps.lat && gps.lng) {
+                        originParam = `&origin=${gps.lat},${gps.lng}`;
+                      }
+                    }
+                  } catch { /* fallback: Google Maps uses user's current location */ }
+                }
+                window.open(`https://www.google.com/maps/dir/?api=1${originParam}&destination=${order.lat},${order.lng}&travelmode=driving`, '_blank');
+              }}>
               <Navigation className="h-4 w-4 mr-2" />Nawiguj do klienta
             </Button>
           )}
