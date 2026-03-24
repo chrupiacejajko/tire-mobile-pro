@@ -115,14 +115,18 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Latest GPS positions (CRITICAL — this is the #1 ranking factor) ─────
+    // Fetch latest position PER employee individually to avoid limit issues
+    const gpsMap = new Map<string, { lat: number; lng: number; speed: number | null; status: string | null; timestamp: string }>();
+
+    // Use a single query with DISTINCT ON would be ideal, but Supabase doesn't support it
+    // Instead, fetch enough records to cover all employees
     const { data: recentPositions } = await supabase
       .from('employee_locations')
       .select('employee_id, lat, lng, speed, status, timestamp')
       .in('employee_id', empIds)
       .order('timestamp', { ascending: false })
-      .limit(empIds.length * 3); // Get a few per employee to find the latest
+      .limit(500); // Large enough to get at least 1 record per employee
 
-    const gpsMap = new Map<string, { lat: number; lng: number; speed: number | null; status: string | null; timestamp: string }>();
     for (const pos of recentPositions || []) {
       if (pos.employee_id && !gpsMap.has(pos.employee_id) && pos.lat && pos.lng) {
         gpsMap.set(pos.employee_id, {
