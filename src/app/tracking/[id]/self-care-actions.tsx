@@ -72,7 +72,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
       if (!res.ok) {
         setMessage({ type: 'error', text: data.error || 'Wystapil blad.' });
       } else {
-        setMessage({ type: 'success', text: data.message || 'Termin zostal zmieniony.' });
+        setMessage({ type: 'success', text: data.message || 'Termin został zmieniony.' });
         setShowReschedule(false);
         setTimeout(() => router.refresh(), 1500);
       }
@@ -133,7 +133,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
               onClick={() => { setShowReschedule(true); setShowCancel(false); }}
               className="flex-1 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-600 hover:bg-orange-100 transition-colors"
             >
-              Zmien termin
+              Zmień termin
             </button>
           )}
           {canCancel && (
@@ -141,7 +141,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
               onClick={() => { setShowCancel(true); setShowReschedule(false); }}
               className="flex-1 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors"
             >
-              Anuluj wizyte
+              Anuluj wizytę
             </button>
           )}
         </div>
@@ -205,7 +205,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
             disabled={!selectedDate || !selectedWindow || submitting}
             className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {submitting ? 'Zapisywanie...' : 'Potwierdz zmiane'}
+            {submitting ? 'Zapisywanie...' : 'Potwierdź zmianę'}
           </button>
         </div>
       )}
@@ -214,7 +214,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
       {showCancel && (
         <div className="rounded-2xl border border-red-100 bg-white p-5 space-y-4">
           <p className="text-sm font-semibold text-gray-900 text-center">
-            Czy na pewno chcesz anulowac wizyte?
+            Czy na pewno chcesz anulować wizytę?
           </p>
           <p className="text-xs text-gray-500 text-center">
             Ta operacja jest nieodwracalna.
@@ -224,7 +224,7 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
               onClick={() => setShowCancel(false)}
               className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
             >
-              Nie, wroc
+              Nie, wróć
             </button>
             <button
               onClick={handleCancel}

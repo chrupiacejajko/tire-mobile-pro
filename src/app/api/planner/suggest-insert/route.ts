@@ -1,12 +1,19 @@
 /**
  * POST /api/planner/suggest-insert
  *
- * Suggest the best employees to handle an unassigned order.
- * Ranks employees by route insertion cost + distance from current GPS position.
+ * Smart worker suggestion for dispatchers.
+ *
+ * PRIMARY ranking factor: Real-time GPS distance to the order.
+ * The worker who is PHYSICALLY CLOSEST right now ranks first.
+ *
+ * Secondary factors:
+ * - Route insertion cost (how many extra km added to their day)
+ * - Skills match
+ * - Current workload (fewer orders = better)
+ * - Priority handling (urgent orders skip workload balancing)
  *
  * Body: { order_id: string, date?: string }
- *
- * Returns top 3 suggestions sorted by insertion cost ascending.
+ * Returns top 5 suggestions sorted by composite score.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -27,7 +34,7 @@ export async function POST(request: NextRequest) {
     // ── Fetch the target order with client coords ───────────────────────────
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .select('id, scheduled_date, required_skills, client:clients(lat, lng)')
+      .select('id, scheduled_date, priority, required_skills, client:clients(lat, lng)')
       .eq('id', order_id)
       .single();
 
@@ -38,14 +45,15 @@ export async function POST(request: NextRequest) {
     const orderClient = (order as any).client;
     if (!orderClient?.lat || !orderClient?.lng) {
       return NextResponse.json(
-        { error: 'Order client has no coordinates' },
+        { error: 'Zlecenie nie ma współrzędnych GPS. Sprawdź adres klienta.', suggestions: [] },
         { status: 422 },
       );
     }
 
-    const newPoint = { lat: orderClient.lat as number, lng: orderClient.lng as number };
+    const orderPoint = { lat: orderClient.lat as number, lng: orderClient.lng as number };
     const targetDate = date || order.scheduled_date || new Date().toISOString().split('T')[0];
     const requiredSkills: string[] = (order as any).required_skills ?? [];
+    const isUrgent = order.priority === 'urgent' || order.priority === 'high';
 
     // ── Fetch all active employees ──────────────────────────────────────────
     const { data: employees } = await supabase
@@ -58,6 +66,15 @@ export async function POST(request: NextRequest) {
     }
 
     const empIds = employees.map((e) => e.id);
+
+    // ── Check unavailabilities ──────────────────────────────────────────────
+    const { data: unavailabilities } = await supabase
+      .from('unavailabilities')
+      .select('employee_id')
+      .lte('start_date', targetDate)
+      .gte('end_date', targetDate);
+
+    const unavailableIds = new Set((unavailabilities ?? []).map(u => u.employee_id));
 
     // ── Vehicle plates ──────────────────────────────────────────────────────
     const { data: vehicleAssignments } = await supabase
@@ -97,68 +114,91 @@ export async function POST(request: NextRequest) {
       orderCountByEmployee.set(o.employee_id, (orderCountByEmployee.get(o.employee_id) || 0) + 1);
     }
 
-    // ── Latest GPS positions ────────────────────────────────────────────────
+    // ── Latest GPS positions (CRITICAL — this is the #1 ranking factor) ─────
     const { data: recentPositions } = await supabase
       .from('employee_locations')
-      .select('employee_id, lat, lng')
+      .select('employee_id, lat, lng, speed, status, timestamp')
       .in('employee_id', empIds)
-      .order('timestamp', { ascending: false });
+      .order('timestamp', { ascending: false })
+      .limit(empIds.length * 3); // Get a few per employee to find the latest
 
-    const gpsMap = new Map<string, { lat: number; lng: number }>();
+    const gpsMap = new Map<string, { lat: number; lng: number; speed: number | null; status: string | null; timestamp: string }>();
     for (const pos of recentPositions || []) {
       if (pos.employee_id && !gpsMap.has(pos.employee_id) && pos.lat && pos.lng) {
-        gpsMap.set(pos.employee_id, { lat: pos.lat, lng: pos.lng });
+        gpsMap.set(pos.employee_id, {
+          lat: pos.lat,
+          lng: pos.lng,
+          speed: pos.speed,
+          status: pos.status,
+          timestamp: pos.timestamp,
+        });
       }
     }
 
     // ── Score each employee ─────────────────────────────────────────────────
-    const scored: {
+    interface Suggestion {
       employee_id: string;
       employee_name: string;
       plate: string | null;
       current_orders: number;
       insertion_index: number;
       extra_km: number;
-      distance_from_current: number | null;
+      gps_distance_km: number | null;
+      gps_status: string | null;
+      gps_speed: number | null;
       has_skills: boolean;
+      is_driving: boolean;
+      is_nearby: boolean;
       score: number;
-    }[] = [];
+    }
+
+    const scored: Suggestion[] = [];
 
     for (const emp of employees) {
+      // Skip unavailable employees
+      if (unavailableIds.has(emp.id)) continue;
+
       const waypoints = ordersByEmployee.get(emp.id) || [];
       const currentOrders = orderCountByEmployee.get(emp.id) || 0;
-      const gpsPos = gpsMap.get(emp.id);
+      const gpsData = gpsMap.get(emp.id);
 
       const hasSkills =
         requiredSkills.length === 0 ||
         requiredSkills.every((s) => (emp.skills ?? []).includes(s));
 
-      let insertionIndex: number;
-      let extraKm: number;
-      let distanceFromCurrent: number | null = null;
-
-      if (gpsPos) {
-        distanceFromCurrent = Math.round(haversineKm(gpsPos.lat, gpsPos.lng, newPoint.lat, newPoint.lng) * 10) / 10;
+      // ── GPS distance (primary factor) ─────────────────────────
+      let gpsDistanceKm: number | null = null;
+      if (gpsData) {
+        gpsDistanceKm = Math.round(haversineKm(gpsData.lat, gpsData.lng, orderPoint.lat, orderPoint.lng) * 10) / 10;
       }
 
+      // ── Route insertion cost ──────────────────────────────────
+      let insertionIndex: number;
+      let extraKm: number;
+
       if (waypoints.length === 0) {
-        // Empty route — cost is distance from GPS to order (or null)
         insertionIndex = 0;
-        extraKm = distanceFromCurrent ?? 0;
+        extraKm = gpsDistanceKm ?? 999;
       } else {
-        const result = findBestInsertion(waypoints, newPoint);
+        const result = findBestInsertion(waypoints, orderPoint);
         insertionIndex = result.index;
         extraKm = result.costKm;
       }
 
-      // Score: lower = better
-      // Primary: extra_km (route cost)
-      // Secondary: skills mismatch penalty
-      // Tertiary: workload balance (more orders = slightly worse)
-      const score =
-        extraKm +
-        (hasSkills ? 0 : 200) +
-        currentOrders * 2;
+      // ── Composite score (lower = better) ──────────────────────
+      // GPS distance is the #1 factor — who is closest RIGHT NOW
+      const gpsScore = gpsDistanceKm !== null ? gpsDistanceKm * 3 : 500; // heavy weight on proximity
+      const routeScore = extraKm * 1; // secondary: route efficiency
+      const skillPenalty = hasSkills ? 0 : 300; // big penalty for missing skills
+      const workloadPenalty = isUrgent ? 0 : currentOrders * 5; // for urgent, ignore workload
+
+      // Bonus for workers who are currently driving (they can reroute easily)
+      const drivingBonus = gpsData?.status === 'driving' ? -10 : 0;
+
+      const score = gpsScore + routeScore + skillPenalty + workloadPenalty + drivingBonus;
+
+      const isDriving = gpsData?.status === 'driving' || (gpsData?.speed ?? 0) > 5;
+      const isNearby = gpsDistanceKm !== null && gpsDistanceKm < 20;
 
       scored.push({
         employee_id: emp.id,
@@ -167,16 +207,20 @@ export async function POST(request: NextRequest) {
         current_orders: currentOrders,
         insertion_index: insertionIndex,
         extra_km: extraKm,
-        distance_from_current: distanceFromCurrent,
+        gps_distance_km: gpsDistanceKm,
+        gps_status: gpsData?.status ?? null,
+        gps_speed: gpsData?.speed ?? null,
         has_skills: hasSkills,
+        is_driving: isDriving,
+        is_nearby: isNearby,
         score,
       });
     }
 
     scored.sort((a, b) => a.score - b.score);
 
-    // Return top 3, stripping the internal score field
-    const suggestions = scored.slice(0, 3).map(({ score: _score, ...rest }) => rest);
+    // Return top 5
+    const suggestions = scored.slice(0, 5).map(({ score: _score, ...rest }) => rest);
 
     return NextResponse.json({ suggestions });
   } catch (err) {

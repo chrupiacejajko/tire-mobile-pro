@@ -8,7 +8,7 @@ const STATUS_STEPS = [
   { key: 'assigned', label: 'Przypisane' },
   { key: 'in_transit', label: 'W drodze' },
   { key: 'in_progress', label: 'W trakcie' },
-  { key: 'completed', label: 'Zakonczone' },
+  { key: 'completed', label: 'Zakończone' },
 ] as const;
 
 type OrderStatus = (typeof STATUS_STEPS)[number]['key'];
@@ -26,22 +26,22 @@ function getStatusMessage(
 ): string {
   const windowLabels: Record<string, string> = {
     morning: 'rano (8:00-12:00)',
-    afternoon: 'po poludniu (12:00-16:00)',
+    afternoon: 'po południu (12:00-16:00)',
     evening: 'wieczorem (16:00-20:00)',
   };
   const tw = timeWindow ? windowLabels[timeWindow] || timeWindow : '';
 
   switch (status) {
     case 'new':
-      return 'Zlecenie przyjete. Wkrotce przydzielimy technika.';
+      return 'Zlecenie przyjęte. Wkrótce przydzielimy technika.';
     case 'assigned':
-      return `Technik przydzielony. ${employeeName || 'Technik'} odwiedzi Cie ${scheduledDate || ''}${tw ? ` (${tw})` : ''}.`;
+      return `Technik przydzielony. ${employeeName || 'Technik'} odwiedzi Cię ${scheduledDate || ''}${tw ? ` (${tw})` : ''}.`;
     case 'in_transit':
       return `${employeeName || 'Technik'} jest w drodze do Ciebie.`;
     case 'in_progress':
-      return 'Technik jest na miejscu i wykonuje usluge.';
+      return 'Technik jest na miejscu i wykonuje usługę.';
     case 'completed':
-      return 'Usluga zakonczona. Dziekujemy!';
+      return 'Usługa zakończona. Dziękujemy! ⭐';
     default:
       return 'Status zlecenia nieznany.';
   }
@@ -97,7 +97,7 @@ export default async function TrackingPage({
 
   const timeWindowLabels: Record<string, string> = {
     morning: 'Rano (8:00-12:00)',
-    afternoon: 'Po poludniu (12:00-16:00)',
+    afternoon: 'Po południu (12:00-16:00)',
     evening: 'Wieczorem (16:00-20:00)',
   };
 
@@ -289,7 +289,7 @@ export default async function TrackingPage({
                   </div>
                   {order.total_price != null && (
                     <div className="border-t border-gray-100 mt-2 pt-2 flex items-center justify-between">
-                      <span className="text-sm font-semibold text-gray-700">Lacznie</span>
+                      <span className="text-sm font-semibold text-gray-700">Łącznie</span>
                       <span className="text-sm font-bold text-orange-600">
                         {order.total_price} zl
                       </span>

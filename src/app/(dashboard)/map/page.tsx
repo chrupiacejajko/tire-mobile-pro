@@ -641,13 +641,20 @@ function OrderDetailPanel({ order, onClose, onRefresh }: { order: MapOrder; onCl
         {suggestions.length > 0 && (
           <div className="space-y-2">
             <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Sugestie przypisania</p>
-            {suggestions.slice(0, 3).map((s: any) => (
-              <div key={s.employee_id} className="border border-gray-100 rounded-xl p-3 flex items-center justify-between">
+            {suggestions.slice(0, 5).map((s: any) => (
+              <div key={s.employee_id} className={`border rounded-xl p-3 flex items-center justify-between ${s.is_nearby ? 'border-emerald-200 bg-emerald-50/50' : 'border-gray-100'}`}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-900">{s.employee_name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-gray-900">{s.employee_name}</p>
+                    {s.is_driving && <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-medium">W trasie</span>}
+                    {s.is_nearby && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded-full font-medium">Blisko!</span>}
+                  </div>
                   {s.plate && <p className="text-xs text-gray-400 font-mono">{s.plate}</p>}
                   <div className="flex items-center gap-3 mt-0.5">
-                    <span className="text-[11px] text-gray-500">+{s.extra_km?.toFixed(1) ?? '?'} km</span>
+                    {s.gps_distance_km !== null && (
+                      <span className="text-[11px] font-semibold text-blue-600">📍 {s.gps_distance_km} km</span>
+                    )}
+                    <span className="text-[11px] text-gray-500">+{s.extra_km?.toFixed(1) ?? '?'} km trasy</span>
                     <span className="text-[11px] text-gray-500">{s.current_orders ?? 0} zleceń</span>
                   </div>
                 </div>
