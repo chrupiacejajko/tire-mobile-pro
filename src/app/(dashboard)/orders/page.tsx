@@ -39,6 +39,13 @@ const statusConfig: Record<OrderStatus, { label: string; color: string; bg: stri
   cancelled: { label: 'Anulowane', color: 'text-red-700', bg: 'bg-red-50 border-red-200', icon: XCircle },
 };
 
+const INTERNAL_TASK_LABELS: Record<string, string> = {
+  pickup: 'Odbiór opon',
+  cleaning: 'Sprzątanie',
+  delivery: 'Dostawa',
+  other: 'Inne',
+};
+
 const priorityConfig: Record<OrderPriority, { label: string; dot: string }> = {
   low: { label: 'Niski', dot: 'bg-gray-400' },
   normal: { label: 'Normalny', dot: 'bg-blue-500' },
@@ -60,6 +67,9 @@ interface OrderRow {
   total_price: number;
   notes: string | null;
   required_skills?: string[] | null;
+  source?: string | null;
+  internal_task_type?: string | null;
+  is_paid_time?: boolean | null;
   created_at: string;
   client?: { name: string; phone: string };
   employee?: { user: { full_name: string } } | null;
@@ -762,17 +772,31 @@ export default function OrdersPage() {
                             </div>
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <p className="text-sm font-semibold text-gray-900">{order.client?.name || 'Nieznany klient'}</p>
+                                {order.source === 'internal' && (
+                                  <Wrench className="h-3.5 w-3.5 text-teal-600 shrink-0" />
+                                )}
+                                <p className="text-sm font-semibold text-gray-900">
+                                  {order.source === 'internal'
+                                    ? (INTERNAL_TASK_LABELS[order.internal_task_type || ''] || 'Zadanie wewnętrzne')
+                                    : (order.client?.name || 'Nieznany klient')}
+                                </p>
                                 <div className={`h-1.5 w-1.5 rounded-full ${pCfg.dot}`} title={pCfg.label} />
                               </div>
                               <div className="flex items-center gap-3 mt-0.5">
+                                {order.source === 'internal' && (
+                                  <Badge className="text-[9px] rounded-md bg-teal-50 text-teal-700 border-teal-200 border px-1.5 py-0">
+                                    Wewnętrzne
+                                  </Badge>
+                                )}
                                 <span className="flex items-center gap-1 text-xs text-gray-400">
                                   <Calendar className="h-3 w-3" />{order.scheduled_date}
                                 </span>
                                 <span className="flex items-center gap-1 text-xs text-gray-400">
                                   <Clock className="h-3 w-3" />{order.scheduled_time_start?.slice(0, 5)}
                                 </span>
-                                <span className="text-xs font-medium text-gray-600">{order.total_price} zł</span>
+                                {order.source !== 'internal' && (
+                                  <span className="text-xs font-medium text-gray-600">{order.total_price} zł</span>
+                                )}
                               </div>
                             </div>
                           </div>

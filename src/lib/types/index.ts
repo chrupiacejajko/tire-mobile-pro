@@ -32,6 +32,7 @@ export interface Region {
   main_address: string | null;
   main_lat: number | null;
   main_lng: number | null;
+  display_order: number;
   created_at: string;
 }
 
@@ -56,6 +57,9 @@ export interface Employee {
   vehicle_info: string | null;
   default_vehicle_id: string | null;
   phone_secondary: string | null;
+  default_location: string | null;
+  default_lat: number | null;
+  default_lng: number | null;
   is_active: boolean;
   working_hours: WorkingHours;
   created_at: string;
@@ -151,6 +155,10 @@ export interface Order {
   services: OrderService[];
   total_price: number;
   notes: string | null;
+  dispatcher_notes: string | null;
+  additional_phone: string | null;
+  internal_task_type: 'pickup' | 'cleaning' | 'delivery' | 'other' | null;
+  is_paid_time: boolean;
   photos: string[];
   created_at: string;
   completed_at: string | null;

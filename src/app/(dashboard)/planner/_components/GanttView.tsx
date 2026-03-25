@@ -13,7 +13,6 @@ import {
   type GanttDragState,
   type GanttContextMenu,
   type GanttTooltip,
-  STATUS_STYLES,
 } from './types';
 import { ScoreBadge, WorkerStatusDot } from './ScoreDisplay';
 
@@ -40,30 +39,46 @@ interface GanttViewProps {
   onRefresh: () => void;
 }
 
-// Status → gradient bg for service blocks
-const blockGradients: Record<string, string> = {
-  ok:         'linear-gradient(to right, rgba(209,250,229,0.95), rgba(236,253,245,0.7))',
-  early_wait: 'linear-gradient(to right, rgba(219,234,254,0.95), rgba(239,246,255,0.7))',
-  tight:      'linear-gradient(to right, rgba(254,243,199,0.95), rgba(255,251,235,0.7))',
-  late:       'linear-gradient(to right, rgba(254,226,226,0.95), rgba(255,241,242,0.7))',
-  no_window:  'linear-gradient(to right, rgba(243,244,246,0.9), rgba(249,250,251,0.7))',
+// ── Delay tolerance color system (9 levels + 2 statuses) ─────────────────────
+// Maps flexibility_minutes + order status to visual style
+
+interface DelayToleranceStyle {
+  color: string;
+  label: string;
+  bg: string;
+  border: string;
+  accent: string;
+  textClass: string;
+}
+
+const DELAY_TOLERANCE_COLORS: Record<string, DelayToleranceStyle> = {
+  completed:   { color: '#1F2937', label: 'Zakończone',  bg: '#1F2937',  border: '1px solid #374151', accent: '#1F2937', textClass: 'text-white' },
+  in_progress: { color: '#1F2937', label: 'W realizacji', bg: 'repeating-linear-gradient(45deg, #1F2937, #1F2937 4px, #4B5563 4px, #4B5563 8px)', border: '1px solid #374151', accent: '#1F2937', textClass: 'text-white' },
+  exact:       { color: '#EF4444', label: 'Na czas',     bg: 'rgba(239,68,68,0.15)',  border: '1px solid rgba(239,68,68,0.4)',  accent: '#EF4444', textClass: 'text-red-700' },
+  flex_30:     { color: '#F87171', label: 'Do 30 min',   bg: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.35)', accent: '#F87171', textClass: 'text-red-600' },
+  flex_60:     { color: '#F97316', label: 'Do 1h',       bg: 'rgba(249,115,22,0.12)',  border: '1px solid rgba(249,115,22,0.35)',  accent: '#F97316', textClass: 'text-orange-700' },
+  flex_90:     { color: '#FB923C', label: 'Do 1.5h',     bg: 'rgba(251,146,60,0.12)',  border: '1px solid rgba(251,146,60,0.35)',  accent: '#FB923C', textClass: 'text-orange-600' },
+  flex_120:    { color: '#22C55E', label: 'Do 2h',       bg: 'rgba(34,197,94,0.12)',   border: '1px solid rgba(34,197,94,0.35)',   accent: '#22C55E', textClass: 'text-green-700' },
+  flex_150:    { color: '#4ADE80', label: 'Do 2.5h',     bg: 'rgba(74,222,128,0.12)',  border: '1px solid rgba(74,222,128,0.35)',  accent: '#4ADE80', textClass: 'text-green-600' },
+  flex_180:    { color: '#3B82F6', label: 'Do 3h',       bg: 'rgba(59,130,246,0.12)',  border: '1px solid rgba(59,130,246,0.35)',  accent: '#3B82F6', textClass: 'text-blue-700' },
+  flex_240:    { color: '#8B5CF6', label: 'Do 4h',       bg: 'rgba(139,92,246,0.12)',  border: '1px solid rgba(139,92,246,0.35)',  accent: '#8B5CF6', textClass: 'text-purple-700' },
+  flexible:    { color: '#9CA3AF', label: 'Elastyczne',  bg: 'rgba(156,163,175,0.1)',  border: '1px solid rgba(156,163,175,0.25)', accent: '#9CA3AF', textClass: 'text-gray-600' },
 };
 
-const blockBorders: Record<string, string> = {
-  ok:         '1px solid rgba(16,185,129,0.3)',
-  early_wait: '1px solid rgba(59,130,246,0.3)',
-  tight:      '1px solid rgba(245,158,11,0.3)',
-  late:       '1px solid rgba(239,68,68,0.4)',
-  no_window:  '1px solid rgba(156,163,175,0.25)',
-};
+function getDelayToleranceLevel(flexibilityMinutes: number, orderStatus: string): string {
+  if (orderStatus === 'completed' || orderStatus === 'cancelled') return 'completed';
+  if (orderStatus === 'in_progress') return 'in_progress';
+  if (flexibilityMinutes <= 0) return 'exact';
+  if (flexibilityMinutes <= 30) return 'flex_30';
+  if (flexibilityMinutes <= 60) return 'flex_60';
+  if (flexibilityMinutes <= 90) return 'flex_90';
+  if (flexibilityMinutes <= 120) return 'flex_120';
+  if (flexibilityMinutes <= 150) return 'flex_150';
+  if (flexibilityMinutes <= 180) return 'flex_180';
+  if (flexibilityMinutes <= 240) return 'flex_240';
+  return 'flexible';
+}
 
-const blockAccent: Record<string, string> = {
-  ok:         '#059669',
-  early_wait: '#2563eb',
-  tight:      '#d97706',
-  late:       '#dc2626',
-  no_window:  '#9ca3af',
-};
 
 export function GanttView({
   routes,
@@ -192,12 +207,15 @@ export function GanttView({
     const arrivalX = timeToX(stop.arrival_time);
     const serviceStartX = timeToX(stop.service_start);
     const departureX = timeToX(stop.departure_time);
-    const st = STATUS_STYLES[stop.time_window_status];
     const serviceWidth = Math.max(departureX - serviceStartX, 6);
     const isDraggingThis = dragging?.orderId === stop.order_id;
     const offsetX = isDraggingThis ? dragOffset.x : 0;
     const offsetY = isDraggingThis ? dragOffset.y : 0;
-    const accent = blockAccent[stop.time_window_status] || blockAccent.no_window;
+
+    // New delay tolerance color system
+    const level = getDelayToleranceLevel(stop.flexibility_minutes ?? 0, stop.order_status ?? 'pending');
+    const dtStyle = DELAY_TOLERANCE_COLORS[level] || DELAY_TOLERANCE_COLORS.flexible;
+    const isCompletedOrInProgress = level === 'completed' || level === 'in_progress';
 
     return (
       <Fragment key={stop.order_id}>
@@ -226,7 +244,7 @@ export function GanttView({
             }}
           />
         )}
-        {/* Service block — gradient with accent bar */}
+        {/* Service block — delay tolerance colored */}
         <div
           className={cn(
             'absolute top-1/2 -translate-y-1/2 rounded-lg cursor-grab select-none transition-shadow overflow-hidden',
@@ -237,9 +255,9 @@ export function GanttView({
             left: serviceStartX + offsetX,
             width: serviceWidth,
             height: '36px',
-            background: blockGradients[stop.time_window_status] || blockGradients.no_window,
-            border: blockBorders[stop.time_window_status] || blockBorders.no_window,
-            borderLeft: `4px solid ${accent}`,
+            background: dtStyle.bg,
+            border: dtStyle.border,
+            borderLeft: `4px solid ${dtStyle.accent}`,
             ...(isDraggingThis ? { transform: `translate(0, calc(-50% + ${offsetY}px))`, zIndex: 50 } : {}),
           }}
           onMouseDown={(e) => handleBlockMouseDown(e, stop.order_id, employeeId, serviceStartX)}
@@ -249,12 +267,12 @@ export function GanttView({
         >
           <div className="flex items-center h-full px-1.5 gap-1 min-w-0">
             {isLocked && <span className="text-[9px]">🔒</span>}
-            {stop.time_window_status === 'late' && <AlertTriangle className="h-2.5 w-2.5 text-red-500 flex-shrink-0" />}
-            <span className={`text-[10px] font-semibold truncate ${st.text}`}>
+            {stop.time_window_status === 'late' && !isCompletedOrInProgress && <AlertTriangle className="h-2.5 w-2.5 text-red-500 flex-shrink-0" />}
+            <span className={`text-[10px] font-semibold truncate ${dtStyle.textClass}`}>
               {stop.sequence}. {stop.client_name}
             </span>
             {serviceWidth > 80 && (
-              <span className={`text-[8px] ml-auto flex-shrink-0 opacity-60 ${st.text}`}>
+              <span className={`text-[8px] ml-auto flex-shrink-0 opacity-60 ${dtStyle.textClass}`}>
                 {stop.service_start}
               </span>
             )}
@@ -419,6 +437,7 @@ export function GanttView({
                         arrival_time: order.scheduled_time_start ?? '--:--', wait_minutes: 0,
                         service_start: order.scheduled_time_start ?? '--:--', service_duration_minutes: 0,
                         departure_time: '--:--', delay_minutes: 0,
+                        flexibility_minutes: 0, order_status: order.status ?? 'pending',
                       };
                       setTooltip({ x: e.clientX, y: e.clientY - 10, stop: fakeStop, employeeName: 'Nieprzypisane' });
                     }
@@ -456,13 +475,18 @@ export function GanttView({
           )}
           <div className="mt-1.5 text-xs text-gray-500 space-y-0.5">
             <p><Clock className="inline h-3 w-3 mr-1 text-gray-400" />{tooltip.stop.arrival_time} — {tooltip.stop.departure_time}</p>
-            {tooltip.stop.time_window_status !== 'no_window' && (
-              <p>
-                <span className={`inline-block w-2 h-2 rounded-full mr-1 ${STATUS_STYLES[tooltip.stop.time_window_status].dot}`} />
-                {STATUS_STYLES[tooltip.stop.time_window_status].label}
-                {tooltip.stop.delay_minutes > 0 && <span className="text-red-600 ml-1">+{tooltip.stop.delay_minutes} min</span>}
-              </p>
-            )}
+            {/* Delay tolerance badge */}
+            {(() => {
+              const ttLevel = getDelayToleranceLevel(tooltip.stop.flexibility_minutes ?? 0, tooltip.stop.order_status ?? 'pending');
+              const ttStyle = DELAY_TOLERANCE_COLORS[ttLevel];
+              return ttStyle ? (
+                <p className="flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: ttStyle.color }} />
+                  <span>{ttStyle.label}</span>
+                  {tooltip.stop.delay_minutes > 0 && <span className="text-red-600 ml-1">+{tooltip.stop.delay_minutes} min</span>}
+                </p>
+              ) : null;
+            })()}
             {tooltip.stop.time_window_label && (
               <p className="text-[10px] text-gray-400">Okno: {tooltip.stop.time_window_label}</p>
             )}

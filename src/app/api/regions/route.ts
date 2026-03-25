@@ -10,7 +10,8 @@ export async function GET() {
   const { data, error } = await supabase
     .from('regions')
     .select('*')
-    .order('name');
+    .order('display_order', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   // Add counts
@@ -58,6 +59,7 @@ export async function PUT(req: NextRequest) {
   if (body.main_address !== undefined) updates.main_address = body.main_address || null;
   if (body.main_lat !== undefined) updates.main_lat = body.main_lat;
   if (body.main_lng !== undefined) updates.main_lng = body.main_lng;
+  if (body.display_order !== undefined) updates.display_order = body.display_order;
 
   const { data, error } = await supabase
     .from('regions')
@@ -67,6 +69,26 @@ export async function PUT(req: NextRequest) {
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data);
+}
+
+export async function PATCH(req: NextRequest) {
+  const body = await req.json();
+  const { reorder } = body;
+  if (!Array.isArray(reorder) || reorder.length === 0) {
+    return NextResponse.json({ error: 'reorder array required' }, { status: 400 });
+  }
+
+  const results = await Promise.all(
+    reorder.map(({ id, display_order }: { id: string; display_order: number }) =>
+      supabase.from('regions').update({ display_order }).eq('id', id)
+    )
+  );
+
+  const failed = results.find(r => r.error);
+  if (failed?.error) {
+    return NextResponse.json({ error: failed.error.message }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(req: NextRequest) {

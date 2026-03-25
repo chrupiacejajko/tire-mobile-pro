@@ -99,6 +99,8 @@ export interface OrderInput {
   services: string[];
   travel_from_prev_minutes: number;  // HERE ETA from previous stop
   service_duration_minutes?: number; // total duration of all services for this order
+  flexibility_minutes?: number;      // delay tolerance in minutes (from order)
+  order_status?: string;             // order status (e.g. 'completed', 'in_progress')
 }
 
 export interface ScheduledStop {
@@ -121,6 +123,8 @@ export interface ScheduledStop {
   departure_time: string;
   departure_minutes: number;  // for chaining next stop
   delay_minutes: number;       // how many minutes late (0 if on time)
+  flexibility_minutes: number; // delay tolerance from order (0 = exact time)
+  order_status: string;        // order status for coloring
 }
 
 /**
@@ -198,6 +202,8 @@ export function buildSchedule(
       departure_time: formatTime(departureMinutes),
       departure_minutes: departureMinutes,
       delay_minutes: delayMinutes,
+      flexibility_minutes: order.flexibility_minutes ?? 0,
+      order_status: order.order_status ?? 'pending',
     };
   });
 }

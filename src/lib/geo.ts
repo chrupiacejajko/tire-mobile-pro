@@ -142,6 +142,53 @@ export function pointInPolygon(
   return inside;
 }
 
+/**
+ * Parse coordinates from various input formats:
+ * - Plain coords: "51.7592, 19.4560" or "51.7592,19.4560"
+ * - Google Maps share: "https://maps.google.com/...@51.7592,19.4560,..."
+ * - Google Maps embed: "!3d51.7592!4d19.4560"
+ * - Negative coords supported
+ */
+export function parseCoordinates(input: string): { lat: number; lng: number } | null {
+  if (!input || typeof input !== 'string') return null;
+
+  const trimmed = input.trim();
+
+  // Google Maps embed format: !3d<lat>!4d<lng>
+  const embedMatch = trimmed.match(/!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)/);
+  if (embedMatch) {
+    const lat = parseFloat(embedMatch[1]);
+    const lng = parseFloat(embedMatch[2]);
+    if (isValidCoord(lat, lng)) return { lat, lng };
+  }
+
+  // Google Maps share link: @<lat>,<lng>
+  const mapsMatch = trimmed.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)/);
+  if (mapsMatch) {
+    const lat = parseFloat(mapsMatch[1]);
+    const lng = parseFloat(mapsMatch[2]);
+    if (isValidCoord(lat, lng)) return { lat, lng };
+  }
+
+  // Plain coordinates: "51.7592, 19.4560" or "51.7592,19.4560"
+  const plainMatch = trimmed.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+  if (plainMatch) {
+    const lat = parseFloat(plainMatch[1]);
+    const lng = parseFloat(plainMatch[2]);
+    if (isValidCoord(lat, lng)) return { lat, lng };
+  }
+
+  return null;
+}
+
+function isValidCoord(lat: number, lng: number): boolean {
+  return (
+    !isNaN(lat) && !isNaN(lng) &&
+    lat >= -90 && lat <= 90 &&
+    lng >= -180 && lng <= 180
+  );
+}
+
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }

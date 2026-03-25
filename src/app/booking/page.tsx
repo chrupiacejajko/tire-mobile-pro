@@ -142,6 +142,9 @@ export default function BookingPage() {
   // Step 3 — contact
   const [form, setForm] = useState({ name: '', phone: '', email: '', notes: '' });
 
+  // Nearby driver ETA
+  const [nearbyDriver, setNearbyDriver] = useState<{ first_name: string; eta_minutes: number } | null>(null);
+
   // Submission
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -232,6 +235,27 @@ export default function BookingPage() {
       if (smart.windows) setSmartWindows(smart.windows);
       if (slotData.all_slots) setSlots(slotData.all_slots);
     }).finally(() => setLoadingWindows(false));
+  }, [selectedDate, clientLat, clientLng]);
+
+  // ── Fetch nearby driver when date + location are set ───────────────────
+  useEffect(() => {
+    if (!selectedDate || clientLat === null || clientLng === null) {
+      setNearbyDriver(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/availability/nearby-driver?lat=${clientLat}&lng=${clientLng}&date=${selectedDate}`)
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        if (data.available && data.driver) {
+          setNearbyDriver({ first_name: data.driver.first_name, eta_minutes: data.driver.eta_minutes });
+        } else {
+          setNearbyDriver(null);
+        }
+      })
+      .catch(() => { if (!cancelled) setNearbyDriver(null); });
+    return () => { cancelled = true; };
   }, [selectedDate, clientLat, clientLng]);
 
   // ── Derived values ─────────────────────────────────────────────────────
@@ -727,6 +751,16 @@ export default function BookingPage() {
                       </button>
                     ))}
                   </div>
+
+                  {/* Nearby driver ETA badge */}
+                  {nearbyDriver && (
+                    <div className="flex items-center gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                      <span className="text-lg">🟢</span>
+                      <p className="text-sm text-emerald-400 font-medium">
+                        Dostępny kierowca ~{nearbyDriver.eta_minutes} min od Ciebie
+                      </p>
+                    </div>
+                  )}
 
                   {loadingWindows ? (
                     <div className="flex items-center justify-center py-8 gap-3 text-sm text-gray-500">

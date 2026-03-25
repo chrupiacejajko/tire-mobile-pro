@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Topbar } from '@/components/layout/topbar';
 import { Card, CardContent } from '@/components/ui/card';
@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/tabs';
 import {
   Plus, Search, Pencil, UserCog, Users, Clock,
-  CalendarOff, Trash2, Award, Mail, RotateCcw, Link,
+  CalendarOff, Trash2, Award, Mail, RotateCcw, Link, MapPin,
 } from 'lucide-react';
 import type { Region, Skill } from '@/lib/types';
 
@@ -60,6 +60,13 @@ interface UnavailabilityRow {
   employee?: { id: string; user: { full_name: string } | null } | null;
 }
 
+/* -- HERE autocomplete suggestion -- */
+interface HereSuggestion {
+  id: string;
+  title: string;
+  address?: { label?: string };
+}
+
 interface VehicleOption {
   id: string;
   plate_number: string;
@@ -78,6 +85,9 @@ interface EmployeeRow {
   hourly_rate: number;
   shift_rate: number | null;
   phone_secondary: string | null;
+  default_location: string | null;
+  default_lat: number | null;
+  default_lng: number | null;
   vehicle_info: string | null;
   is_active: boolean;
   working_hours: Record<string, { start: string; end: string } | null>;
@@ -95,6 +105,9 @@ interface EmployeeForm {
   email: string;
   phone: string;
   phone_secondary: string;
+  default_location: string;
+  default_lat: number | null;
+  default_lng: number | null;
   region_id: string;
   default_vehicle_id: string;
   shift_rate: string;
@@ -104,6 +117,7 @@ interface EmployeeForm {
 
 const emptyForm: EmployeeForm = {
   first_name: '', last_name: '', email: '', phone: '', phone_secondary: '',
+  default_location: '', default_lat: null, default_lng: null,
   region_id: '', default_vehicle_id: '', shift_rate: '',
   role: 'worker', skill_ids: [],
 };
@@ -151,6 +165,50 @@ export default function EmployeesPage() {
     employee_id: '', type: 'vacation', start_date: '', end_date: '',
     start_time: '', end_time: '', notes: '',
   });
+
+  // Address autocomplete state
+  const [addressSuggestions, setAddressSuggestions] = useState<HereSuggestion[]>([]);
+  const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
+  const addressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleAddressChange = (value: string, setFormData: React.Dispatch<React.SetStateAction<EmployeeForm>>) => {
+    setFormData(f => ({ ...f, default_location: value, default_lat: null, default_lng: null }));
+    if (addressTimeoutRef.current) clearTimeout(addressTimeoutRef.current);
+    if (value.length < 3) {
+      setAddressSuggestions([]);
+      setShowAddressSuggestions(false);
+      return;
+    }
+    addressTimeoutRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/here-autocomplete?q=${encodeURIComponent(value)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setAddressSuggestions(data.items || []);
+          setShowAddressSuggestions(true);
+        }
+      } catch {
+        setAddressSuggestions([]);
+      }
+    }, 300);
+  };
+
+  const selectAddressSuggestion = async (suggestion: HereSuggestion, setFormData: React.Dispatch<React.SetStateAction<EmployeeForm>>) => {
+    setFormData(f => ({ ...f, default_location: suggestion.address?.label || suggestion.title }));
+    setShowAddressSuggestions(false);
+    setAddressSuggestions([]);
+    try {
+      const res = await fetch(`/api/here-lookup?id=${encodeURIComponent(suggestion.id)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.lat && data.lng) {
+          setFormData(f => ({ ...f, default_lat: data.lat, default_lng: data.lng }));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   // Invite state
   const [inviteToast, setInviteToast] = useState<{ message: string; url?: string } | null>(null);
@@ -229,6 +287,9 @@ export default function EmployeesPage() {
         email: form.email,
         phone: form.phone,
         phone_secondary: form.phone_secondary,
+        default_location: form.default_location || null,
+        default_lat: form.default_lat,
+        default_lng: form.default_lng,
         region_id: form.region_id || null,
         default_vehicle_id: form.default_vehicle_id || null,
         shift_rate: form.shift_rate || null,
@@ -240,6 +301,8 @@ export default function EmployeesPage() {
     setSaving(false);
     setDialogOpen(false);
     setForm({ ...emptyForm });
+    setAddressSuggestions([]);
+    setShowAddressSuggestions(false);
     fetchData();
   };
 
@@ -252,6 +315,9 @@ export default function EmployeesPage() {
       email: emp.user?.email || '',
       phone: emp.user?.phone || '',
       phone_secondary: emp.phone_secondary || '',
+      default_location: emp.default_location || '',
+      default_lat: emp.default_lat ?? null,
+      default_lng: emp.default_lng ?? null,
       region_id: emp.region_id || '',
       default_vehicle_id: emp.default_vehicle_id || '',
       shift_rate: emp.shift_rate != null ? String(emp.shift_rate) : '',
@@ -275,6 +341,9 @@ export default function EmployeesPage() {
         last_name: editForm.last_name,
         phone: editForm.phone,
         phone_secondary: editForm.phone_secondary,
+        default_location: editForm.default_location || null,
+        default_lat: editForm.default_lat,
+        default_lng: editForm.default_lng,
         role: editForm.role,
         region_id: editForm.region_id || null,
         default_vehicle_id: editForm.default_vehicle_id || null,
@@ -286,6 +355,8 @@ export default function EmployeesPage() {
     setEditSaving(false);
     setEditDialogOpen(false);
     setEditingEmployee(null);
+    setAddressSuggestions([]);
+    setShowAddressSuggestions(false);
     fetchData();
   };
 
@@ -416,6 +487,40 @@ export default function EmployeesPage() {
           <Label>Telefon prywatny</Label>
           <Input value={formData.phone_secondary} onChange={e => setFormData(f => ({ ...f, phone_secondary: e.target.value }))} />
         </div>
+      </div>
+
+      {/* Default location (home address) with HERE autocomplete */}
+      <div className="space-y-2 relative">
+        <Label className="flex items-center gap-1.5">
+          <MapPin className="h-3.5 w-3.5 text-orange-500" />
+          Adres domowy (punkt startowy)
+        </Label>
+        <Input
+          value={formData.default_location}
+          onChange={e => handleAddressChange(e.target.value, setFormData)}
+          onFocus={() => { if (addressSuggestions.length > 0) setShowAddressSuggestions(true); }}
+          onBlur={() => setTimeout(() => setShowAddressSuggestions(false), 200)}
+          placeholder="Wpisz adres..."
+        />
+        {showAddressSuggestions && addressSuggestions.length > 0 && (
+          <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border rounded-xl shadow-lg max-h-48 overflow-y-auto">
+            {addressSuggestions.map(s => (
+              <button
+                key={s.id}
+                type="button"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-orange-50 transition-colors"
+                onMouseDown={() => selectAddressSuggestion(s, setFormData)}
+              >
+                {s.address?.label || s.title}
+              </button>
+            ))}
+          </div>
+        )}
+        {formData.default_lat && formData.default_lng && (
+          <p className="text-xs text-gray-400">
+            GPS: {formData.default_lat.toFixed(5)}, {formData.default_lng.toFixed(5)}
+          </p>
+        )}
       </div>
 
       {!isEdit && (

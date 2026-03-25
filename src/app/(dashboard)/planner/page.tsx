@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Route, CheckCircle, Loader2,
 } from 'lucide-react';
@@ -22,7 +23,12 @@ import { toastOptimizeAll, toastInsert, toastReoptimize, toastReassign, toastErr
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function PlannerPage() {
-  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const [date, setDate] = useState(() => {
+    const urlDate = searchParams.get('date');
+    return urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : new Date().toISOString().split('T')[0];
+  });
   const [data, setData] = useState<PlannerData | null>(null);
   const [loading, setLoading] = useState(true);
   const [optimizing, setOptimizing] = useState<string | null>(null);
@@ -60,6 +66,16 @@ export default function PlannerPage() {
   }, []);
 
   useEffect(() => { load(date); }, [date, load]);
+
+  // Sync date to URL search params
+  useEffect(() => {
+    const current = searchParams.get('date');
+    if (current !== date) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('date', date);
+      router.replace(`?${params.toString()}`, { scroll: false });
+    }
+  }, [date, searchParams, router]);
 
   // ── Undo handler ──────────────────────────────────────────────────────────
 

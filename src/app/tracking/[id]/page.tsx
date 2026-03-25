@@ -2,6 +2,7 @@ import { getAdminClient } from '@/lib/supabase/admin';
 import { notFound } from 'next/navigation';
 import { TrackingRefresher } from './tracking-refresher';
 import { SelfCareActions } from './self-care-actions';
+import { TrackingMap } from './tracking-map';
 
 const STATUS_STEPS = [
   { key: 'new', label: 'Nowe' },
@@ -78,7 +79,7 @@ export default async function TrackingPage({
       `
       id, status, priority, scheduled_date, scheduled_time_start, time_window,
       services, total_price, notes, address,
-      client:clients(name, phone, address, city),
+      client:clients(name, phone, address, city, lat, lng),
       employee:employees(id, user:profiles(full_name, phone))
     `
     )
@@ -91,7 +92,7 @@ export default async function TrackingPage({
 
   const status = (order.status as OrderStatus) || 'new';
   const currentStep = getStepIndex(status);
-  const client = order.client as unknown as { name: string; phone: string; address: string; city: string } | null;
+  const client = order.client as unknown as { name: string; phone: string; address: string; city: string; lat: number | null; lng: number | null } | null;
   const employee = order.employee as unknown as { id: string; user: { full_name: string; phone: string | null } | null } | null;
   const employeeName = employee?.user?.full_name || null;
   const employeePhone = employee?.user?.phone || null;
@@ -103,6 +104,90 @@ export default async function TrackingPage({
     evening: 'Wieczorem (16:00-20:00)',
   };
 
+  // ── For in_transit / in_progress: show the premium map view ──────────
+  const showMapView = status === 'in_transit' || status === 'in_progress';
+
+  if (showMapView) {
+    // Fetch initial tracking data for SSR hydration
+    let initialTrackingData = null;
+    try {
+      let driverLat: number | null = null;
+      let driverLng: number | null = null;
+      let driverSpeed: number | null = null;
+      let vehicleInfo: { brand: string; model: string; plate: string } | null = null;
+
+      if (employee?.id) {
+        const { data: loc } = await supabase
+          .from('employee_locations')
+          .select('lat, lng, speed, timestamp')
+          .eq('employee_id', employee.id)
+          .order('timestamp', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (loc) {
+          driverLat = loc.lat;
+          driverLng = loc.lng;
+          driverSpeed = loc.speed;
+        }
+
+        const { data: assignment } = await supabase
+          .from('vehicle_assignments')
+          .select('vehicle:vehicles(brand, model, plate_number)')
+          .eq('employee_id', employee.id)
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+
+        if (assignment) {
+          const v = (assignment as any).vehicle;
+          if (v) vehicleInfo = { brand: v.brand, model: v.model, plate: v.plate_number };
+        }
+      }
+
+      let etaMinutes: number | null = null;
+      const destLat = client?.lat ?? null;
+      const destLng = client?.lng ?? null;
+      if (driverLat != null && driverLng != null && destLat != null && destLng != null) {
+        const R = 6371;
+        const dLat = ((destLat - driverLat) * Math.PI) / 180;
+        const dLng = ((destLng - driverLng) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) ** 2 +
+          Math.cos((driverLat * Math.PI) / 180) * Math.cos((destLat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+        const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const avgSpeed = driverSpeed && driverSpeed > 5 ? driverSpeed : 40;
+        etaMinutes = Math.max(1, Math.round((dist / avgSpeed) * 60));
+      }
+
+      initialTrackingData = {
+        order: {
+          id: order.id,
+          status: order.status,
+          address: order.address,
+          lat: destLat,
+          lng: destLng,
+          scheduled_date: order.scheduled_date,
+          time_window: order.time_window,
+        },
+        driver: employee
+          ? {
+              name: employeeName,
+              lat: driverLat,
+              lng: driverLng,
+              vehicle: vehicleInfo,
+            }
+          : null,
+        eta_minutes: etaMinutes,
+      };
+    } catch {
+      // If tracking data fails, still show the map with whatever we have
+    }
+
+    return <TrackingMap orderId={order.id} initialData={initialTrackingData} />;
+  }
+
+  // ── For other statuses: show the card-based view ─────────────────────
   return (
     <div className="min-h-screen bg-white">
       <TrackingRefresher />

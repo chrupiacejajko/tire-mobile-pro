@@ -990,9 +990,224 @@ function FinanseView() {
   );
 }
 
+// ── Work Time types ──────────────────────────────────────────────────────────
+interface WorkTimeEmployee {
+  employee_id: string;
+  employee_name: string;
+  scheduled_days: number;
+  scheduled_hours: number;
+  actual_hours: number;
+  break_hours: number;
+  completed_orders: number;
+  shift_rate: number | null;
+  total_earnings: number;
+  effective_rate: number;
+  below_minimum: boolean;
+}
+
+interface WorkTimeReport {
+  period: { from: string; to: string };
+  employees: WorkTimeEmployee[];
+}
+
+// ── Polish number formatter ──────────────────────────────────────────────────
+const plNum = (n: number, decimals = 2) =>
+  n.toLocaleString('pl-PL', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+
+// ── Work Time (Czas pracy) view ──────────────────────────────────────────────
+function WorkTimeView() {
+  const initRange = getPresetRange('month');
+  const [from, setFrom] = useState(initRange.from);
+  const [to, setTo] = useState(initRange.to);
+  const [data, setData] = useState<WorkTimeReport | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/reports/work-time?from=${from}&to=${to}`);
+      const json = await res.json();
+      setData(json);
+    } catch {
+      /* ignore */
+    }
+    setLoading(false);
+  }, [from, to]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const exportCSV = () => {
+    if (!data) return;
+    const BOM = '\uFEFF';
+    const headers = 'Pracownik;Dni pracy;Planowane h;Faktyczne h;Przerwy h;Zlecenia;Stawka/zmiane;Zarobek;Stawka/h;Ponizej minimum\n';
+    const rows = data.employees.map(e =>
+      [
+        e.employee_name,
+        e.scheduled_days,
+        plNum(e.scheduled_hours),
+        plNum(e.actual_hours),
+        plNum(e.break_hours),
+        e.completed_orders,
+        e.shift_rate != null ? plNum(e.shift_rate) : '',
+        plNum(e.total_earnings),
+        plNum(e.effective_rate),
+        e.below_minimum ? 'TAK' : 'NIE',
+      ].join(';')
+    ).join('\n');
+    const blob = new Blob([BOM + headers + rows], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `czas-pracy_${from}_${to}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Summary calculations
+  const summary = data ? {
+    totalDays: data.employees.reduce((s, e) => s + e.scheduled_days, 0),
+    totalScheduledHours: data.employees.reduce((s, e) => s + e.scheduled_hours, 0),
+    totalActualHours: data.employees.reduce((s, e) => s + e.actual_hours, 0),
+    totalOrders: data.employees.reduce((s, e) => s + e.completed_orders, 0),
+    totalEarnings: data.employees.reduce((s, e) => s + e.total_earnings, 0),
+    avgEffectiveRate: (() => {
+      const totalH = data.employees.reduce((s, e) => s + e.actual_hours, 0);
+      const totalE = data.employees.reduce((s, e) => s + e.total_earnings, 0);
+      return totalH > 0 ? totalE / totalH : 0;
+    })(),
+  } : null;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-8 w-8 text-orange-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="text-center py-12 text-gray-400">
+        <Clock className="h-10 w-10 mx-auto mb-3 text-gray-200" />
+        <p>Nie udalo sie zaladowac danych czasu pracy</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header: date range + export + refresh */}
+      <div className="flex items-center flex-wrap gap-3">
+        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2">
+          <Calendar className="h-4 w-4 text-gray-400" />
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+            className="text-sm bg-transparent outline-none text-gray-700 font-medium" />
+          <span className="text-gray-300">&mdash;</span>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)}
+            className="text-sm bg-transparent outline-none text-gray-700 font-medium" />
+        </div>
+        <div className="flex gap-1.5 ml-auto">
+          <button onClick={load}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-xl bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors">
+            <RefreshCw className="h-3.5 w-3.5" /> Odswiez
+          </button>
+          <Button variant="outline" className="h-9 rounded-xl text-sm gap-2" onClick={exportCSV}>
+            <FileDown className="h-4 w-4" /> Eksportuj CSV
+          </Button>
+        </div>
+      </div>
+
+      {/* Table */}
+      {data.employees.length === 0 ? (
+        <div className="text-center py-12 text-gray-400">
+          <Clock className="h-10 w-10 mx-auto mb-3 text-gray-200" />
+          <p className="text-sm">Brak danych czasu pracy w wybranym okresie</p>
+        </div>
+      ) : (
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="text-left py-2.5 px-3 font-semibold text-gray-600">Pracownik</th>
+                    <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Dni pracy</th>
+                    <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Planowane h</th>
+                    <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Faktyczne h</th>
+                    <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Przerwy</th>
+                    <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Zlecenia</th>
+                    <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Zarobek</th>
+                    <th className="text-right py-2.5 px-3 font-semibold text-gray-600">Stawka/h</th>
+                    <th className="text-center py-2.5 px-3 font-semibold text-gray-600">Min. stawka</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.employees.map(emp => (
+                    <tr key={emp.employee_id}
+                      className={`border-b border-gray-50 transition-colors ${
+                        emp.below_minimum ? 'bg-red-50 hover:bg-red-100/60' : 'hover:bg-gray-50/50'
+                      }`}
+                    >
+                      <td className="py-2.5 px-3 font-medium text-gray-800">{emp.employee_name}</td>
+                      <td className="py-2.5 px-3 text-right text-gray-600">{emp.scheduled_days}</td>
+                      <td className="py-2.5 px-3 text-right text-gray-600">{plNum(emp.scheduled_hours)}</td>
+                      <td className="py-2.5 px-3 text-right text-gray-600">{plNum(emp.actual_hours)}</td>
+                      <td className="py-2.5 px-3 text-right text-gray-600">{plNum(emp.break_hours)}</td>
+                      <td className="py-2.5 px-3 text-right text-gray-600">{emp.completed_orders}</td>
+                      <td className="py-2.5 px-3 text-right font-bold text-gray-900">
+                        {plNum(emp.total_earnings)} zl
+                      </td>
+                      <td className={`py-2.5 px-3 text-right font-medium ${
+                        emp.below_minimum ? 'text-red-600 font-bold' : 'text-gray-600'
+                      }`}>
+                        {emp.actual_hours > 0 ? `${plNum(emp.effective_rate)} zl` : '\u2014'}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        {emp.below_minimum ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">
+                            <AlertTriangle className="h-3 w-3" />&lt; 31,40 zl
+                          </span>
+                        ) : emp.actual_hours > 0 ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-600">
+                            <CheckCircle2 className="h-3 w-3" /> OK
+                          </span>
+                        ) : (
+                          <span className="text-gray-300">&mdash;</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {/* Summary footer */}
+                {summary && (
+                  <tfoot>
+                    <tr className="bg-gray-50 border-t border-gray-200 font-semibold text-gray-700">
+                      <td className="py-2.5 px-3">Razem</td>
+                      <td className="py-2.5 px-3 text-right">{summary.totalDays}</td>
+                      <td className="py-2.5 px-3 text-right">{plNum(summary.totalScheduledHours)}</td>
+                      <td className="py-2.5 px-3 text-right">{plNum(summary.totalActualHours)}</td>
+                      <td className="py-2.5 px-3 text-right"></td>
+                      <td className="py-2.5 px-3 text-right">{summary.totalOrders}</td>
+                      <td className="py-2.5 px-3 text-right font-bold">{plNum(summary.totalEarnings)} zl</td>
+                      <td className="py-2.5 px-3 text-right">
+                        {summary.totalActualHours > 0 ? `${plNum(summary.avgEffectiveRate)} zl` : '\u2014'}
+                      </td>
+                      <td className="py-2.5 px-3"></td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ReportsPage() {
-  const [tab, setTab] = useState<'operational' | 'stats' | 'finance'>('operational');
+  const [tab, setTab] = useState<'operational' | 'stats' | 'finance' | 'worktime'>('operational');
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [period, setPeriod] = useState('month');
 
@@ -1012,6 +1227,7 @@ export default function ReportsPage() {
               { key: 'operational', label: 'Operacyjny', icon: Activity },
               { key: 'stats',       label: 'Statystyki', icon: BarChart3 },
               { key: 'finance',     label: 'Finanse',    icon: Wallet },
+              { key: 'worktime',   label: 'Czas pracy', icon: Clock },
             ].map(t => (
               <button
                 key={t.key}
@@ -1055,6 +1271,11 @@ export default function ReportsPage() {
           {tab === 'finance' && (
             <motion.div key="fin" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
               <FinanseView />
+            </motion.div>
+          )}
+          {tab === 'worktime' && (
+            <motion.div key="wt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+              <WorkTimeView />
             </motion.div>
           )}
         </AnimatePresence>

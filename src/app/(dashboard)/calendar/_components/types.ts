@@ -27,6 +27,8 @@ export interface CalendarOrder {
   auto_assigned: boolean;
   estimated_arrival: string | null;
   source: string | null;
+  internal_task_type: string | null;
+  is_paid_time: boolean | null;
 }
 
 export interface EmployeeCol {
@@ -34,6 +36,7 @@ export interface EmployeeCol {
   name: string;
   color: string;
   region: string;
+  region_id: string | null;
 }
 
 export interface WorkScheduleBlock {
@@ -165,7 +168,18 @@ export const WINDOW_PRESETS: Record<string, { label: string; start: string; end:
   evening:   { label: 'Wieczór (16–20)',   start: '16:00', end: '20:00' },
 };
 
-export const FLEXIBILITY_OPTIONS = [0, 15, 30, 60] as const;
+export const FLEXIBILITY_OPTIONS = [0, 30, 60, 90, 120, 150, 180, 240] as const;
+
+export const FLEXIBILITY_LABELS: Record<number, string> = {
+  0: 'Na czas',
+  30: 'Do 30 min',
+  60: 'Do 1h',
+  90: 'Do 1.5h',
+  120: 'Do 2h',
+  150: 'Do 2.5h',
+  180: 'Do 3h',
+  240: 'Do 4h',
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

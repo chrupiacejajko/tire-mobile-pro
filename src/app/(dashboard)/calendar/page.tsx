@@ -128,7 +128,7 @@ export default function CalendarPage() {
       supabase
         .from('orders')
         .select(
-          'id, scheduled_date, scheduled_time_start, scheduled_time_end, status, priority, services, employee_id, address, total_price, scheduling_type, time_window_start, time_window_end, flexibility_minutes, auto_assigned, estimated_arrival, source, client:clients(name, phone), employee:employees(user:profiles(full_name), region:regions(color))'
+          'id, scheduled_date, scheduled_time_start, scheduled_time_end, status, priority, services, employee_id, address, total_price, scheduling_type, time_window_start, time_window_end, flexibility_minutes, auto_assigned, estimated_arrival, source, internal_task_type, is_paid_time, client:clients(name, phone), employee:employees(user:profiles(full_name), region:regions(color))'
         )
         .not('status', 'eq', 'cancelled')
         .gte('scheduled_date', rangeStart)
@@ -137,7 +137,7 @@ export default function CalendarPage() {
 
       supabase
         .from('employees')
-        .select('id, user:profiles(full_name), region:regions(name, color)')
+        .select('id, region_id, user:profiles(full_name), region:regions(name, color)')
         .eq('is_active', true),
 
       supabase.from('clients').select('id, name, phone, address, city').order('name'),
@@ -179,6 +179,8 @@ export default function CalendarPage() {
           auto_assigned: o.auto_assigned || false,
           estimated_arrival: o.estimated_arrival,
           source: o.source,
+          internal_task_type: o.internal_task_type || null,
+          is_paid_time: o.is_paid_time ?? null,
         }))
       );
     }
@@ -190,6 +192,7 @@ export default function CalendarPage() {
           name: e.user?.full_name || '?',
           color: e.region?.color || '#94A3B8',
           region: e.region?.name || '',
+          region_id: e.region_id || null,
         }))
       );
     }

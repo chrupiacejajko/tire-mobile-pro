@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, MapPin, Users, ClipboardList, Edit, Trash2, Map, Pencil, X, Save, Eraser, Shield } from 'lucide-react';
+import { Plus, MapPin, Users, ClipboardList, Edit, Trash2, Map, Pencil, X, Save, Eraser, Shield, ChevronUp, ChevronDown } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import type { Region } from '@/lib/types';
 
@@ -147,6 +147,38 @@ export default function RegionsPage() {
     fetchRegions();
   };
 
+  const handleReorder = async (index: number, direction: 'up' | 'down') => {
+    const sorted = [...regions].sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= sorted.length) return;
+
+    const current = sorted[index];
+    const adjacent = sorted[swapIndex];
+    const currentOrder = current.display_order ?? index;
+    const adjacentOrder = adjacent.display_order ?? swapIndex;
+
+    // Optimistic update
+    setRegions(prev => {
+      const updated = [...prev];
+      const ci = updated.findIndex(r => r.id === current.id);
+      const ai = updated.findIndex(r => r.id === adjacent.id);
+      if (ci >= 0) updated[ci] = { ...updated[ci], display_order: adjacentOrder };
+      if (ai >= 0) updated[ai] = { ...updated[ai], display_order: currentOrder };
+      return updated;
+    });
+
+    await fetch('/api/regions', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reorder: [
+          { id: current.id, display_order: adjacentOrder },
+          { id: adjacent.id, display_order: currentOrder },
+        ],
+      }),
+    });
+  };
+
   const openEdit = (r: Region) => {
     setForm({ name: r.name, description: r.description || '', color: r.color, main_address: r.main_address || '' });
     setGeocodedLat(r.main_lat ?? null);
@@ -226,17 +258,38 @@ export default function RegionsPage() {
           </div>
         ) : (
           <motion.div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3" variants={ANIM.container} initial="hidden" animate="show">
-            {regions.map(region => (
+            {[...regions].sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)).map((region, idx, sorted) => (
               <motion.div key={region.id} variants={ANIM.item} whileHover={{ y: -4 }} transition={{ type: 'spring', stiffness: 300 }}>
                 <Card className="overflow-hidden rounded-2xl border-gray-100 shadow-sm cursor-pointer">
                   <div className="h-2" style={{ backgroundColor: region.color }} />
                   <CardContent className="p-6">
                     <div className="flex items-start justify-between mb-4">
-                      <div>
-                        <h3 className="text-lg font-bold flex items-center gap-2">
-                          <MapPin className="h-5 w-5" style={{ color: region.color }} />
-                          {region.name}
-                        </h3>
+                      <div className="flex items-start gap-1">
+                        <div className="flex flex-col -mt-1">
+                          {idx > 0 && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleReorder(idx, 'up'); }}
+                              className="text-gray-400 hover:text-gray-600 transition-colors p-0.5"
+                              title="Przesuń w górę"
+                            >
+                              <ChevronUp className="h-4 w-4" />
+                            </button>
+                          )}
+                          {idx < sorted.length - 1 && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleReorder(idx, 'down'); }}
+                              className="text-gray-400 hover:text-gray-600 transition-colors p-0.5"
+                              title="Przesuń w dół"
+                            >
+                              <ChevronDown className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold flex items-center gap-2">
+                            <MapPin className="h-5 w-5" style={{ color: region.color }} />
+                            {region.name}
+                          </h3>
                         {region.description && <p className="text-sm text-gray-500 mt-1">{region.description}</p>}
                         {region.main_address && (
                           <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
@@ -250,6 +303,7 @@ export default function RegionsPage() {
                         {region.free_zone_polygon && region.free_zone_polygon.length >= 3 && (
                           <p className="text-xs text-emerald-500 mt-0.5">{region.free_zone_polygon.length} punktów strefy bezpłatnej</p>
                         )}
+                        </div>
                       </div>
                       <div className="flex gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => openDrawPolygon(region, 'boundary')} title="Rysuj granice">

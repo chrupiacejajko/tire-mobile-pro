@@ -21,6 +21,8 @@ export interface Stop {
   service_duration_minutes: number;
   departure_time: string;
   delay_minutes: number;
+  flexibility_minutes: number;
+  order_status: string;
 }
 
 export interface RouteScore {

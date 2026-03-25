@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
   // ── Today's orders ─────────────────────────────────────────────────────────
   const { data: allOrders } = await supabase
     .from('orders')
-    .select('id, employee_id, status, priority, scheduled_time_start, scheduled_time_end, time_window, time_window_start, time_window_end, scheduling_type, services, client:clients(id, name, lat, lng, address, city)')
+    .select('id, employee_id, status, priority, scheduled_time_start, scheduled_time_end, time_window, time_window_start, time_window_end, scheduling_type, services, flexibility_minutes, client:clients(id, name, lat, lng, address, city)')
     .eq('scheduled_date', date)
     .not('status', 'eq', 'cancelled')
     .order('scheduled_time_start', { ascending: true });
@@ -130,6 +130,8 @@ export async function GET(request: NextRequest) {
           services: (order as any).services ?? [],
           travel_from_prev_minutes: routeInfo.duration_minutes,
           service_duration_minutes: serviceDuration,
+          flexibility_minutes: (order as any).flexibility_minutes ?? 0,
+          order_status: order.status ?? 'pending',
         });
 
         prevPos = dest;

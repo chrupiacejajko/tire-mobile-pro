@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Topbar } from '@/components/layout/topbar';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,7 @@ const LeafletCircle = dynamic(() => import('react-leaflet').then(m => m.Circle),
 const Marker = dynamic(() => import('react-leaflet').then(m => m.Marker), { ssr: false });
 const LeafletPolygon = dynamic(() => import('react-leaflet').then(m => m.Polygon), { ssr: false });
 const LeafletTooltip = dynamic(() => import('react-leaflet').then(m => m.Tooltip), { ssr: false });
+const MapEventsHandler = dynamic(() => import('./_components/MapEventsHandler').then(m => m.default), { ssr: false });
 
 import 'leaflet/dist/leaflet.css';
 
@@ -1800,6 +1802,7 @@ function FlyToEffect({ lat, lng, mapRef, key: _key }: { lat: number; lng: number
 
 /* ─── Main page ──────────────────────────────────────────────────────── */
 export default function MapPage() {
+  const searchParams = useSearchParams();
   const [vehicles, setVehicles] = useState<VehicleData[]>([]);
   const [routes, setRoutes] = useState<EmployeeRoute[]>([]);
   const [allOrders, setAllOrders] = useState<MapOrder[]>([]);
@@ -1828,9 +1831,16 @@ export default function MapPage() {
   const [addressSearching, setAddressSearching] = useState(false);
   const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
+  /* Context menu state */
+  const [contextMenuPos, setContextMenuPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [contextRadius, setContextRadius] = useState(5);
   // countdownRef no longer needed — SSE handles live updates
 
-  const today = new Date().toISOString().split('T')[0];
+  const urlDate = searchParams.get('date');
+  const today = useMemo(() => {
+    if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) return urlDate;
+    return new Date().toISOString().split('T')[0];
+  }, [urlDate]);
 
   // Fetch routes, orders, regions (these change infrequently)
   const fetchContext = useCallback(async () => {
@@ -2476,6 +2486,68 @@ export default function MapPage() {
                   />
                 ))}
               </>
+            )}
+
+            {/* Context menu handler */}
+            <MapEventsHandler onContextMenu={(lat, lng) => setContextMenuPos({ lat, lng })} />
+
+            {/* Right-click context menu popup */}
+            {contextMenuPos && (
+              <Popup
+                position={[contextMenuPos.lat, contextMenuPos.lng]}
+                eventHandlers={{ remove: () => setContextMenuPos(null) }}
+              >
+                <div className="min-w-[200px] space-y-3 py-1">
+                  <p className="text-xs text-gray-400 font-mono">
+                    {contextMenuPos.lat.toFixed(5)}, {contextMenuPos.lng.toFixed(5)}
+                  </p>
+                  {/* Radius selector */}
+                  <div>
+                    <p className="text-[11px] font-semibold text-gray-500 mb-1.5">Promien wyszukiwania</p>
+                    <div className="flex gap-1.5">
+                      {[1, 3, 5, 10].map(r => (
+                        <button
+                          key={r}
+                          onClick={() => setContextRadius(r)}
+                          className={`text-xs px-2 py-1 rounded-full border transition-all ${
+                            contextRadius === r
+                              ? 'bg-orange-500 text-white border-orange-500'
+                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-orange-300'
+                          }`}
+                        >
+                          {r} km
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Action buttons */}
+                  <div className="flex flex-col gap-1.5">
+                    <button
+                      onClick={() => {
+                        setAddressPin({ lat: contextMenuPos.lat, lng: contextMenuPos.lng, label: `${contextMenuPos.lat.toFixed(4)}, ${contextMenuPos.lng.toFixed(4)}` });
+                        setSearchRadiusKm(contextRadius);
+                        setContextMenuPos(null);
+                      }}
+                      className="flex items-center gap-2 text-sm text-left px-3 py-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors font-medium"
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                      Szukaj zlecen w poblizu
+                    </button>
+                    <button
+                      onClick={() => {
+                        const lat = contextMenuPos.lat.toFixed(5);
+                        const lng = contextMenuPos.lng.toFixed(5);
+                        setContextMenuPos(null);
+                        window.location.href = `/calendar?new_order=true&lat=${lat}&lng=${lng}`;
+                      }}
+                      className="flex items-center gap-2 text-sm text-left px-3 py-2 rounded-lg bg-orange-50 text-orange-700 hover:bg-orange-100 transition-colors font-medium"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Utworz zlecenie tutaj
+                    </button>
+                  </div>
+                </div>
+              </Popup>
             )}
           </MapContainer>
 

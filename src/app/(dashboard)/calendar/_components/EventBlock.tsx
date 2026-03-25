@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { MapPin, Clock, Zap, Timer, CalendarRange, Shuffle } from 'lucide-react';
+import { MapPin, Clock, Zap, Timer, CalendarRange, Shuffle, Wrench } from 'lucide-react';
 import {
   type CalendarOrder,
   ROW_H,
@@ -45,6 +45,14 @@ interface EventBlockProps {
   selected?: boolean;
   onClick?: (event: CalendarOrder) => void;
 }
+
+// ── Internal task type labels ──
+const INTERNAL_TASK_LABELS: Record<string, string> = {
+  pickup: 'Odbiór opon',
+  cleaning: 'Sprzątanie',
+  delivery: 'Dostawa',
+  other: 'Inne',
+};
 
 // ── Status → accent bar color (darker for stronger bar) ──
 const accentColors: Record<string, string> = {
@@ -112,14 +120,20 @@ export function EventBlock({
   selected = false,
   onClick,
 }: EventBlockProps) {
-  const accent = accentColors[event.status] || '#94a3b8';
-  const style = cardStyles[event.status] || cardStyles.new;
-  const titleColor = textColors[event.status] || 'text-gray-900';
-  const subColor = subTextColors[event.status] || 'text-gray-500';
+  const isInternal = event.source === 'internal';
+  const accent = isInternal ? '#0d9488' : (accentColors[event.status] || '#94a3b8');
+  const style = isInternal
+    ? { bg: 'from-teal-100/90 to-cyan-50/70', shadow: '0 1px 3px rgba(13,148,136,0.10), 0 1px 2px rgba(0,0,0,0.04)' }
+    : (cardStyles[event.status] || cardStyles.new);
+  const titleColor = isInternal ? 'text-teal-900' : (textColors[event.status] || 'text-gray-900');
+  const subColor = isInternal ? 'text-teal-700' : (subTextColors[event.status] || 'text-gray-500');
   const badge = typeBadges[event.scheduling_type] || typeBadges.fixed_time;
   const isAsap = event.scheduling_type === 'asap';
   const isUrgent = event.priority === 'urgent';
   const isHigh = event.priority === 'high';
+  const internalLabel = isInternal && event.internal_task_type
+    ? (INTERNAL_TASK_LABELS[event.internal_task_type] || event.internal_task_type)
+    : null;
 
   // ── Dimensions ──
   const duration = getDuration(event.scheduled_time_start, event.scheduled_time_end);
@@ -134,8 +148,8 @@ export function EventBlock({
 
   // ── Parsed data ──
   const serviceList = event.service_names ? event.service_names.split(', ') : [];
-  const firstService = serviceList[0] || '';
-  const extraCount = serviceList.length - 1;
+  const firstService = isInternal ? (internalLabel || 'Zadanie wewnętrzne') : (serviceList[0] || '');
+  const extraCount = isInternal ? 0 : (serviceList.length - 1);
   const empInitials = event.employee_name
     ? event.employee_name.split(' ').map(w => w[0]).join('').slice(0, 2)
     : null;
@@ -187,9 +201,10 @@ export function EventBlock({
       {/* ── MICRO: solid colored pill ── */}
       {isMicro && (
         <div
-          className={`px-1.5 h-full flex items-center rounded-r-md ${microBg[event.status] || 'bg-gray-200'}`}
+          className={`px-1.5 h-full flex items-center rounded-r-md ${isInternal ? 'bg-teal-200' : (microBg[event.status] || 'bg-gray-200')}`}
           title={`${firstService || event.client_name} · ${formatTime(event.scheduled_time_start)}`}
         >
+          {isInternal && <Wrench className="h-2.5 w-2.5 text-teal-700 mr-0.5 shrink-0" />}
           <span className={`text-[9px] font-extrabold ${titleColor} truncate`}>
             {(firstService || event.client_name).split(' ')[0]}
           </span>
@@ -199,13 +214,19 @@ export function EventBlock({
       {/* ── COMPACT: one line ── */}
       {isCompact && (
         <div className="px-2 h-full flex items-center gap-1 min-w-0">
+          {isInternal && <Wrench className="h-3 w-3 text-teal-600 shrink-0" />}
           <p className={`text-[10px] font-bold ${titleColor} truncate flex-1 min-w-0`}>
             {firstService || event.client_name}
           </p>
           {extraCount > 0 && (
             <span className="flex-shrink-0 text-[8px] font-bold text-gray-400">+{extraCount}</span>
           )}
-          {badge.label && (
+          {isInternal && (
+            <span className="flex-shrink-0 px-1 py-px rounded text-[7px] font-bold bg-teal-100 text-teal-700">
+              Wew.
+            </span>
+          )}
+          {!isInternal && badge.label && (
             <span className={`flex-shrink-0 px-1 py-px rounded text-[7px] font-bold ${badge.cls}`}>
               {badge.label}
             </span>
@@ -224,18 +245,23 @@ export function EventBlock({
       {isMedium && (
         <div className="px-2 py-1 h-full flex flex-col justify-center gap-0.5">
           <div className="flex items-center gap-1 min-w-0">
+            {isInternal && <Wrench className="h-3 w-3 text-teal-600 shrink-0" />}
             <p className={`text-[11px] font-bold ${titleColor} truncate flex-1 min-w-0 leading-tight`}>
               {firstService || event.client_name}
             </p>
-            {badge.label && (
+            {isInternal ? (
+              <span className="flex-shrink-0 px-1 py-px rounded text-[7px] font-bold bg-teal-100 text-teal-700">
+                Wewnętrzne
+              </span>
+            ) : badge.label ? (
               <span className={`flex-shrink-0 px-1 py-px rounded text-[7px] font-bold ${badge.cls}`}>
                 {badge.label}
               </span>
-            )}
+            ) : null}
           </div>
           <div className="flex items-center justify-between">
             <span className={`text-[9px] font-medium ${subColor} truncate`}>
-              {event.client_name}
+              {isInternal ? 'Zadanie wewnętrzne' : event.client_name}
             </span>
             <span className={`text-[9px] ${subColor} opacity-70 flex-shrink-0 ml-1`}>
               {formatTime(event.scheduled_time_start)}
@@ -249,6 +275,7 @@ export function EventBlock({
         <div className="px-2.5 py-1.5 h-full flex flex-col gap-0.5">
           {/* Title */}
           <div className="flex items-start gap-1 min-w-0">
+            {isInternal && <Wrench className="h-3.5 w-3.5 text-teal-600 shrink-0 mt-px" />}
             <p className={`text-[11px] font-extrabold ${titleColor} truncate flex-1 min-w-0 leading-tight`}>
               {firstService || event.client_name}
             </p>
@@ -259,10 +286,14 @@ export function EventBlock({
             )}
           </div>
 
-          {/* Client */}
-          {firstService && (
+          {/* Client or Internal badge */}
+          {isInternal ? (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded text-[8px] font-bold bg-teal-100 text-teal-700 w-fit">
+              Wewnętrzne
+            </span>
+          ) : firstService ? (
             <p className={`text-[9px] font-medium ${subColor} truncate leading-tight`}>{event.client_name}</p>
-          )}
+          ) : null}
 
           {/* Address */}
           {blockH >= 80 && event.address && (

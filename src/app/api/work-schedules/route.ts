@@ -103,12 +103,18 @@ export async function POST(request: NextRequest) {
       const empIds = empList.map((e: { employee_id: string }) => e.employee_id);
       const { data: empDefaults } = await supabase
         .from('employees')
-        .select('id, default_vehicle_id, region_id')
+        .select('id, default_vehicle_id, region_id, default_location, default_lat, default_lng')
         .in('id', empIds);
-      const defaultsMap = new Map<string, { vehicle_id: string | null; region_id: string | null }>();
+      const defaultsMap = new Map<string, { vehicle_id: string | null; region_id: string | null; location_address: string | null; location_lat: number | null; location_lng: number | null }>();
       if (empDefaults) {
         for (const e of empDefaults) {
-          defaultsMap.set(e.id, { vehicle_id: e.default_vehicle_id || null, region_id: e.region_id || null });
+          defaultsMap.set(e.id, {
+            vehicle_id: e.default_vehicle_id || null,
+            region_id: e.region_id || null,
+            location_address: e.default_location || null,
+            location_lat: e.default_lat || null,
+            location_lng: e.default_lng || null,
+          });
         }
       }
 
@@ -120,6 +126,9 @@ export async function POST(request: NextRequest) {
         notes: string;
         vehicle_id: string | null;
         region_id: string | null;
+        location_address: string | null;
+        location_lat: number | null;
+        location_lng: number | null;
       }> = [];
 
       for (const emp of empList) {
@@ -146,6 +155,9 @@ export async function POST(request: NextRequest) {
               notes: 'DYZUR_48_48',
               vehicle_id: defaults?.vehicle_id || null,
               region_id: defaults?.region_id || null,
+              location_address: defaults?.location_address || null,
+              location_lat: defaults?.location_lat || null,
+              location_lng: defaults?.location_lng || null,
             });
           }
 
@@ -188,6 +200,13 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Fetch employee defaults for location
+      const { data: empDefault } = await supabase
+        .from('employees')
+        .select('id, default_location, default_lat, default_lng')
+        .eq('id', employee_id)
+        .single();
+
       let templateStartTime = start_time || '08:00';
       let templateEndTime = end_time || '16:00';
       let templateDays: number[] | null = null;
@@ -211,6 +230,9 @@ export async function POST(request: NextRequest) {
         date: string;
         start_time: string;
         end_time: string;
+        location_address: string | null;
+        location_lat: number | null;
+        location_lng: number | null;
       }> = [];
 
       const current = new Date(from_date + 'T00:00:00');
@@ -235,6 +257,9 @@ export async function POST(request: NextRequest) {
           date: current.toISOString().split('T')[0],
           start_time: templateStartTime,
           end_time: templateEndTime,
+          location_address: empDefault?.default_location || null,
+          location_lat: empDefault?.default_lat || null,
+          location_lng: empDefault?.default_lng || null,
         });
 
         current.setDate(current.getDate() + 1);
@@ -257,7 +282,7 @@ export async function POST(request: NextRequest) {
     }
 
     // -- Single upsert --
-    const { employee_id, date, start_time, end_time, is_night_shift, notes, vehicle_id, region_id } = body;
+    const { employee_id, date, start_time, end_time, is_night_shift, notes, vehicle_id, region_id, location_address, location_lat, location_lng } = body;
 
     if (!employee_id || !date) {
       return NextResponse.json(
@@ -320,6 +345,9 @@ export async function POST(request: NextRequest) {
     };
     if (vehicle_id !== undefined) upsertData.vehicle_id = vehicle_id || null;
     if (region_id !== undefined) upsertData.region_id = region_id || null;
+    if (location_address !== undefined) upsertData.location_address = location_address || null;
+    if (location_lat !== undefined) upsertData.location_lat = location_lat || null;
+    if (location_lng !== undefined) upsertData.location_lng = location_lng || null;
 
     const { data, error } = await supabase
       .from('work_schedules')
