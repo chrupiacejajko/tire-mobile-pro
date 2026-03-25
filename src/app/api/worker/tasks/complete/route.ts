@@ -90,6 +90,7 @@ export async function POST(request: NextRequest) {
             ? `https://${process.env.VERCEL_URL}`
             : 'http://localhost:3000';
 
+          // Reoptimize this employee's route first
           fetch(`${baseUrl}/api/planner/reoptimize`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -97,7 +98,21 @@ export async function POST(request: NextRequest) {
               employee_id: completedOrder.employee_id,
               date: orderDate,
             }),
-          }).catch(() => {}); // fire-and-forget
+          })
+          .then(() => {
+            // After this employee is reoptimized, cascade to all others
+            // (depth=1: don't cascade the cascade)
+            fetch(`${baseUrl}/api/planner/reoptimize`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                date: orderDate,
+                cascade: true,
+                employee_id: completedOrder.employee_id, // skip this one — already done
+              }),
+            }).catch(() => {});
+          })
+          .catch(() => {}); // fire-and-forget
         }
       }
     } catch {

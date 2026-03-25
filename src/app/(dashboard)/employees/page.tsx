@@ -45,6 +45,24 @@ const TYPE_COLORS: Record<string, string> = {
   other: 'bg-gray-100 text-gray-700',
 };
 
+/** Sanitize Polish name for fake email — remove diacritics, lowercase, dots for spaces */
+function sanitizeForEmail(name: string): string {
+  const map: Record<string, string> = {
+    'ą': 'a', 'ć': 'c', 'ę': 'e', 'ł': 'l', 'ń': 'n',
+    'ó': 'o', 'ś': 's', 'ź': 'z', 'ż': 'z',
+    'Ą': 'a', 'Ć': 'c', 'Ę': 'e', 'Ł': 'l', 'Ń': 'n',
+    'Ó': 'o', 'Ś': 's', 'Ź': 'z', 'Ż': 'z',
+  };
+  return name.split('').map(ch => map[ch] || ch).join('')
+    .toLowerCase().replace(/\s+/g, '.').replace(/[^a-z0-9.]/g, '');
+}
+
+function generateWorkerEmail(firstName: string, lastName: string): string {
+  const f = sanitizeForEmail(firstName || 'pracownik');
+  const l = sanitizeForEmail(lastName || 'nowy');
+  return `${f}.${l}@roottire.internal`;
+}
+
 interface UnavailabilityRow {
   id: string;
   employee_id: string;
@@ -278,13 +296,18 @@ export default function EmployeesPage() {
     e.preventDefault();
     setSaving(true);
 
+    // For workers, use auto-generated internal email; otherwise use the provided email
+    const effectiveEmail = form.role === 'worker'
+      ? generateWorkerEmail(form.first_name, form.last_name)
+      : form.email;
+
     await fetch('/api/employees', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         first_name: form.first_name,
         last_name: form.last_name,
-        email: form.email,
+        email: effectiveEmail,
         phone: form.phone,
         phone_secondary: form.phone_secondary,
         default_location: form.default_location || null,
@@ -525,8 +548,29 @@ export default function EmployeesPage() {
 
       {!isEdit && (
         <div className="space-y-2">
-          <Label>Email *</Label>
-          <Input type="email" required value={formData.email} onChange={e => setFormData(f => ({ ...f, email: e.target.value }))} />
+          <Label className="flex items-center gap-1.5">
+            <Mail className="h-3.5 w-3.5 text-orange-500" />
+            {formData.role === 'worker' ? 'Login do aplikacji' : 'Email *'}
+          </Label>
+          {formData.role === 'worker' ? (
+            <>
+              <Input
+                type="email"
+                readOnly
+                value={
+                  formData.first_name || formData.last_name
+                    ? generateWorkerEmail(formData.first_name, formData.last_name)
+                    : ''
+                }
+                className="bg-gray-50 text-gray-600 cursor-default"
+              />
+              <p className="text-xs text-gray-400">
+                Pracownik loguje się tym adresem do aplikacji mobilnej
+              </p>
+            </>
+          ) : (
+            <Input type="email" required value={formData.email} onChange={e => setFormData(f => ({ ...f, email: e.target.value }))} />
+          )}
         </div>
       )}
 
@@ -825,7 +869,7 @@ export default function EmployeesPage() {
                       <span>Pracownik</span><span>Typ</span><span>Okres</span><span>Notatki</span><span></span>
                     </div>
                     {filteredUnavailabilities.map(u => {
-                      const empName = u.employee?.user?.full_name || u.employee_id.slice(0, 8);
+                      const empName = u.employee?.user?.full_name || 'Pracownik (brak danych)';
                       const typeColor = TYPE_COLORS[u.type] || TYPE_COLORS.other;
                       return (
                         <div

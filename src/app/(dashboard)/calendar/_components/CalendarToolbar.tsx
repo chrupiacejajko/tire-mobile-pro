@@ -1,6 +1,7 @@
 'use client';
 
-import { ChevronLeft, ChevronRight, AlertTriangle, Users, Rows3, Rows4, StretchHorizontal } from 'lucide-react';
+import Link from 'next/link';
+import { ChevronLeft, ChevronRight, AlertTriangle, Users, Rows3, Rows4, StretchHorizontal, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -41,7 +42,6 @@ function getWeekDates(date: Date): Date[] {
 
 const VIEW_OPTIONS: { value: CalendarView; label: string; shortLabel: string }[] = [
   { value: 'team', label: 'Zespół', shortLabel: 'Zespół' },
-  { value: 'timeline', label: 'Timeline', shortLabel: 'Timeline' },
   { value: 'week', label: 'Tydzień', shortLabel: 'Tydz.' },
   { value: 'month', label: 'Miesiąc', shortLabel: 'Mies.' },
 ];
@@ -131,7 +131,7 @@ export function CalendarToolbar({
           )}
 
           {/* Density presets */}
-          {(view === 'team' || view === 'timeline') && (
+          {view === 'team' && (
             <div className="flex items-center bg-gray-100/60 rounded-lg p-0.5 gap-0.5">
               {(['compact', 'normal', 'comfortable'] as DensityLevel[]).map(d => {
                 const active = density === d;
@@ -170,6 +170,15 @@ export function CalendarToolbar({
               );
             })}
           </div>
+
+          {/* Planner link */}
+          <Link
+            href={`/planner?date=${currentDate.toISOString().split('T')[0]}`}
+            className="flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium text-orange-600 hover:bg-orange-50 border border-orange-200/60 transition-all active:scale-[0.97]"
+          >
+            Otwórz w Planerze
+            <ArrowRight className="h-3 w-3" />
+          </Link>
         </div>
       </div>
 

@@ -1,6 +1,19 @@
 // ── Planner — Shared Types & Config ──────────────────────────────────────────
 
+import type { DispatchOrderBase } from '@/lib/types/dispatch-order';
+
 // ── Data interfaces ─────────────────────────────────────────────────────────
+
+/** Lightweight subset of DispatchOrderBase for unassigned orders in the planner */
+export interface UnassignedOrder extends Pick<
+  DispatchOrderBase,
+  'id' | 'status' | 'priority' | 'address' | 'lat' | 'lng' | 'client_name'
+> {
+  scheduling_type: string | null;
+  scheduled_time_start: string | null;
+  time_window: string | null;
+  services: string[];
+}
 
 export interface Stop {
   order_id: string;
@@ -46,20 +59,6 @@ export interface EmployeeRoute {
   score: RouteScore;
   google_maps_url: string | null;
   start_time: string;
-}
-
-export interface UnassignedOrder {
-  id: string;
-  status: string;
-  priority: string | null;
-  scheduling_type: string | null;
-  scheduled_time_start: string | null;
-  time_window: string | null;
-  services: string[];
-  client_name: string;
-  address: string;
-  lat: number | null;
-  lng: number | null;
 }
 
 export interface PlannerData {

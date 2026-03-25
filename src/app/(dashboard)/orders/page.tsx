@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { OrderStatus, OrderPriority, Client, Service } from '@/lib/types';
+import type { DispatchOrderBase } from '@/lib/types/dispatch-order';
 
 const ANIM = {
   container: { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.04 } } },
@@ -53,19 +54,10 @@ const priorityConfig: Record<OrderPriority, { label: string; dot: string }> = {
   urgent: { label: 'Pilny', dot: 'bg-red-500' },
 };
 
-interface OrderRow {
-  id: string;
-  client_id: string;
-  employee_id: string | null;
+interface OrderRow extends Omit<DispatchOrderBase, 'client_name' | 'scheduling_type' | 'flexibility_minutes' | 'time_window_start' | 'time_window_end' | 'dispatcher_notes' | 'auto_assigned' | 'source' | 'internal_task_type'> {
   status: OrderStatus;
   priority: OrderPriority;
-  scheduled_date: string;
-  scheduled_time_start: string;
-  scheduled_time_end: string;
-  address: string;
-  services: { service_id: string; name: string; price: number; quantity: number }[];
   total_price: number;
-  notes: string | null;
   required_skills?: string[] | null;
   source?: string | null;
   internal_task_type?: string | null;

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Fragment } from 'react';
 import {
   Clock, User, RefreshCw, Lock, Unlock, XCircle, ChevronDown,
-  AlertTriangle, Zap,
+  AlertTriangle, Zap, Home,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -202,6 +202,70 @@ export function GanttView({
     try { await fetch('/api/planner/insert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId, employee_id: employeeId, date }) }); onRefresh(); } catch {}
   };
 
+  // ── Buffer countdown helper ──
+  function getBufferDisplay(stop: Stop): { text: string; colorClass: string; pulse: boolean } | null {
+    const status = stop.order_status ?? 'pending';
+    if (status === 'completed' || status === 'in_progress' || status === 'cancelled' || status === 'return') return null;
+
+    const flexibility = stop.flexibility_minutes ?? 0;
+    const level = getDelayToleranceLevel(flexibility, status);
+    if (level === 'flexible') return { text: 'Elastyczne', colorClass: 'text-gray-400', pulse: false };
+
+    const remaining = flexibility - (stop.delay_minutes ?? 0);
+
+    if (remaining <= 0) {
+      return { text: `\u26a0\ufe0f -${Math.abs(remaining)} min`, colorClass: 'text-red-600 font-bold', pulse: false };
+    }
+    if (remaining <= 15) {
+      return { text: `${remaining} min luzu`, colorClass: 'text-red-500', pulse: true };
+    }
+    if (remaining <= 60) {
+      return { text: `${remaining} min luzu`, colorClass: 'text-amber-600', pulse: false };
+    }
+    const hours = Math.round(remaining / 60 * 10) / 10;
+    return { text: `${hours}h luzu`, colorClass: 'text-green-600', pulse: false };
+  }
+
+  // ── Render return-to-base block ──
+  function renderReturnBlock(stop: Stop, prevDepartureX: number | null) {
+    const arrivalX = timeToX(stop.arrival_time);
+    const serviceStartX = timeToX(stop.service_start);
+
+    return (
+      <Fragment key={stop.order_id}>
+        {/* Travel bar */}
+        {prevDepartureX !== null && (
+          <div
+            className="absolute top-1/2 -translate-y-1/2 h-2 rounded-full"
+            style={{
+              left: prevDepartureX,
+              width: Math.max(arrivalX - prevDepartureX, 3),
+              background: 'linear-gradient(to right, rgba(209,213,219,0.5), rgba(229,231,235,0.3))',
+            }}
+          />
+        )}
+        {/* Return block — dashed border, gray bg, not draggable */}
+        <div
+          className="absolute top-1/2 -translate-y-1/2 rounded-lg select-none overflow-hidden"
+          style={{
+            left: serviceStartX,
+            width: Math.max(80, 6),
+            height: '36px',
+            background: 'rgba(156,163,175,0.08)',
+            border: '2px dashed rgba(156,163,175,0.4)',
+          }}
+        >
+          <div className="flex items-center h-full px-1.5 gap-1 min-w-0">
+            <Home className="h-3 w-3 text-gray-400 flex-shrink-0" />
+            <span className="text-[9px] font-medium text-gray-500 truncate">
+              Powrót ~{stop.travel_minutes} min
+            </span>
+          </div>
+        </div>
+      </Fragment>
+    );
+  }
+
   // ── Render service block ──
   function renderServiceBlock(stop: Stop, employeeId: string, employeeName: string, prevDepartureX: number | null, isLocked: boolean) {
     const arrivalX = timeToX(stop.arrival_time);
@@ -277,6 +341,22 @@ export function GanttView({
               </span>
             )}
           </div>
+          {/* Buffer countdown overlay */}
+          {(() => {
+            const buf = getBufferDisplay(stop);
+            if (!buf || serviceWidth < 50) return null;
+            return (
+              <span
+                className={cn(
+                  'absolute bottom-0.5 right-1 text-[9px] leading-none',
+                  buf.colorClass,
+                  buf.pulse && 'animate-pulse',
+                )}
+              >
+                {buf.text}
+              </span>
+            );
+          })()}
         </div>
       </Fragment>
     );
@@ -362,6 +442,9 @@ export function GanttView({
               {/* Service blocks */}
               {route.schedule.map((stop, i) => {
                 const prevDeparture = i > 0 ? timeToX(route.schedule[i - 1].departure_time) : null;
+                if (stop.order_id === 'return_to_base') {
+                  return renderReturnBlock(stop, prevDeparture);
+                }
                 return renderServiceBlock(stop, route.employee_id, route.employee_name, prevDeparture, lockedOrders.has(stop.order_id));
               })}
 
@@ -487,6 +570,13 @@ export function GanttView({
                 </p>
               ) : null;
             })()}
+            {/* Buffer info */}
+            {tooltip.stop.order_status !== 'return' && tooltip.stop.flexibility_minutes > 0 && (
+              <>
+                <p className="text-[10px] text-gray-400">Dopuszczalne opóźnienie: {tooltip.stop.flexibility_minutes} min</p>
+                <p className="text-[10px] text-gray-400">Aktualny bufor: {tooltip.stop.flexibility_minutes - (tooltip.stop.delay_minutes ?? 0)} min</p>
+              </>
+            )}
             {tooltip.stop.time_window_label && (
               <p className="text-[10px] text-gray-400">Okno: {tooltip.stop.time_window_label}</p>
             )}

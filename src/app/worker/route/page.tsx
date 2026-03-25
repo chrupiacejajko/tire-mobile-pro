@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { MapPin, Clock, RefreshCw, CheckCircle2, ChevronRight } from 'lucide-react';
+import { MapPin, Clock, RefreshCw, CheckCircle2, ChevronRight, Car } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -65,6 +65,7 @@ function getServiceNames(services: Task['services']): string {
 const STATUS_LABELS: Record<string, string> = {
   new: 'Nowe',
   assigned: 'Przypisane',
+  in_transit: 'W drodze',
   in_progress: 'W trakcie',
   completed: 'Ukończone',
   cancelled: 'Anulowane',
@@ -77,12 +78,14 @@ function StatusBadge({ status }: { status: string }) {
         'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
         {
           'bg-gray-100 text-gray-700': status === 'new' || status === 'assigned',
+          'bg-orange-100 text-orange-700 animate-pulse': status === 'in_transit',
           'bg-blue-100 text-blue-700': status === 'in_progress',
           'bg-green-100 text-green-700': status === 'completed',
           'bg-red-100 text-red-700': status === 'cancelled',
         },
       )}
     >
+      {status === 'in_transit' && <Car className="w-3 h-3 mr-1" />}
       {STATUS_LABELS[status] ?? status}
     </span>
   );
@@ -116,7 +119,12 @@ function TaskCard({ task, index, onPress }: { task: Task; index: number; onPress
     <button
       type="button"
       onClick={onPress}
-      className="w-full text-left rounded-xl bg-white border border-gray-100 shadow-sm p-4 active:bg-gray-50 transition-colors"
+      className={cn(
+        'w-full text-left rounded-xl shadow-sm p-4 active:bg-gray-50 transition-colors',
+        task.status === 'in_transit'
+          ? 'bg-orange-50 border-2 border-orange-300'
+          : 'bg-white border border-gray-100',
+      )}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-2">

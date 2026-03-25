@@ -130,6 +130,10 @@ export async function DELETE(req: NextRequest) {
     );
   }
 
+  // TODO: Regions table does not have an is_active column yet.
+  // Once added (via migration), change this hard delete to a soft delete:
+  //   await supabase.from('regions').update({ is_active: false }).eq('id', id);
+  // For now, the guards above prevent deletion of regions with active references.
   const { error } = await supabase.from('regions').delete().eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

@@ -2,6 +2,8 @@
  * Planner utilities — schedule building, time window validation, Google Maps URL generation.
  */
 
+import { haversineKm, etaMinutes } from '@/lib/geo';
+
 // ── Time helpers ──────────────────────────────────────────────────────────────
 
 export function parseTime(hhmm: string): number {
@@ -23,6 +25,14 @@ export function formatDuration(minutes: number): string {
 }
 
 // ── Time windows ──────────────────────────────────────────────────────────────
+//
+// Time window resolution priority (enforced in buildSchedule):
+//   1. Explicit time_window_start / time_window_end  (HH:MM strings on the order)
+//   2. Preset name via time_window ('morning' | 'afternoon' | 'evening')
+//   3. No window (no_window status)
+//
+// If both explicit times AND a preset name are provided on an order,
+// the explicit times ALWAYS win. The preset name is ignored in that case.
 
 export const TIME_WINDOWS: Record<string, { label: string; start: number; end: number; color: string }> = {
   morning:   { label: '08:00–12:00', start:  8 * 60, end: 12 * 60, color: '#F59E0B' },
@@ -130,14 +140,16 @@ export interface ScheduledStop {
 /**
  * Builds a full time schedule for one bus starting at startMinutes.
  * Respects time windows, calculates wait times, flags late arrivals.
+ * If baseLocation is provided, appends a virtual "return to base" stop.
  */
 export function buildSchedule(
   startMinutes: number,
   orders: OrderInput[],
+  baseLocation?: { lat: number; lng: number; address: string },
 ): ScheduledStop[] {
   let currentMinutes = startMinutes;
 
-  return orders.map((order, i) => {
+  const stops: ScheduledStop[] = orders.map((order, i) => {
     const duration = order.service_duration_minutes || DEFAULT_SERVICE_DURATION_MIN;
     const arrivalMinutes = currentMinutes + order.travel_from_prev_minutes;
 
@@ -206,6 +218,40 @@ export function buildSchedule(
       order_status: order.order_status ?? 'pending',
     };
   });
+
+  // ── Append virtual "return to base" stop ──
+  if (baseLocation && stops.length > 0) {
+    const lastStop = stops[stops.length - 1];
+    const distKm = haversineKm(lastStop.lat, lastStop.lng, baseLocation.lat, baseLocation.lng);
+    const travelMin = etaMinutes(distKm);
+    const arrivalMinutes = lastStop.departure_minutes + travelMin;
+
+    stops.push({
+      order_id: 'return_to_base',
+      sequence: stops.length + 1,
+      client_name: 'Powrót do bazy',
+      address: baseLocation.address,
+      lat: baseLocation.lat,
+      lng: baseLocation.lng,
+      services: [],
+      time_window: null,
+      time_window_label: null,
+      time_window_color: null,
+      time_window_status: 'no_window',
+      travel_minutes: travelMin,
+      arrival_time: formatTime(arrivalMinutes),
+      wait_minutes: 0,
+      service_start: formatTime(arrivalMinutes),
+      service_duration_minutes: 0,
+      departure_time: formatTime(arrivalMinutes),
+      departure_minutes: arrivalMinutes,
+      delay_minutes: 0,
+      flexibility_minutes: 0,
+      order_status: 'return',
+    });
+  }
+
+  return stops;
 }
 
 // ── Route score ───────────────────────────────────────────────────────────────

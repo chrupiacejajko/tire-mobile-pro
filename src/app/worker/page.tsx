@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Play, Coffee, RotateCcw, Square, MapPin, ChevronRight,
-  Clock, CheckCircle, Loader2, AlertCircle, RefreshCw,
+  Clock, CheckCircle, Loader2, AlertCircle, RefreshCw, Car,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -290,11 +290,22 @@ export default function WorkerTodayPage() {
       {/* Next task */}
       {nextTask && (
         <div
-          className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 cursor-pointer hover:border-gray-200 active:bg-gray-50 transition-colors"
+          className={`rounded-2xl shadow-sm p-4 cursor-pointer active:bg-gray-50 transition-colors ${
+            nextTask.status === 'in_transit'
+              ? 'bg-orange-50 border-2 border-orange-300 hover:border-orange-400'
+              : 'bg-white border border-gray-100 hover:border-gray-200'
+          }`}
           onClick={() => router.push(`/worker/tasks/${nextTask.id}`)}
         >
           <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">Następne zlecenie</span>
+            {nextTask.status === 'in_transit' ? (
+              <span className="flex items-center gap-1.5 text-xs font-medium text-orange-600 uppercase tracking-wide">
+                <Car className="w-3.5 h-3.5 animate-pulse" />
+                W drodze do klienta
+              </span>
+            ) : (
+              <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">Następne zlecenie</span>
+            )}
             <ChevronRight className="w-4 h-4 text-gray-400" />
           </div>
           <p className="font-semibold text-gray-900">{nextTask.client_name}</p>

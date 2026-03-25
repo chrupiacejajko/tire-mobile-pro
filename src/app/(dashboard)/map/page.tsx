@@ -15,6 +15,7 @@ import {
 import dynamic from 'next/dynamic';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
+import { useOrdersRealtime } from '@/hooks/use-orders-realtime';
 
 const MapContainer = dynamic(() => import('react-leaflet').then(m => m.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import('react-leaflet').then(m => m.TileLayer), { ssr: false });
@@ -1922,6 +1923,9 @@ export default function MapPage() {
       clearInterval(cdInterval);
     };
   }, [fetchContext]);
+
+  // Auto-refresh routes/orders when any order changes via Supabase Realtime
+  useOrdersRealtime(fetchContext);
 
   // fetchAll kept for compatibility (route refresh, order panels, etc.)
   const fetchAll = useCallback(async () => {

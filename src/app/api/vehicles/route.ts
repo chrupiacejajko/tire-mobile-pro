@@ -141,6 +141,20 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
+  // Check for active employees who have this vehicle as their default
+  const { count: employeeCount } = await supabase
+    .from('employees')
+    .select('id', { count: 'exact', head: true })
+    .eq('default_vehicle_id', id)
+    .eq('is_active', true);
+
+  if (employeeCount && employeeCount > 0) {
+    return NextResponse.json(
+      { error: 'Nie można usunąć pojazdu — jest przypisany jako domyślny pojazd aktywnych pracowników' },
+      { status: 409 }
+    );
+  }
+
   // Soft delete
   const { error } = await supabase
     .from('vehicles')

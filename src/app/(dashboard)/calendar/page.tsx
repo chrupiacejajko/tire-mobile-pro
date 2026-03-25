@@ -6,6 +6,7 @@ import { Calendar as CalendarIcon, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Topbar } from '@/components/layout/topbar';
 import { createClient } from '@/lib/supabase/client';
+import { useOrdersRealtime } from '@/hooks/use-orders-realtime';
 
 import {
   type CalendarOrder,
@@ -21,7 +22,8 @@ import {
 import { CalendarToolbar } from './_components/CalendarToolbar';
 import { CalendarSidebar } from './_components/CalendarSidebar';
 import { TeamView } from './_components/TeamView';
-import { TimelineView } from './_components/TimelineView';
+// TimelineView removed from calendar — use Planner's GanttView instead
+// import { TimelineView } from './_components/TimelineView';
 import { WeekView } from './_components/WeekView';
 import { MonthView } from './_components/MonthView';
 import { OrderDetailPanel } from './_components/OrderDetailPanel';
@@ -208,6 +210,9 @@ export default function CalendarPage() {
     fetchData();
   }, [fetchData]);
 
+  // Auto-refresh when any order changes via Supabase Realtime
+  useOrdersRealtime(fetchData);
+
   // ── Navigation ─────────────────────────────────────────────────────────────
 
   const navigate = (dir: number) => {
@@ -336,18 +341,6 @@ export default function CalendarPage() {
                 employees={employees}
                 workSchedules={workSchedules}
                 rowHeight={rowHeight}
-                selectedOrderId={selectedOrder?.id ?? null}
-                onSlotClick={handleSlotClick}
-                onOrderClick={handleOrderClick}
-              />
-            )}
-
-            {!loading && view === 'timeline' && (
-              <TimelineView
-                currentDate={currentDate}
-                orders={filteredOrders}
-                employees={employees}
-                workSchedules={workSchedules}
                 selectedOrderId={selectedOrder?.id ?? null}
                 onSlotClick={handleSlotClick}
                 onOrderClick={handleOrderClick}

@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   // ── Employees ─────────────────────────────────────────────────────────────
   const { data: employees } = await supabase
     .from('employees')
-    .select('id, region_id, user:profiles(full_name)')
+    .select('id, region_id, default_lat, default_lng, default_location, user:profiles(full_name)')
     .eq('is_active', true);
 
   if (!employees?.length) return NextResponse.json({ routes: [], unassigned: [], date });
@@ -138,7 +138,16 @@ export async function GET(request: NextRequest) {
         prevDeparture += routeInfo.duration_minutes + serviceDuration;
       }
 
-      const schedule = buildSchedule(startMinutes, orderInputs);
+      // Build base location for return-to-base stop
+      const baseLocation = (emp as any).default_lat && (emp as any).default_lng
+        ? {
+            lat: (emp as any).default_lat as number,
+            lng: (emp as any).default_lng as number,
+            address: (emp as any).default_location ?? 'Baza',
+          }
+        : undefined;
+
+      const schedule = buildSchedule(startMinutes, orderInputs, baseLocation);
       const totalKm = orderInputs.reduce((sum, _, i) => {
         // We'll do a separate pass for km — for now approximate
         return sum;

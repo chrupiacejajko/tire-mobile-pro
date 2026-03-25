@@ -10,6 +10,8 @@ import {
   closestCenter, PointerSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
 
+import { useOrdersRealtime } from '@/hooks/use-orders-realtime';
+import { useLiveScoring } from '@/hooks/use-live-scoring';
 import { type PlannerData, type UnassignedOrder, type Stop, type EmployeeRoute, STATUS_STYLES } from './_components/types';
 import { DraggableUnassignedCard, DragOverlayCard } from './_components/UnassignedCard';
 import { DroppableRouteCard } from './_components/RouteCard';
@@ -66,6 +68,10 @@ export default function PlannerPage() {
   }, []);
 
   useEffect(() => { load(date); }, [date, load]);
+
+  // Auto-refresh when any order changes via Supabase Realtime
+  const handleRealtimeChange = useCallback(() => { load(date); }, [load, date]);
+  useOrdersRealtime(handleRealtimeChange);
 
   // Sync date to URL search params
   useEffect(() => {
@@ -246,6 +252,14 @@ export default function PlannerPage() {
     setInserting(false);
   };
 
+  // ── Live GPS scoring (only active in Gantt view) ─────────────────────────
+
+  const liveScoring = useLiveScoring(
+    data?.routes ?? [],
+    viewMode === 'gantt',
+    60_000, // refresh every 60 seconds
+  );
+
   // ── Derived state ─────────────────────────────────────────────────────────
 
   const summary = data?.summary;
@@ -350,7 +364,25 @@ export default function PlannerPage() {
                 <p className="text-gray-400">Brak tras na wybrany dzień</p>
               </div>
             ) : viewMode === 'gantt' ? (
-              <GanttView routes={data?.routes ?? []} unassigned={data?.unassigned ?? []} date={date} onRefresh={() => load(date)} />
+              <>
+                {liveScoring.isLive && (
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-semibold">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                      </span>
+                      Live GPS
+                    </span>
+                    {liveScoring.lastUpdate && (
+                      <span className="text-[10px] text-gray-400">
+                        Aktualizacja: {liveScoring.lastUpdate.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                )}
+                <GanttView routes={liveScoring.routes} unassigned={data?.unassigned ?? []} date={date} onRefresh={() => load(date)} />
+              </>
             ) : (
               <div className="grid grid-cols-1 2xl:grid-cols-2 gap-4">
                 {data?.routes?.map(route => (

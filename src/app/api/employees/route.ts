@@ -2,6 +2,39 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { checkAuth } from '@/lib/api/auth-guard';
 
+/**
+ * Sanitize a Polish name for use in a fake email address:
+ * - Remove diacritics (ą→a, ć→c, ę→e, ł→l, ń→n, ó→o, ś→s, ź→z, ż→z)
+ * - Lowercase
+ * - Replace spaces with dots
+ * - Remove any remaining non-alphanumeric chars (except dots)
+ */
+function sanitizeForEmail(name: string): string {
+  const diacriticMap: Record<string, string> = {
+    'ą': 'a', 'ć': 'c', 'ę': 'e', 'ł': 'l', 'ń': 'n',
+    'ó': 'o', 'ś': 's', 'ź': 'z', 'ż': 'z',
+    'Ą': 'a', 'Ć': 'c', 'Ę': 'e', 'Ł': 'l', 'Ń': 'n',
+    'Ó': 'o', 'Ś': 's', 'Ź': 'z', 'Ż': 'z',
+  };
+  return name
+    .split('')
+    .map(ch => diacriticMap[ch] || ch)
+    .join('')
+    .toLowerCase()
+    .replace(/\s+/g, '.')
+    .replace(/[^a-z0-9.]/g, '');
+}
+
+/**
+ * Generate a fake internal email for workers who don't need a real email.
+ * Format: {first_name}.{last_name}@roottire.internal
+ */
+function generateWorkerEmail(firstName: string, lastName: string): string {
+  const sanitizedFirst = sanitizeForEmail(firstName || 'pracownik');
+  const sanitizedLast = sanitizeForEmail(lastName || 'nowy');
+  return `${sanitizedFirst}.${sanitizedLast}@roottire.internal`;
+}
+
 export async function GET() {
   const supabase = getAdminClient();
   const { data, error } = await supabase
@@ -33,9 +66,14 @@ export async function POST(request: NextRequest) {
 
     const full_name = `${first_name || ''} ${last_name || ''}`.trim();
 
+    // If no email provided or role is worker, auto-generate a fake internal email
+    const effectiveEmail = (email && email.trim())
+      ? email.trim()
+      : generateWorkerEmail(first_name || '', last_name || '');
+
     // Create auth user
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email,
+      email: effectiveEmail,
       password: 'TempPass123!',
       email_confirm: true,
       user_metadata: { full_name, role: role || 'worker' },

@@ -1,30 +1,28 @@
 // ── Calendar Dispatch Board — Shared Types & Config ──────────────────────────
 
 import { CircleAlert, Clock, CalendarRange, Shuffle, type LucideIcon } from 'lucide-react';
+import type { DispatchOrderBase } from '@/lib/types/dispatch-order';
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
 
-export interface CalendarOrder {
-  id: string;
-  client_name: string;
+/**
+ * CalendarOrder picks the commonly used fields from DispatchOrderBase
+ * and adds calendar-specific fields. Fields not available in calendar
+ * data (client_id, region_id, lat, lng, full services array, etc.)
+ * are made optional via Partial.
+ */
+export interface CalendarOrder extends
+  Pick<DispatchOrderBase, 'id' | 'client_name' | 'employee_id' | 'status' | 'priority'
+    | 'scheduled_date' | 'scheduled_time_start' | 'scheduled_time_end'
+    | 'address' | 'scheduling_type' | 'time_window_start' | 'time_window_end'
+    | 'flexibility_minutes' | 'auto_assigned'>,
+  Partial<Pick<DispatchOrderBase, 'client_id' | 'region_id' | 'lat' | 'lng'
+    | 'services' | 'notes' | 'dispatcher_notes'>> {
   client_phone: string;
   service_names: string;
-  scheduled_date: string;
-  scheduled_time_start: string;
-  scheduled_time_end: string;
-  status: string;
-  priority: string;
-  address: string;
   total_price: number;
-  employee_id: string | null;
   employee_name: string | null;
   employee_color: string;
-  // scheduling fields (migration 012)
-  scheduling_type: SchedulingType;
-  time_window_start: string | null;
-  time_window_end: string | null;
-  flexibility_minutes: number;
-  auto_assigned: boolean;
   estimated_arrival: string | null;
   source: string | null;
   internal_task_type: string | null;
@@ -63,7 +61,7 @@ export interface ServiceOption {
 }
 
 export type SchedulingType = 'asap' | 'fixed_time' | 'time_window' | 'flexible';
-export type CalendarView = 'team' | 'timeline' | 'week' | 'month';
+export type CalendarView = 'team' | 'timeline' | 'week' | 'month'; // 'timeline' kept for type compat but removed from UI
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

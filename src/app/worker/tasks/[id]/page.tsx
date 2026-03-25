@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, MapPin, Clock, Phone, Navigation, CheckCircle2,
-  Camera, X, AlertTriangle, Loader2, ChevronRight,
+  Camera, X, AlertTriangle, Loader2, ChevronRight, Car, Play,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -69,6 +69,7 @@ function priceFmt(price: number): string {
 const STATUS_LABELS: Record<string, string> = {
   new: 'Nowe',
   assigned: 'Przypisane',
+  in_transit: 'W drodze',
   in_progress: 'W trakcie',
   completed: 'Ukończone',
   cancelled: 'Anulowane',
@@ -81,12 +82,16 @@ function StatusBadge({ status }: { status: string }) {
         'inline-flex items-center rounded-full px-3 py-1 text-sm font-medium',
         {
           'bg-gray-100 text-gray-700': status === 'new' || status === 'assigned',
+          'bg-orange-100 text-orange-700': status === 'in_transit',
           'bg-blue-100 text-blue-700': status === 'in_progress',
           'bg-green-100 text-green-700': status === 'completed',
           'bg-red-100 text-red-700': status === 'cancelled',
         },
       )}
     >
+      {status === 'in_transit' && (
+        <Car className="w-3.5 h-3.5 mr-1.5 animate-pulse" />
+      )}
       {STATUS_LABELS[status] ?? status}
     </span>
   );
@@ -221,6 +226,12 @@ export default function TaskDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Transit / arrival action state
+  const [transitLoading, setTransitLoading] = useState(false);
+  const [arriveLoading, setArriveLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [transitToast, setTransitToast] = useState(false);
+
   // Completion form state
   const [notes, setNotes] = useState('');
   const [photos, setPhotos] = useState<File[]>([]);
@@ -290,6 +301,94 @@ export default function TaskDetailPage() {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
   }
 
+  // ── Start driving ──────────────────────────────────────────────────────────
+
+  async function handleStartDriving() {
+    if (!task) return;
+    setTransitLoading(true);
+    setActionError(null);
+
+    try {
+      // Request geolocation
+      const pos = await new Promise<GeolocationPosition | null>((resolve) => {
+        if (!navigator.geolocation) return resolve(null);
+        navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), {
+          timeout: 5000,
+          enableHighAccuracy: true,
+        });
+      });
+
+      const res = await fetch(`/api/worker/tasks/${task.id}/start-driving`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat: pos?.coords.latitude ?? undefined,
+          lng: pos?.coords.longitude ?? undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? 'Błąd rozpoczęcia przejazdu');
+      }
+
+      // Show toast
+      setTransitToast(true);
+      setTimeout(() => setTransitToast(false), 3000);
+
+      // Refresh task data
+      await fetchTask();
+
+      // Optionally open navigation
+      if (task.navigate_url) {
+        window.open(task.navigate_url, '_blank');
+      }
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Błąd rozpoczęcia przejazdu');
+    } finally {
+      setTransitLoading(false);
+    }
+  }
+
+  // ── Arrive (in_transit → in_progress) ──────────────────────────────────────
+
+  async function handleArrive() {
+    if (!task) return;
+    setArriveLoading(true);
+    setActionError(null);
+
+    try {
+      const pos = await new Promise<GeolocationPosition | null>((resolve) => {
+        if (!navigator.geolocation) return resolve(null);
+        navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), {
+          timeout: 5000,
+          enableHighAccuracy: true,
+        });
+      });
+
+      const res = await fetch(`/api/worker/tasks/${task.id}/arrive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat: pos?.coords.latitude ?? undefined,
+          lng: pos?.coords.longitude ?? undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? 'Błąd zgłoszenia przyjazdu');
+      }
+
+      // Refresh task data
+      await fetchTask();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Błąd zgłoszenia przyjazdu');
+    } finally {
+      setArriveLoading(false);
+    }
+  }
+
   // ── Complete task ─────────────────────────────────────────────────────────
 
   async function handleComplete() {
@@ -349,7 +448,7 @@ export default function TaskDetailPage() {
   const timeDisplay = task
     ? task.scheduled_time_start
       ? formatTime(task.scheduled_time_start) +
-        (task.scheduled_time_end ? ' – ' + formatTime(task.scheduled_time_end) : '')
+        (task.scheduled_time_end ? ' - ' + formatTime(task.scheduled_time_end) : '')
       : task.time_window ?? ''
     : '';
 
@@ -386,6 +485,14 @@ export default function TaskDetailPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-lg mx-auto p-4 pb-10">
+        {/* Toast notification */}
+        {transitToast && (
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+            <Car className="w-4 h-4" />
+            Rozpoczęto przejazd do klienta
+          </div>
+        )}
+
         {/* Back button */}
         <button
           type="button"
@@ -405,6 +512,19 @@ export default function TaskDetailPage() {
         <h1 className="text-2xl font-bold text-gray-900 leading-tight mb-4">
           {task.client_name}
         </h1>
+
+        {/* In-transit banner */}
+        {task.status === 'in_transit' && (
+          <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-xl p-4 mb-4">
+            <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+              <Car className="w-4 h-4 text-orange-600 animate-pulse" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-orange-800">W drodze do klienta</p>
+              <p className="text-xs text-orange-600 mt-0.5">{task.address}</p>
+            </div>
+          </div>
+        )}
 
         {/* Details card */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4 space-y-3">
@@ -462,7 +582,7 @@ export default function TaskDetailPage() {
                     <span className="text-gray-800">
                       {name}
                       {qty && qty > 1 && (
-                        <span className="text-gray-400 ml-1">× {qty}</span>
+                        <span className="text-gray-400 ml-1">{qty}</span>
                       )}
                     </span>
                     {price !== undefined && price > 0 && (
@@ -495,8 +615,8 @@ export default function TaskDetailPage() {
           </div>
         )}
 
-        {/* Navigate button */}
-        {task.navigate_url && (
+        {/* Navigate button — show when assigned or in_transit */}
+        {task.navigate_url && (task.status === 'in_transit' || task.status === 'assigned') && (
           <a
             href={task.navigate_url}
             target="_blank"
@@ -506,6 +626,57 @@ export default function TaskDetailPage() {
             <Navigation className="w-5 h-5" />
             Nawiguj
           </a>
+        )}
+
+        {/* Action error */}
+        {actionError && (
+          <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">
+            {actionError}
+          </div>
+        )}
+
+        {/* ── "Wyjeżdżam" button — assigned status ──────────────────────────── */}
+        {task.status === 'assigned' && (
+          <button
+            type="button"
+            onClick={handleStartDriving}
+            disabled={transitLoading}
+            className="flex items-center justify-center gap-2 w-full rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-white text-base font-semibold py-4 mb-4 disabled:opacity-60 active:from-orange-600 active:to-amber-600 transition-all shadow-md"
+          >
+            {transitLoading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Uruchamiam...
+              </>
+            ) : (
+              <>
+                <Navigation className="w-5 h-5" />
+                Wyjeżdżam
+              </>
+            )}
+          </button>
+        )}
+
+        {/* ── "Na miejscu" button — in_transit status ─────────────────────────── */}
+        {task.status === 'in_transit' && (
+          <button
+            type="button"
+            onClick={handleArrive}
+            disabled={arriveLoading}
+            className="flex items-center justify-center gap-2 w-full rounded-xl bg-blue-600 text-white text-base font-semibold py-4 mb-4 disabled:opacity-60 active:bg-blue-700 transition-colors shadow-md"
+          >
+            {arriveLoading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Zgłaszam przyjazd...
+              </>
+            ) : (
+              <>
+                <Play className="w-5 h-5" />
+                Na miejscu — rozpocznij
+              </>
+            )}
+          </button>
         )}
 
         {/* Completed banner */}
@@ -523,8 +694,8 @@ export default function TaskDetailPage() {
           </div>
         )}
 
-        {/* Completion form — only shown for non-terminal statuses */}
-        {!isTerminal && !completedAt && (
+        {/* Completion form — only shown for in_progress status */}
+        {task.status === 'in_progress' && !completedAt && (
           <div className="space-y-4">
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
               <h2 className="text-sm font-semibold text-gray-700 mb-3">
