@@ -93,6 +93,9 @@ export interface Client {
   vehicles: Vehicle[];
   notes: string | null;
   created_at: string;
+  nip: string | null;
+  is_blocked: boolean;
+  block_reason: string | null;
 }
 
 export interface Vehicle {
@@ -113,6 +116,22 @@ export interface Service {
   category: string;
   is_active: boolean;
   form_template_id?: string | null;
+  vehicle_type_id: string | null;
+  required_skill_id: string | null;
+}
+
+export interface ServiceType {
+  id: string;
+  name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface VehicleType {
+  id: string;
+  name: string;
+  is_active: boolean;
+  created_at: string;
 }
 
 // ---- Orders ----

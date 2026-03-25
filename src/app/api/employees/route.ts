@@ -192,3 +192,41 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  const supabase = getAdminClient();
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get('id');
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+
+  const today = new Date().toISOString().split('T')[0];
+
+  // Check for future work schedules assigned to this employee
+  const { count: scheduleCount } = await supabase
+    .from('work_schedules')
+    .select('id', { count: 'exact', head: true })
+    .eq('employee_id', id)
+    .gte('date', today);
+
+  // Check for active (non-completed/cancelled) orders assigned to this employee
+  const { count: orderCount } = await supabase
+    .from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('employee_id', id)
+    .not('status', 'in', '("completed","cancelled")');
+
+  if ((scheduleCount && scheduleCount > 0) || (orderCount && orderCount > 0)) {
+    return NextResponse.json(
+      { error: 'Nie można dezaktywować pracownika — ma nadchodzące grafiki lub zlecenia' },
+      { status: 409 }
+    );
+  }
+
+  // Soft delete
+  const { error } = await supabase
+    .from('employees')
+    .update({ is_active: false })
+    .eq('id', id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}

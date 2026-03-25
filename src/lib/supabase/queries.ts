@@ -55,6 +55,19 @@ export async function updateClientRecord(id: string, updates: Partial<Client>) {
 }
 
 export async function deleteClientRecord(id: string) {
+  // Check for active (non-completed/cancelled) orders before deleting
+  const { count, error: checkError } = await supabase
+    .from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', id)
+    .not('status', 'in', '("completed","cancelled")');
+
+  if (checkError) throw checkError;
+
+  if (count && count > 0) {
+    throw new Error('Nie można usunąć klienta — ma nadchodzące zlecenia');
+  }
+
   const { error } = await supabase.from('clients').delete().eq('id', id);
   if (error) throw error;
 }
@@ -91,6 +104,7 @@ export async function updateRegionRecord(id: string, updates: Partial<Region>) {
 }
 
 export async function deleteRegionRecord(id: string) {
+  // Deletion protection is enforced via DELETE /api/regions — call that endpoint instead of using this function directly.
   const { error } = await supabase.from('regions').delete().eq('id', id);
   if (error) throw error;
 }

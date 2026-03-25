@@ -1,6 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 
+export async function DELETE(request: NextRequest) {
+  const supabaseAdmin = getAdminClient();
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get('id');
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+
+  // Fetch active orders that might reference this service
+  const { data: activeOrders, error: ordersError } = await supabaseAdmin
+    .from('orders')
+    .select('id, services')
+    .in('status', ['new', 'assigned', 'in_progress']);
+
+  if (ordersError) return NextResponse.json({ error: ordersError.message }, { status: 500 });
+
+  // JS-side check: does any order's services JSONB array contain this service_id?
+  const referenced = (activeOrders || []).some((order) => {
+    const services = order.services;
+    if (!Array.isArray(services)) return false;
+    return services.some((s: { service_id?: string }) => s.service_id === id);
+  });
+
+  if (referenced) {
+    return NextResponse.json(
+      { error: 'Nie można dezaktywować usługi — jest zaplanowana w nadchodzących zleceniach' },
+      { status: 409 }
+    );
+  }
+
+  // Soft delete
+  const { error } = await supabaseAdmin
+    .from('services')
+    .update({ is_active: false })
+    .eq('id', id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}
+
 export async function PUT(request: NextRequest) {
   const supabaseAdmin = getAdminClient();
   try {

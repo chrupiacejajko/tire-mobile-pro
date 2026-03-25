@@ -118,3 +118,34 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  const supabase = getAdminClient();
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get('id');
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+
+  const today = new Date().toISOString().split('T')[0];
+
+  // Check for future work schedules referencing this vehicle
+  const { count: scheduleCount } = await supabase
+    .from('work_schedules')
+    .select('id', { count: 'exact', head: true })
+    .eq('vehicle_id', id)
+    .gte('date', today);
+
+  if (scheduleCount && scheduleCount > 0) {
+    return NextResponse.json(
+      { error: 'Nie można usunąć pojazdu — ma przypisane nadchodzące grafiki pracy' },
+      { status: 409 }
+    );
+  }
+
+  // Soft delete
+  const { error } = await supabase
+    .from('vehicles')
+    .update({ is_active: false })
+    .eq('id', id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}

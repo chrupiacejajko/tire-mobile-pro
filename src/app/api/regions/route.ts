@@ -74,6 +74,40 @@ export async function DELETE(req: NextRequest) {
   const id = searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
+  const today = new Date().toISOString().split('T')[0];
+
+  // Check future work schedules in this region
+  const { count: scheduleCount } = await supabase
+    .from('work_schedules')
+    .select('id', { count: 'exact', head: true })
+    .eq('region_id', id)
+    .gte('date', today);
+
+  // Check active (non-completed/cancelled) orders in this region
+  const { count: orderCount } = await supabase
+    .from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('region_id', id)
+    .not('status', 'in', '("completed","cancelled")');
+
+  // Check active employees assigned to this region
+  const { count: employeeCount } = await supabase
+    .from('employees')
+    .select('id', { count: 'exact', head: true })
+    .eq('region_id', id)
+    .eq('is_active', true);
+
+  if (
+    (scheduleCount && scheduleCount > 0) ||
+    (orderCount && orderCount > 0) ||
+    (employeeCount && employeeCount > 0)
+  ) {
+    return NextResponse.json(
+      { error: 'Nie można usunąć regionu — ma przypisanych pracowników, grafiki lub zlecenia' },
+      { status: 409 }
+    );
+  }
+
   const { error } = await supabase.from('regions').delete().eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

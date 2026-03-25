@@ -146,6 +146,7 @@ export default function BookingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [orderId, setOrderId] = useState('');
+  const [clientBlocked, setClientBlocked] = useState(false);
 
   const geocodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dates = nextDays(14);
@@ -295,6 +296,21 @@ export default function BookingPage() {
   const handleSubmit = async () => {
     if (submitting) return;
     setSubmitting(true);
+    setClientBlocked(false);
+
+    // Check if client is blocked by phone number
+    if (form.phone) {
+      const { data: existingClient } = await supabase
+        .from('clients')
+        .select('is_blocked')
+        .eq('phone', form.phone)
+        .maybeSingle();
+      if (existingClient?.is_blocked) {
+        setClientBlocked(true);
+        setSubmitting(false);
+        return;
+      }
+    }
     const vehiclesPayload = vehicles.filter(v => v.serviceIds.length > 0).map(v => ({
       label: v.label,
       service_ids: v.serviceIds,
@@ -521,7 +537,7 @@ export default function BookingPage() {
                               {svc.description && <p className="text-xs text-gray-500 truncate mt-0.5">{svc.description}</p>}
                             </div>
                             <div className="text-right shrink-0">
-                              <p className="text-sm font-bold text-white">{Number(svc.price)} zł</p>
+                              <p className="text-sm font-bold text-white">{svc.category === 'dojazd' ? `${Number(svc.price)} zł` : `od ${Number(svc.price)} zł`}</p>
                               <p className="text-[10px] text-gray-600">{svc.duration_minutes} min</p>
                             </div>
                           </label>
@@ -898,6 +914,18 @@ export default function BookingPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Blocked client error */}
+        {clientBlocked && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400 flex items-start gap-2"
+          >
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            Twoje konto zostało zablokowane. Skontaktuj się z nami w celu wyjaśnienia.
+          </motion.div>
+        )}
 
         {/* Navigation */}
         <div className="flex justify-between mt-8 pb-8">

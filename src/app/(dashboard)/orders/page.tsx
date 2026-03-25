@@ -816,7 +816,7 @@ export default function OrdersPage() {
                       {/* Client info */}
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Klient</p>
-                        <p className="text-sm font-medium">{selectedOrder.client?.name}</p>
+                        <p className="text-sm font-medium">{selectedOrder.client?.name || 'Klient bez nazwy'}</p>
                         {selectedOrder.client?.phone && (
                           <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
                             <Phone className="h-3 w-3" />{selectedOrder.client.phone}

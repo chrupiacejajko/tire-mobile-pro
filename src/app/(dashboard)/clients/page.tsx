@@ -10,16 +10,17 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
   Plus, Search, Phone, Mail, MapPin, Car, Edit, Trash2, Users, Eye,
-  X, ChevronRight, Clock, FileText, Upload,
+  X, ChevronRight, Clock, FileText, Upload, Ban, ShieldCheck, Hash,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import type { Client, Vehicle } from '@/lib/types';
 
 const ANIM = {
@@ -29,7 +30,45 @@ const ANIM = {
 
 const emptyVehicle: Vehicle = { brand: '', model: '', year: new Date().getFullYear(), tire_size: '', plate_number: '' };
 
+// ─── Rate limiter helpers ────────────────────────────────────────────────────
+const RATE_LIMIT_KEY = 'client_views';
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const RATE_LIMIT_MAX = 10;
+
+function getViewTimestamps(): number[] {
+  try {
+    const raw = localStorage.getItem(RATE_LIMIT_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function recordView(): void {
+  const now = Date.now();
+  const recent = getViewTimestamps().filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+  recent.push(now);
+  localStorage.setItem(RATE_LIMIT_KEY, JSON.stringify(recent));
+}
+
+function getViewsInWindow(): number {
+  const now = Date.now();
+  return getViewTimestamps().filter(t => now - t < RATE_LIMIT_WINDOW_MS).length;
+}
+
+function minutesUntilReset(): number {
+  const now = Date.now();
+  const timestamps = getViewTimestamps().filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+  if (timestamps.length < RATE_LIMIT_MAX) return 0;
+  const oldest = Math.min(...timestamps);
+  return Math.ceil((oldest + RATE_LIMIT_WINDOW_MS - now) / 60000);
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 export default function ClientsPage() {
+  const user = useAuth(s => s.user);
+  const isDispatcher = user?.role === 'dispatcher';
+
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -39,9 +78,18 @@ export default function ClientsPage() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
+  // Rate limit state (for dispatcher)
+  const [rateLimitBlocked, setRateLimitBlocked] = useState(false);
+  const [rateLimitMinutes, setRateLimitMinutes] = useState(0);
+
+  // Block/unblock state
+  const [blockDialogOpen, setBlockDialogOpen] = useState(false);
+  const [blockReason, setBlockReason] = useState('');
+  const [blocking, setBlocking] = useState(false);
+
   // Form state
   const [form, setForm] = useState({
-    name: '', phone: '', email: '', address: '', city: '', notes: '',
+    name: '', phone: '', email: '', address: '', city: '', notes: '', nip: '',
   });
   const [vehicles, setVehicles] = useState<Vehicle[]>([{ ...emptyVehicle }]);
   const [saving, setSaving] = useState(false);
@@ -61,7 +109,7 @@ export default function ClientsPage() {
   useEffect(() => { fetchClients(); }, [fetchClients]);
 
   const resetForm = () => {
-    setForm({ name: '', phone: '', email: '', address: '', city: '', notes: '' });
+    setForm({ name: '', phone: '', email: '', address: '', city: '', notes: '', nip: '' });
     setVehicles([{ ...emptyVehicle }]);
     setEditingClient(null);
   };
@@ -70,10 +118,25 @@ export default function ClientsPage() {
     setForm({
       name: client.name, phone: client.phone, email: client.email || '',
       address: client.address, city: client.city, notes: client.notes || '',
+      nip: client.nip || '',
     });
     setVehicles(client.vehicles.length > 0 ? client.vehicles : [{ ...emptyVehicle }]);
     setEditingClient(client);
     setDialogOpen(true);
+  };
+
+  const handleSelectClient = (client: Client) => {
+    if (isDispatcher) {
+      const views = getViewsInWindow();
+      if (views >= RATE_LIMIT_MAX) {
+        setRateLimitBlocked(true);
+        setRateLimitMinutes(minutesUntilReset());
+        return;
+      }
+      recordView();
+      setRateLimitBlocked(false);
+    }
+    setSelectedClient(client);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -94,6 +157,7 @@ export default function ClientsPage() {
       ...form,
       email: form.email || null,
       notes: form.notes || null,
+      nip: form.nip || null,
       vehicles: cleanVehicles,
       lat,
       lng,
@@ -119,8 +183,46 @@ export default function ClientsPage() {
     if (selectedClient?.id === id) setSelectedClient(null);
   };
 
+  const handleToggleBlock = async () => {
+    if (!selectedClient) return;
+    setBlocking(true);
+
+    if (selectedClient.is_blocked) {
+      // Unblock
+      const { data } = await supabase
+        .from('clients')
+        .update({ is_blocked: false, block_reason: null })
+        .eq('id', selectedClient.id)
+        .select()
+        .single();
+      if (data) {
+        const updated = data as Client;
+        setSelectedClient(updated);
+        setClients(prev => prev.map(c => c.id === updated.id ? updated : c));
+      }
+    } else {
+      // Block
+      const { data } = await supabase
+        .from('clients')
+        .update({ is_blocked: true, block_reason: blockReason || null })
+        .eq('id', selectedClient.id)
+        .select()
+        .single();
+      if (data) {
+        const updated = data as Client;
+        setSelectedClient(updated);
+        setClients(prev => prev.map(c => c.id === updated.id ? updated : c));
+      }
+      setBlockDialogOpen(false);
+      setBlockReason('');
+    }
+
+    setBlocking(false);
+  };
+
   const filteredClients = clients.filter(c => {
-    const matchSearch = c.name.toLowerCase().includes(search.toLowerCase()) ||
+    const name = c.name || 'Klient bez nazwy';
+    const matchSearch = name.toLowerCase().includes(search.toLowerCase()) ||
       c.phone.includes(search) || c.city.toLowerCase().includes(search.toLowerCase());
     const matchCity = cityFilter === 'all' || c.city === cityFilter;
     return matchSearch && matchCity;
@@ -192,6 +294,18 @@ export default function ClientsPage() {
           ))}
         </motion.div>
 
+        {/* Rate limit warning */}
+        {isDispatcher && rateLimitBlocked && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-700 flex items-center gap-2"
+          >
+            <Clock className="h-4 w-4 shrink-0" />
+            Osiągnięto limit wyświetleń klientów. Spróbuj ponownie za {rateLimitMinutes} minut.
+          </motion.div>
+        )}
+
         {/* Filters */}
         <div className="flex items-center gap-3">
           <div className="relative flex-1 max-w-sm">
@@ -228,16 +342,25 @@ export default function ClientsPage() {
                       <motion.div
                         key={client.id}
                         variants={ANIM.item}
-                        className={`flex items-center justify-between px-5 py-4 border-b border-gray-50 last:border-0 cursor-pointer transition-colors ${selectedClient?.id === client.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
-                        onClick={() => setSelectedClient(client)}
+                        className={`flex items-center justify-between px-5 py-4 border-b last:border-0 cursor-pointer transition-colors ${
+                          selectedClient?.id === client.id ? 'bg-blue-50' : 'hover:bg-gray-50'
+                        } ${client.is_blocked ? 'border-red-100 opacity-75' : 'border-gray-50'}`}
+                        onClick={() => handleSelectClient(client)}
                         whileHover={{ x: 2 }}
                       >
                         <div className="flex items-center gap-4 min-w-0">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white text-sm font-bold">
-                            {client.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white text-sm font-bold bg-gradient-to-br ${client.is_blocked ? 'from-red-400 to-red-600' : 'from-blue-500 to-blue-600'}`}>
+                            {(client.name || 'K').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <p className="text-sm font-semibold text-gray-900 truncate">{client.name}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-semibold text-gray-900 truncate">{client.name || 'Klient bez nazwy'}</p>
+                              {client.is_blocked && (
+                                <Badge className="text-[9px] bg-red-100 text-red-700 border-red-200 rounded-md px-1.5 py-0 font-bold tracking-wide">
+                                  ZABLOKOWANY
+                                </Badge>
+                              )}
+                            </div>
                             <div className="flex items-center gap-3 mt-0.5">
                               <span className="flex items-center gap-1 text-xs text-gray-400"><Phone className="h-3 w-3" />{client.phone}</span>
                               <span className="flex items-center gap-1 text-xs text-gray-400"><MapPin className="h-3 w-3" />{client.city}</span>
@@ -271,7 +394,7 @@ export default function ClientsPage() {
                   exit={{ opacity: 0, x: -20 }}
                   transition={{ duration: 0.3 }}
                 >
-                  <Card className="rounded-2xl border-gray-100 shadow-sm sticky top-6">
+                  <Card className={`rounded-2xl shadow-sm sticky top-6 ${selectedClient.is_blocked ? 'border-red-200' : 'border-gray-100'}`}>
                     <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-base font-bold">Profil klienta</CardTitle>
@@ -286,13 +409,32 @@ export default function ClientsPage() {
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-5">
+                      {/* Blocked banner */}
+                      {selectedClient.is_blocked && (
+                        <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-2.5">
+                          <div className="flex items-center gap-2 text-red-700 font-semibold text-sm">
+                            <Ban className="h-4 w-4" /> Konto zablokowane
+                          </div>
+                          {selectedClient.block_reason && (
+                            <p className="text-xs text-red-500 mt-1">{selectedClient.block_reason}</p>
+                          )}
+                        </div>
+                      )}
+
                       {/* Avatar + name */}
                       <div className="flex items-center gap-4">
-                        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 text-white text-lg font-bold">
-                          {selectedClient.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                        <div className={`flex h-14 w-14 items-center justify-center rounded-2xl text-white text-lg font-bold bg-gradient-to-br ${selectedClient.is_blocked ? 'from-red-400 to-red-600' : 'from-blue-500 to-blue-600'}`}>
+                          {(selectedClient.name || 'K').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                         </div>
                         <div>
-                          <p className="font-bold text-gray-900">{selectedClient.name}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-gray-900">{selectedClient.name || 'Klient bez nazwy'}</p>
+                            {selectedClient.is_blocked && (
+                              <Badge className="text-[9px] bg-red-100 text-red-700 border-red-200 rounded-md px-1.5 py-0 font-bold tracking-wide">
+                                ZABLOKOWANY
+                              </Badge>
+                            )}
+                          </div>
                           <p className="text-xs text-gray-400">Klient od {new Date(selectedClient.created_at).toLocaleDateString('pl')}</p>
                         </div>
                       </div>
@@ -313,6 +455,12 @@ export default function ClientsPage() {
                           <MapPin className="h-4 w-4 text-gray-400" />
                           <span className="text-gray-700">{selectedClient.address}, {selectedClient.city}</span>
                         </div>
+                        {selectedClient.nip && (
+                          <div className="flex items-center gap-2.5 text-sm">
+                            <Hash className="h-4 w-4 text-gray-400" />
+                            <span className="text-gray-700">NIP: {selectedClient.nip}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Vehicles */}
@@ -341,8 +489,33 @@ export default function ClientsPage() {
                         </div>
                       )}
 
+                      {/* Block / Unblock toggle */}
+                      <div className="border-t pt-4">
+                        {selectedClient.is_blocked ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full rounded-xl text-xs h-9 border-green-200 text-green-700 hover:bg-green-50"
+                            disabled={blocking}
+                            onClick={handleToggleBlock}
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
+                            {blocking ? 'Odblokowanie...' : 'Odblokuj klienta'}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full rounded-xl text-xs h-9 border-red-200 text-red-700 hover:bg-red-50"
+                            onClick={() => setBlockDialogOpen(true)}
+                          >
+                            <Ban className="h-3.5 w-3.5 mr-1.5" /> Zablokuj klienta
+                          </Button>
+                        )}
+                      </div>
+
                       {/* Actions */}
-                      <div className="flex gap-2 pt-2">
+                      <div className="flex gap-2">
                         <Button variant="outline" size="sm" className="flex-1 rounded-xl text-xs h-9">
                           <FileText className="h-3.5 w-3.5 mr-1" /> Historia zleceń
                         </Button>
@@ -389,6 +562,10 @@ export default function ClientsPage() {
             <div className="space-y-2">
               <Label>Email</Label>
               <Input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="jan@example.com" />
+            </div>
+            <div className="space-y-2">
+              <Label>NIP</Label>
+              <Input value={form.nip} onChange={e => setForm({ ...form, nip: e.target.value })} placeholder="123-456-78-90" />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -445,6 +622,41 @@ export default function ClientsPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Block reason dialog */}
+      <Dialog open={blockDialogOpen} onOpenChange={setBlockDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Zablokuj klienta</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500">
+              Czy na pewno chcesz zablokować klienta <strong>{selectedClient?.name || 'Klient bez nazwy'}</strong>?
+            </p>
+            <div className="space-y-2">
+              <Label>Powód blokady (opcjonalnie)</Label>
+              <Input
+                value={blockReason}
+                onChange={e => setBlockReason(e.target.value)}
+                placeholder="np. Nieuregulowane należności"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => { setBlockDialogOpen(false); setBlockReason(''); }}>
+                Anuluj
+              </Button>
+              <Button
+                className="bg-red-600 hover:bg-red-700 text-white"
+                disabled={blocking}
+                onClick={handleToggleBlock}
+              >
+                <Ban className="h-4 w-4 mr-1.5" />
+                {blocking ? 'Blokowanie...' : 'Zablokuj'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

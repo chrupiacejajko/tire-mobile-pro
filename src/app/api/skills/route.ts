@@ -70,6 +70,25 @@ export async function DELETE(request: NextRequest) {
   const id = searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
+  // Check references in employee_skills
+  const { count: empSkillCount } = await supabase
+    .from('employee_skills')
+    .select('id', { count: 'exact', head: true })
+    .eq('skill_id', id);
+
+  // Check references in vehicle_skills
+  const { count: vehSkillCount } = await supabase
+    .from('vehicle_skills')
+    .select('id', { count: 'exact', head: true })
+    .eq('skill_id', id);
+
+  if ((empSkillCount && empSkillCount > 0) || (vehSkillCount && vehSkillCount > 0)) {
+    return NextResponse.json(
+      { error: 'Nie można dezaktywować umiejętności — jest przypisana do pracownika lub pojazdu' },
+      { status: 409 }
+    );
+  }
+
   // Soft delete
   const { error } = await supabase
     .from('skills')

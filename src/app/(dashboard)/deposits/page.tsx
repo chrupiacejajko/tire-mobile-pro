@@ -107,7 +107,7 @@ function DepositCard({ deposit, onEdit, onPickup, onDelete }: {
       <div className="flex items-center gap-2 mb-3 p-2.5 bg-gray-50 rounded-xl">
         <User className="h-4 w-4 text-gray-400 flex-shrink-0" />
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-gray-800 truncate">{deposit.client.name}</p>
+          <p className="text-sm font-semibold text-gray-800 truncate">{deposit.client.name || 'Klient bez nazwy'}</p>
           <p className="text-xs text-gray-400">{deposit.client.phone}</p>
         </div>
         {overdue && (
@@ -436,7 +436,7 @@ export default function DepositsPage() {
   };
 
   const handlePickup = async (deposit: TireDeposit) => {
-    if (!confirm(`Wydać opony klientowi ${deposit.client.name}?`)) return;
+    if (!confirm(`Wydać opony klientowi ${deposit.client.name || 'Klient bez nazwy'}?`)) return;
     await fetch(`/api/deposits/${deposit.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
