@@ -45,13 +45,42 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Redirect authenticated users away from auth pages
+  // Fetch role for authenticated users (needed for routing decisions)
+  let role: string | null = null;
+  if (user) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle();
+    role = profile?.role ?? null;
+  }
+
+  const isWorker = role === 'worker';
+  const isAdminOrDispatcher = role === 'admin' || role === 'dispatcher';
+  const { pathname } = request.nextUrl;
+
+  // Redirect authenticated users away from auth pages / root
   if (
     user &&
-    (request.nextUrl.pathname.startsWith('/login') ||
-      request.nextUrl.pathname.startsWith('/register') ||
-      request.nextUrl.pathname === '/')
+    (pathname.startsWith('/login') ||
+      pathname.startsWith('/register') ||
+      pathname === '/')
   ) {
+    const url = request.nextUrl.clone();
+    url.pathname = isWorker ? '/worker' : '/dashboard';
+    return NextResponse.redirect(url);
+  }
+
+  // Worker trying to access admin dashboard → redirect to /worker
+  if (user && isWorker && pathname.startsWith('/dashboard')) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/worker';
+    return NextResponse.redirect(url);
+  }
+
+  // Admin/dispatcher trying to access /worker → redirect to /dashboard
+  if (user && isAdminOrDispatcher && pathname.startsWith('/worker')) {
     const url = request.nextUrl.clone();
     url.pathname = '/dashboard';
     return NextResponse.redirect(url);

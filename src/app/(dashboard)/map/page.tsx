@@ -9,7 +9,7 @@ import {
   MapPin, Navigation, RefreshCw, X, Gauge, Compass,
   Clock, Truck, User, Search, ExternalLink, History,
   Activity, Route, ChevronRight, AlertCircle,
-  Plus, Phone, Briefcase, Target, Zap, ArrowRight, Package, CheckCircle2, Loader2, ChevronDown, Unlink,
+  Plus, Phone, Briefcase, Target, Zap, ArrowRight, Package, CheckCircle2, Loader2, ChevronDown, Unlink, Fuel, TrendingUp,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { cn } from '@/lib/utils';
@@ -44,6 +44,12 @@ interface VehicleData {
   location_address: string | null;
   last_update: string | null;
   driver_name: string | null;
+  fuel_liters: number | null;
+  fuel_percent: number | null;
+  odometer_km: number | null;
+  voltage: number | null;
+  engine_on: boolean | null;
+  heading: number | null;
 }
 
 interface RouteOrder {
@@ -458,6 +464,54 @@ function VehicleDetailPanel({ vehicle, route, onClose, onRefreshRoutes }: { vehi
             </div>
           ))}
         </div>
+
+        {/* Telemetry: fuel, odometer, voltage */}
+        {(vehicle.fuel_percent != null || vehicle.odometer_km != null || vehicle.voltage != null) && (
+          <div className="space-y-2">
+            {vehicle.fuel_percent != null && (
+              <div className="bg-gray-50 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1.5 text-gray-400">
+                    <Fuel className="h-3.5 w-3.5" />
+                    <span className="text-[11px] font-medium uppercase tracking-wider">Paliwo</span>
+                  </div>
+                  <span className="text-sm font-bold text-gray-900">
+                    {vehicle.fuel_percent}%
+                    {vehicle.fuel_liters != null && <span className="text-xs text-gray-400 ml-1">({vehicle.fuel_liters.toFixed(0)}L)</span>}
+                  </span>
+                </div>
+                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${vehicle.fuel_percent > 50 ? 'bg-emerald-500' : vehicle.fuel_percent > 25 ? 'bg-amber-500' : 'bg-red-500'}`}
+                    style={{ width: `${vehicle.fuel_percent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              {vehicle.odometer_km != null && (
+                <div className="bg-gray-50 rounded-xl p-2.5 text-center">
+                  <div className="flex items-center justify-center gap-1 mb-0.5">
+                    <TrendingUp className="h-3 w-3 text-gray-400" />
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400">Przebieg</span>
+                  </div>
+                  <p className="text-sm font-bold text-gray-900">{vehicle.odometer_km.toLocaleString('pl')}</p>
+                  <p className="text-[10px] text-gray-400">km</p>
+                </div>
+              )}
+              {vehicle.voltage != null && (
+                <div className="bg-gray-50 rounded-xl p-2.5 text-center">
+                  <div className="flex items-center justify-center gap-1 mb-0.5">
+                    <Zap className="h-3 w-3 text-gray-400" />
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400">Akumulator</span>
+                  </div>
+                  <p className="text-sm font-bold text-gray-900">{vehicle.voltage.toFixed(1)}</p>
+                  <p className="text-[10px] text-gray-400">V</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Location */}
         {(vehicle.location_address || (vehicle.lat && vehicle.lng)) && (
@@ -1763,7 +1817,7 @@ export default function MapPage() {
   const [createOrderOpen, setCreateOrderOpen] = useState(false);
   const [prefilledWorker, setPrefilledWorker] = useState<{ id: string; name: string; plate: string | null } | null>(null);
   const [orderFilter, setOrderFilter] = useState<string>('all');
-  const [countdown, setCountdown] = useState(30);
+  const [countdown, setCountdown] = useState(5);
   /* Address search state */
   const [addressQuery, setAddressQuery] = useState('');
   const [addressSuggestions, setAddressSuggestions] = useState<HereSuggestion[]>([]);
@@ -1774,57 +1828,140 @@ export default function MapPage() {
   const [addressSearching, setAddressSearching] = useState(false);
   const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // countdownRef no longer needed — SSE handles live updates
 
   const today = new Date().toISOString().split('T')[0];
 
-  const fetchAll = useCallback(async () => {
+  // Fetch routes, orders, regions (these change infrequently)
+  const fetchContext = useCallback(async () => {
     try {
-      const [vRes, rRes, oRes, regRes] = await Promise.all([
-        fetch('/api/vehicles/locations'),
+      const [rRes, oRes, regRes] = await Promise.all([
         fetch(`/api/dispatcher/routes?date=${today}`),
         fetch(`/api/dispatcher/orders?date=${today}`),
         fetch('/api/regions'),
       ]);
-      if (vRes.ok) {
-        const data = await vRes.json();
-        setVehicles(data);
-        setSelectedVehicle(prev => prev ? data.find((v: VehicleData) => v.id === prev.id) ?? null : null);
-      }
-      if (rRes.ok) {
-        const data = await rRes.json();
-        setRoutes(data.routes ?? []);
-      }
-      if (oRes.ok) {
-        const data = await oRes.json();
-        setAllOrders(data.orders ?? []);
-      }
+      if (rRes.ok) { const data = await rRes.json(); setRoutes(data.routes ?? []); }
+      if (oRes.ok) { const data = await oRes.json(); setAllOrders(data.orders ?? []); }
       if (regRes.ok) {
         const data = await regRes.json();
-        if (Array.isArray(data)) {
-          setMapRegions(data.filter((r: MapRegion) => r.polygon && r.polygon.length >= 3));
-        }
+        if (Array.isArray(data)) setMapRegions(data.filter((r: MapRegion) => r.polygon && r.polygon.length >= 3));
       }
-    } catch (err) {
-      console.error('[MapPage]', err);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { console.error('[MapPage] context fetch:', err); }
   }, [today]);
 
-  const resetCountdown = useCallback(() => {
-    setCountdown(30);
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    countdownRef.current = setInterval(() => setCountdown(p => p <= 1 ? 30 : p - 1), 1000);
-  }, []);
+  // SSE stream for real-time vehicle positions (every ~5s from Satis API)
+  const sseRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    fetchAll(); resetCountdown();
-    const iv = setInterval(() => { fetchAll(); resetCountdown(); }, 30_000);
-    return () => { clearInterval(iv); if (countdownRef.current) clearInterval(countdownRef.current); };
-  }, [fetchAll, resetCountdown]);
+    // Initial context load
+    fetchContext();
+    // Refresh routes/orders every 60s (they don't change as fast as GPS)
+    const ctxInterval = setInterval(fetchContext, 60_000);
 
-  const handleRefresh = useCallback(async () => { setLoading(true); await fetchAll(); resetCountdown(); }, [fetchAll, resetCountdown]);
+    // Start SSE stream for live GPS
+    const sse = new EventSource('/api/fleet/stream');
+    sseRef.current = sse;
+
+    sse.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        const apiVehicles: VehicleData[] = (payload.vehicles || []).map((v: any) => ({
+          id: v.vehicle_id || v.plate,
+          plate_number: v.plate,
+          brand: v.brand || '',
+          model: v.model || '',
+          year: null,
+          lat: v.lat,
+          lng: v.lng,
+          status: v.status === 'idle' ? 'working' : v.status === 'parked' ? 'online' : v.status,
+          speed: v.speed ?? null,
+          direction: v.heading != null ? String(v.heading) : null,
+          rpm: v.rpm ?? null,
+          driving_time: null,
+          location_address: v.location ?? null,
+          last_update: v.last_update ?? payload.timestamp,
+          driver_name: v.driver_name ?? null,
+          fuel_liters: v.fuel_liters ?? null,
+          fuel_percent: v.fuel_percent ?? null,
+          odometer_km: v.odometer_km ?? null,
+          voltage: v.voltage ?? null,
+          engine_on: v.engine_on ?? null,
+          heading: v.heading ?? null,
+        }));
+        setVehicles(apiVehicles);
+        setSelectedVehicle(prev => prev ? apiVehicles.find(v => v.id === prev.id || v.plate_number === prev.plate_number) ?? null : null);
+        setLoading(false);
+        setCountdown(5); // Visual indicator: next update in ~5s
+      } catch (err) {
+        console.error('[SSE] parse error:', err);
+      }
+    };
+
+    sse.onerror = () => {
+      // SSE will auto-reconnect — just log it
+      console.warn('[SSE] connection error, reconnecting...');
+    };
+
+    // Countdown visual (ticks every second)
+    const cdInterval = setInterval(() => setCountdown(p => p <= 1 ? 5 : p - 1), 1000);
+
+    return () => {
+      sse.close();
+      sseRef.current = null;
+      clearInterval(ctxInterval);
+      clearInterval(cdInterval);
+    };
+  }, [fetchContext]);
+
+  // fetchAll kept for compatibility (route refresh, order panels, etc.)
+  const fetchAll = useCallback(async () => {
+    await fetchContext();
+  }, [fetchContext]);
+
+  const resetCountdown = useCallback(() => setCountdown(5), []);
+
+  const handleRefresh = useCallback(async () => {
+    setLoading(true);
+    await fetchContext();
+    // Force SSE reconnect for immediate GPS refresh
+    if (sseRef.current) {
+      sseRef.current.close();
+      const sse = new EventSource('/api/fleet/stream');
+      sseRef.current = sse;
+      sse.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const apiVehicles: VehicleData[] = (payload.vehicles || []).map((v: any) => ({
+            id: v.vehicle_id || v.plate,
+            plate_number: v.plate,
+            brand: v.brand || '',
+            model: v.model || '',
+            year: null,
+            lat: v.lat,
+            lng: v.lng,
+            status: v.status === 'idle' ? 'working' : v.status === 'parked' ? 'online' : v.status,
+            speed: v.speed ?? null,
+            direction: v.heading != null ? String(v.heading) : null,
+            rpm: v.rpm ?? null,
+            driving_time: null,
+            location_address: v.location ?? null,
+            last_update: v.last_update ?? payload.timestamp,
+            driver_name: v.driver_name ?? null,
+            fuel_liters: v.fuel_liters ?? null,
+            fuel_percent: v.fuel_percent ?? null,
+            odometer_km: v.odometer_km ?? null,
+            voltage: v.voltage ?? null,
+            engine_on: v.engine_on ?? null,
+            heading: v.heading ?? null,
+          }));
+          setVehicles(apiVehicles);
+          setSelectedVehicle(prev => prev ? apiVehicles.find(vv => vv.id === prev.id || vv.plate_number === prev.plate_number) ?? null : null);
+          setLoading(false);
+        } catch {}
+      };
+    }
+    resetCountdown();
+  }, [fetchContext, resetCountdown]);
 
   /* ── Address autocomplete (HERE) ── */
   const fetchAddressSuggestions = useCallback(async (q: string) => {
@@ -2020,7 +2157,7 @@ export default function MapPage() {
           <div className="p-4 border-b border-gray-100 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-400">odświeży za <span className="font-semibold text-gray-600">{countdown}s</span></span>
+                <span className="flex items-center gap-1.5 text-xs"><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /><span className="font-semibold text-emerald-600">Live</span><span className="text-gray-400">· {countdown}s</span></span>
                 {drivingCount > 0 && (
                   <span className="flex items-center gap-1 text-xs font-semibold text-blue-600">
                     <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />{drivingCount} w trasie

@@ -164,6 +164,8 @@ export async function POST(request: NextRequest) {
         client_name: client.name || '',
         address: order.address || client.address || '',
         time_window: order.time_window,
+        time_window_start: (order as any).time_window_start ?? null,
+        time_window_end: (order as any).time_window_end ?? null,
         scheduled_time_start: order.scheduled_time_start,
         services: serviceNames,
         travel_from_prev_minutes: travelMin,

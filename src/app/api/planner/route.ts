@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
   // ── Today's orders ─────────────────────────────────────────────────────────
   const { data: allOrders } = await supabase
     .from('orders')
-    .select('id, employee_id, status, priority, scheduled_time_start, scheduled_time_end, time_window, services, client:clients(id, name, lat, lng, address, city)')
+    .select('id, employee_id, status, priority, scheduled_time_start, scheduled_time_end, time_window, time_window_start, time_window_end, scheduling_type, services, client:clients(id, name, lat, lng, address, city)')
     .eq('scheduled_date', date)
     .not('status', 'eq', 'cancelled')
     .order('scheduled_time_start', { ascending: true });
@@ -124,6 +124,8 @@ export async function GET(request: NextRequest) {
           client_name: c.name ?? 'Klient',
           address: [c.address, c.city].filter(Boolean).join(', '),
           time_window: (order as any).time_window ?? null,
+          time_window_start: (order as any).time_window_start ?? null,
+          time_window_end: (order as any).time_window_end ?? null,
           scheduled_time_start: order.scheduled_time_start,
           services: (order as any).services ?? [],
           travel_from_prev_minutes: routeInfo.duration_minutes,
@@ -178,6 +180,9 @@ export async function GET(request: NextRequest) {
       priority: (o as any).priority,
       scheduled_time_start: o.scheduled_time_start,
       time_window: (o as any).time_window ?? null,
+      time_window_start: (o as any).time_window_start ?? null,
+      time_window_end: (o as any).time_window_end ?? null,
+      scheduling_type: (o as any).scheduling_type ?? null,
       services: (o as any).services ?? [],
       client_name: c?.name ?? 'Klient',
       address: [c?.address, c?.city].filter(Boolean).join(', '),

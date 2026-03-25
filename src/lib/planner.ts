@@ -93,6 +93,8 @@ export interface OrderInput {
   client_name: string;
   address: string;
   time_window: string | null;   // 'morning' | 'afternoon' | 'evening' | null
+  time_window_start: string | null; // explicit HH:MM start (takes priority over time_window)
+  time_window_end: string | null;   // explicit HH:MM end
   scheduled_time_start: string | null;
   services: string[];
   travel_from_prev_minutes: number;  // HERE ETA from previous stop
@@ -134,20 +136,45 @@ export function buildSchedule(
   return orders.map((order, i) => {
     const duration = order.service_duration_minutes || DEFAULT_SERVICE_DURATION_MIN;
     const arrivalMinutes = currentMinutes + order.travel_from_prev_minutes;
-    const window = order.time_window ? TIME_WINDOWS[order.time_window] : null;
+
+    // Resolve time window — explicit start/end takes priority over preset name
+    let windowStart: number | null = null;
+    let windowEnd: number | null = null;
+    let windowLabel: string | null = null;
+    let windowColor: string | null = null;
+
+    if (order.time_window_start && order.time_window_end) {
+      windowStart = parseTime(order.time_window_start);
+      windowEnd = parseTime(order.time_window_end);
+      windowLabel = `${order.time_window_start.slice(0,5)}–${order.time_window_end.slice(0,5)}`;
+      windowColor = '#F59E0B';
+    } else if (order.time_window && TIME_WINDOWS[order.time_window]) {
+      const preset = TIME_WINDOWS[order.time_window];
+      windowStart = preset.start;
+      windowEnd = preset.end;
+      windowLabel = preset.label;
+      windowColor = preset.color;
+    }
 
     let serviceStartMinutes = arrivalMinutes;
     let waitMinutes = 0;
-    if (window && arrivalMinutes < window.start) {
-      waitMinutes = window.start - arrivalMinutes;
-      serviceStartMinutes = window.start;
+    if (windowStart !== null && arrivalMinutes < windowStart) {
+      waitMinutes = windowStart - arrivalMinutes;
+      serviceStartMinutes = windowStart;
     }
 
-    const status = getTimeWindowStatus(arrivalMinutes, duration, order.time_window);
-    const departureMinutes = serviceStartMinutes + duration;
+    // Determine time window status
+    let status: TimeWindowStatus = 'no_window';
+    if (windowStart !== null && windowEnd !== null) {
+      const serviceEnd = Math.max(arrivalMinutes, windowStart) + duration;
+      if (arrivalMinutes > windowEnd) status = 'late';
+      else if (serviceEnd > windowEnd) status = 'tight';
+      else if (arrivalMinutes < windowStart) status = 'early_wait';
+      else status = 'ok';
+    }
 
-    // How many minutes past window end?
-    const delayMinutes = window ? Math.max(0, arrivalMinutes - window.end) : 0;
+    const departureMinutes = serviceStartMinutes + duration;
+    const delayMinutes = windowEnd !== null ? Math.max(0, arrivalMinutes - windowEnd) : 0;
 
     currentMinutes = departureMinutes;
 
@@ -160,8 +187,8 @@ export function buildSchedule(
       lng: order.lng,
       services: order.services,
       time_window: order.time_window,
-      time_window_label: window?.label ?? null,
-      time_window_color: window?.color ?? null,
+      time_window_label: windowLabel,
+      time_window_color: windowColor,
       time_window_status: status,
       travel_minutes: order.travel_from_prev_minutes,
       arrival_time: formatTime(arrivalMinutes),

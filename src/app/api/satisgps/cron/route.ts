@@ -6,7 +6,8 @@ import { pollSatisGPS } from '@/lib/satisgps/poller';
  * GET /api/satisgps/cron
  *
  * Called by Railway Cron Job every minute.
- * Fetches all vehicle positions from Satis GPS and stores in Supabase.
+ * Fetches all vehicle positions + telemetry from Satis GPS REST API
+ * and stores in Supabase (employee_locations).
  *
  * Railway Cron config:
  *   Command: curl https://tire-mobile-pro-production.up.railway.app/api/satisgps/cron?secret=kruszwil2024
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
   const supabase = getAdminClient();
   const startTime = Date.now();
 
-  // Poll Satis GPS
+  // Poll Satis GPS REST API
   const result = await pollSatisGPS();
 
   if (!result.ok) {
@@ -31,18 +32,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: false,
       error: result.error,
-      sessionExpired: result.sessionExpired ?? false,
       duration: Date.now() - startTime,
-    }, { status: result.sessionExpired ? 401 : 500 });
+    }, { status: 500 });
   }
 
-  // Store all vehicle locations
+  // Store all vehicle locations with full telemetry
   let stored = 0;
   const unknownPlates: string[] = [];
 
   for (const vehicle of result.vehicles) {
     const speed = vehicle.speed ?? 0;
-    const status = speed > 5 ? 'driving' : speed === 0 ? 'working' : 'online';
+    const status = vehicle.ignitionOn
+      ? (speed > 5 ? 'driving' : 'working')
+      : (speed > 0 ? 'driving' : 'online');
 
     // Match by plate_number first, fallback to satis_device_id
     let dbVehicle: { id: string } | null = null;
@@ -78,10 +80,18 @@ export async function GET(request: NextRequest) {
       status,
       speed: vehicle.speed ?? 0,
       direction: vehicle.direction ?? null,
+      heading: vehicle.direction ? parseInt(vehicle.direction, 10) || null : null,
       rpm: vehicle.rpm ?? null,
       driving_time: vehicle.drivingTime ?? null,
       location_address: vehicle.location ?? null,
-      timestamp: new Date().toISOString(),
+      fuel_liters: vehicle.fuel ?? null,
+      fuel_percent: vehicle.fuelPercent ?? null,
+      odometer_km: vehicle.odometer ?? null,
+      voltage: vehicle.voltage ?? null,
+      engine_on: vehicle.ignitionOn ?? null,
+      satis_device_id: vehicle.satisId ?? null,
+      total_fuel_used: vehicle.raw?.TotalVehicleFuelUsage ?? null,
+      timestamp: vehicle.timestamp ?? new Date().toISOString(),
     });
 
     if (!error) stored++;

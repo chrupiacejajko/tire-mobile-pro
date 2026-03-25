@@ -145,40 +145,46 @@ END $$;
 
 -- ── order_photos ─────────────────────────────────────────────
 -- Workers can insert photos for their own orders
+-- (table may not exist in all deployments — guarded)
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE tablename = 'order_photos' AND policyname = 'worker_own_order_photos'
-  ) THEN
-    CREATE POLICY "worker_own_order_photos" ON public.order_photos
-      FOR ALL
-      USING (
-        order_id IN (
-          SELECT o.id FROM public.orders o
-          JOIN public.employees e ON e.id = o.employee_id
-          WHERE e.user_id = auth.uid()
-        )
-      );
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'order_photos') THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE tablename = 'order_photos' AND policyname = 'worker_own_order_photos'
+    ) THEN
+      CREATE POLICY "worker_own_order_photos" ON public.order_photos
+        FOR ALL
+        USING (
+          order_id IN (
+            SELECT o.id FROM public.orders o
+            JOIN public.employees e ON e.id = o.employee_id
+            WHERE e.user_id = auth.uid()
+          )
+        );
+    END IF;
   END IF;
 END $$;
 
 -- ── order_subtasks ───────────────────────────────────────────
+-- (table may not exist in all deployments — guarded)
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE tablename = 'order_subtasks' AND policyname = 'worker_own_order_subtasks'
-  ) THEN
-    CREATE POLICY "worker_own_order_subtasks" ON public.order_subtasks
-      FOR ALL
-      USING (
-        order_id IN (
-          SELECT o.id FROM public.orders o
-          JOIN public.employees e ON e.id = o.employee_id
-          WHERE e.user_id = auth.uid()
-        )
-      );
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'order_subtasks') THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE tablename = 'order_subtasks' AND policyname = 'worker_own_order_subtasks'
+    ) THEN
+      CREATE POLICY "worker_own_order_subtasks" ON public.order_subtasks
+        FOR ALL
+        USING (
+          order_id IN (
+            SELECT o.id FROM public.orders o
+            JOIN public.employees e ON e.id = o.employee_id
+            WHERE e.user_id = auth.uid()
+          )
+        );
+    END IF;
   END IF;
 END $$;
 

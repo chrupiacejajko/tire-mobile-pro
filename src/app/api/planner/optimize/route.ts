@@ -28,6 +28,7 @@ import {
   type LatLng,
 } from '@/lib/planner';
 import { haversineKm } from '@/lib/geo';
+import crypto from 'crypto';
 
 interface OrderForOptimization {
   id: string;
@@ -37,9 +38,19 @@ interface OrderForOptimization {
   client_name: string;
   address: string;
   time_window: string | null;
+  time_window_start: string | null;
+  time_window_end: string | null;
   scheduled_time_start: string | null;
   services: string[];
   service_duration_minutes: number;
+}
+
+interface SnapshotEntry {
+  order_id: string;
+  employee_id: string | null;
+  status: string;
+  scheduled_time_start: string | null;
+  scheduled_date: string | null;
 }
 
 /**
@@ -57,36 +68,45 @@ async function optimizeSequence(
   startPos: LatLng,
   orders: OrderForOptimization[],
   startMinutes: number = parseTime('08:00'),
-): Promise<{ sequence: OrderForOptimization[]; totalKm: number }> {
+): Promise<{ sequence: OrderForOptimization[]; totalKm: number; routingSource: 'here' | 'haversine_fallback' }> {
   if (orders.length <= 1) {
-    return { sequence: orders, totalKm: 0 };
+    return { sequence: orders, totalKm: 0, routingSource: 'haversine_fallback' };
   }
 
   // ── Step 1: Classify orders by time window deadline ──
   const getWindowEnd = (o: OrderForOptimization): number => {
+    if (o.time_window_end) return parseTime(o.time_window_end);
     if (o.time_window && TIME_WINDOWS[o.time_window]) return TIME_WINDOWS[o.time_window].end;
     return 24 * 60; // no window = anytime
   };
   const getWindowStart = (o: OrderForOptimization): number => {
+    if (o.time_window_start) return parseTime(o.time_window_start);
     if (o.time_window && TIME_WINDOWS[o.time_window]) return TIME_WINDOWS[o.time_window].start;
     return 0;
+  };
+  const getWindowKey = (o: OrderForOptimization): string => {
+    if (o.time_window_start && o.time_window_end) return `${o.time_window_start}-${o.time_window_end}`;
+    return o.time_window || '__flexible__';
   };
 
   // ── Step 2: Sort by deadline, then group into time buckets ──
   const sorted = [...orders].sort((a, b) => getWindowEnd(a) - getWindowEnd(b));
 
-  // Group into buckets: each bucket = orders with same time window
+  // Group into buckets by window end time (not just preset name)
+  // Orders with similar deadlines go in same bucket for nearest-neighbor
   const buckets: Map<string, OrderForOptimization[]> = new Map();
   for (const o of sorted) {
-    const key = o.time_window || '__flexible__';
+    const key = getWindowKey(o);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(o);
   }
 
   // Order bucket keys by earliest deadline
   const bucketOrder = [...buckets.keys()].sort((a, b) => {
-    const aEnd = a === '__flexible__' ? 24 * 60 : (TIME_WINDOWS[a]?.end ?? 24 * 60);
-    const bEnd = b === '__flexible__' ? 24 * 60 : (TIME_WINDOWS[b]?.end ?? 24 * 60);
+    const aOrders = buckets.get(a)!;
+    const bOrders = buckets.get(b)!;
+    const aEnd = Math.min(...aOrders.map(getWindowEnd));
+    const bEnd = Math.min(...bOrders.map(getWindowEnd));
     return aEnd - bEnd;
   });
 
@@ -94,6 +114,7 @@ async function optimizeSequence(
   const sequence: OrderForOptimization[] = [];
   let currentPos = startPos;
   let totalKm = 0;
+  let usedHere = false;
 
   for (const bucketKey of bucketOrder) {
     const bucketOrders = buckets.get(bucketKey)!;
@@ -114,6 +135,7 @@ async function optimizeSequence(
 
       const chosen = remaining.splice(bestIdx, 1)[0];
       const routeInfo = await getRouteInfo(currentPos.lat, currentPos.lng, chosen.lat, chosen.lng);
+      if (routeInfo.source === 'here') usedHere = true;
       totalKm += routeInfo.distance_km;
       currentPos = { lat: chosen.lat, lng: chosen.lng };
       sequence.push(chosen);
@@ -151,8 +173,8 @@ async function optimizeSequence(
 
     for (let i = 0; i < sequence.length - 1; i++) {
       for (let j = i + 1; j < sequence.length; j++) {
-        // Only swap if same time window (to preserve deadline order across buckets)
-        if (sequence[i].time_window !== sequence[j].time_window) continue;
+        // Only swap if same time window bucket (to preserve deadline order across buckets)
+        if (getWindowKey(sequence[i]) !== getWindowKey(sequence[j])) continue;
 
         // Calculate cost before swap
         const prevI = i === 0 ? startPos : { lat: sequence[i - 1].lat, lng: sequence[i - 1].lng };
@@ -187,10 +209,15 @@ async function optimizeSequence(
     recalcPos = { lat: order.lat, lng: order.lng };
   }
 
-  return { sequence, totalKm };
+  return {
+    sequence,
+    totalKm,
+    routingSource: usedHere ? 'here' : 'haversine_fallback',
+  };
 }
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
   const auth = await checkAuth(request, ['admin', 'dispatcher']);
   if (!auth.ok) return auth.response;
   const supabase = getAdminClient();
@@ -243,7 +270,7 @@ export async function POST(request: NextRequest) {
     // Get orders
     let ordersQuery = supabase
       .from('orders')
-      .select('id, employee_id, scheduled_time_start, time_window, services, client:clients(name, lat, lng, address, city)')
+      .select('id, employee_id, scheduled_date, scheduled_time_start, status, time_window, time_window_start, time_window_end, services, client:clients(name, lat, lng, address, city)')
       .eq('scheduled_date', targetDate)
       .not('status', 'eq', 'cancelled');
 
@@ -253,8 +280,42 @@ export async function POST(request: NextRequest) {
 
     const { data: ordersRaw } = await ordersQuery;
     if (!ordersRaw?.length) {
-      return NextResponse.json({ message: 'No orders found', optimized: [] });
+      return NextResponse.json({
+        status: 'no_change',
+        message: 'Brak zleceń do optymalizacji',
+        optimized: 0,
+        results: [],
+        summary: {
+          routes_changed: 0,
+          routes_total: 0,
+          score_before: 0,
+          score_after: 0,
+          km_before: 0,
+          km_after: 0,
+          late_before: 0,
+          late_after: 0,
+          reassignments: 0,
+          buffer_removed: 0,
+        },
+        warnings: [],
+        undo_token: null,
+        undo_expires_at: null,
+        routing_source: 'haversine_fallback',
+        computation_ms: Date.now() - startTime,
+      });
     }
+
+    // ── Save snapshot of current state BEFORE any changes ───────────────
+    const snapshotEntries: SnapshotEntry[] = ordersRaw.map(o => ({
+      order_id: o.id,
+      employee_id: o.employee_id,
+      status: (o as any).status ?? 'new',
+      scheduled_time_start: o.scheduled_time_start,
+      scheduled_date: (o as any).scheduled_date,
+    }));
+
+    const undoToken = crypto.randomBytes(16).toString('hex');
+    const undoExpiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
     // Prepare order objects with coords
     const orders: OrderForOptimization[] = ordersRaw
@@ -274,6 +335,8 @@ export async function POST(request: NextRequest) {
           client_name: c.name ?? 'Klient',
           address: [c.address, c.city].filter(Boolean).join(', '),
           time_window: (o as any).time_window ?? null,
+          time_window_start: (o as any).time_window_start ?? null,
+          time_window_end: (o as any).time_window_end ?? null,
           scheduled_time_start: o.scheduled_time_start,
           services: (o as any).services ?? [],
           service_duration_minutes: totalDuration,
@@ -331,7 +394,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── Cross-employee feasibility check ──────────────────────────────
+    // ── Cross-employee feasibility check ──────────────────────────────────────
     // Before grouping by employee, check if any assigned orders are
     // IMPOSSIBLE for their current employee (can't arrive within window).
     // If so, try to reassign to a better employee.
@@ -339,6 +402,12 @@ export async function POST(request: NextRequest) {
     const employeePositions = new Map<string, LatLng>();
     for (const emp of employees || []) {
       employeePositions.set(emp.id, gpsMap.get(emp.id) ?? { lat: 52.2297, lng: 21.0122 });
+    }
+
+    // Track original employee assignments for reassignment counting
+    const originalEmployeeMap = new Map<string, string | null>();
+    for (const order of orders) {
+      originalEmployeeMap.set(order.id, order.employee_id);
     }
 
     // Check feasibility for each order-employee pair
@@ -485,7 +554,64 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── Build "before" scores per employee ────────────────────────────────────
+    // Compute scores based on original order state (before optimize sequence changes)
+    const beforeScoreMap = new Map<string, {
+      score: number;
+      km: number;
+      late: number;
+      orders: number;
+    }>();
+    for (const emp of employees || []) {
+      const empOrders = ordersByEmployee.get(emp.id) || [];
+      if (!empOrders.length) continue;
+      const pos = gpsMap.get(emp.id) ?? { lat: 52.2297, lng: 21.0122 };
+      const empWs = workScheduleMap.get(emp.id);
+      const empStartMin = empWs ? parseTime(empWs.start_time) : parseTime('08:00');
+
+      // Build a naive schedule in current order to get "before" score
+      let prevPos: LatLng = pos;
+      let naiveKm = 0;
+      const naiveInputs: OrderInput[] = [];
+      for (const order of empOrders) {
+        const km = haversineKm(prevPos.lat, prevPos.lng, order.lat, order.lng) * 1.35;
+        naiveKm += km;
+        naiveInputs.push({
+          order_id: order.id,
+          lat: order.lat,
+          lng: order.lng,
+          client_name: order.client_name,
+          address: order.address,
+          time_window: order.time_window,
+          time_window_start: order.time_window_start,
+          time_window_end: order.time_window_end,
+          scheduled_time_start: order.scheduled_time_start,
+          services: order.services,
+          travel_from_prev_minutes: Math.round(km / 50 * 60),
+          service_duration_minutes: order.service_duration_minutes,
+        });
+        prevPos = { lat: order.lat, lng: order.lng };
+      }
+      const naiveSchedule = buildSchedule(empStartMin, naiveInputs);
+      const naiveScore = scoreRoute(naiveSchedule, naiveKm);
+      beforeScoreMap.set(emp.id, {
+        score: naiveScore.score,
+        km: naiveScore.total_km,
+        late: naiveScore.late,
+        orders: empOrders.length,
+      });
+    }
+
     const results = [];
+    const warnings: Array<{
+      type: string;
+      employee_id: string;
+      employee_name: string;
+      score_before: number;
+      score_after: number;
+      message: string;
+    }> = [];
+    let globalRoutingSource: 'here' | 'haversine_fallback' = 'haversine_fallback';
 
     for (const emp of employees || []) {
       const empOrders = ordersByEmployee.get(emp.id) || [];
@@ -494,13 +620,15 @@ export async function POST(request: NextRequest) {
       const pos = gpsMap.get(emp.id) ?? { lat: 52.2297, lng: 21.0122 };
       const empWs = workScheduleMap.get(emp.id);
       const empStartMin = empWs ? parseTime(empWs.start_time) : parseTime('08:00');
-      const { sequence, totalKm } = await optimizeSequence(pos, empOrders, empStartMin);
+      const { sequence, totalKm, routingSource } = await optimizeSequence(pos, empOrders, empStartMin);
+      if (routingSource === 'here') globalRoutingSource = 'here';
 
       // Build schedule for optimized sequence
       let prevPos: LatLng = pos;
       const orderInputs: OrderInput[] = [];
       for (const order of sequence) {
         const routeInfo = await getRouteInfo(prevPos.lat, prevPos.lng, order.lat, order.lng);
+        if (routeInfo.source === 'here') globalRoutingSource = 'here';
         orderInputs.push({
           order_id: order.id,
           lat: order.lat,
@@ -508,6 +636,8 @@ export async function POST(request: NextRequest) {
           client_name: order.client_name,
           address: order.address,
           time_window: order.time_window,
+          time_window_start: order.time_window_start,
+          time_window_end: order.time_window_end,
           scheduled_time_start: order.scheduled_time_start,
           services: order.services,
           travel_from_prev_minutes: routeInfo.duration_minutes,
@@ -577,6 +707,30 @@ export async function POST(request: NextRequest) {
 
       const routeScore = scoreRoute(schedule, totalKm);
 
+      // ── Optimize Guard: detect score drops ────────────────────────────
+      const beforeData = beforeScoreMap.get(emp.id);
+      const empName = (emp.user as any)?.full_name ?? 'Pracownik';
+
+      if (beforeData && routeScore.score < beforeData.score - 5) {
+        warnings.push({
+          type: 'score_drop',
+          employee_id: emp.id,
+          employee_name: empName,
+          score_before: beforeData.score,
+          score_after: routeScore.score,
+          message: `Trasa ${empName}: score spadł z ${beforeData.score}% na ${routeScore.score}%`,
+        });
+      }
+
+      // Detect if route actually changed
+      const beforeOrderIds = (beforeData ? (ordersByEmployee.get(emp.id) || []) : []).map(o => o.id).sort().join(',');
+      const afterOrderIds = sequence.map(o => o.id).sort().join(',');
+      const changed = beforeOrderIds !== afterOrderIds ||
+        (schedule.some((s, i) => {
+          const orig = empOrders.find(o => o.id === s.order_id);
+          return orig?.scheduled_time_start !== s.service_start;
+        }));
+
       if (commit) {
         // Save optimized order sequence (update scheduled_time_start based on schedule)
         for (const stop of schedule) {
@@ -597,19 +751,97 @@ export async function POST(request: NextRequest) {
 
       results.push({
         employee_id: emp.id,
-        employee_name: (emp.user as any)?.full_name ?? 'Pracownik',
+        employee_name: empName,
         sequence: sequence.map(o => o.id),
         schedule,
         score: routeScore,
+        // Phase 2 per-route before/after
+        score_before: beforeData?.score ?? routeScore.score,
+        km_before: beforeData?.km ?? routeScore.total_km,
+        late_before: beforeData?.late ?? routeScore.late,
+        orders_before: beforeData?.orders ?? schedule.length,
+        changed,
         committed: commit,
         buffer_removed: removedOrderIds,
       });
     }
 
+    // ── Save snapshot to DB if committing ─────────────────────────────────────
+    if (commit && results.length > 0) {
+      try {
+        await supabase.from('planner_snapshots').insert({
+          token: undoToken,
+          date: targetDate,
+          snapshot: snapshotEntries,
+          action_type: 'optimize',
+          created_by: (auth as any).user?.id ?? null,
+          expires_at: undoExpiresAt,
+        });
+      } catch (snapshotErr) {
+        // Non-fatal: optimization already happened, just log
+        console.error('[planner/optimize] Failed to save snapshot:', snapshotErr);
+      }
+    }
+
+    // ── Compute global summary ────────────────────────────────────────────────
+    const routesChanged = results.filter(r => r.changed).length;
+    const scoreBefore = results.length ? Math.round(results.reduce((s, r) => s + r.score_before, 0) / results.length) : 0;
+    const scoreAfter = results.length ? Math.round(results.reduce((s, r) => s + r.score.score, 0) / results.length) : 0;
+    const kmBefore = Math.round(results.reduce((s, r) => s + r.km_before, 0) * 10) / 10;
+    const kmAfter = Math.round(results.reduce((s, r) => s + r.score.total_km, 0) * 10) / 10;
+    const lateBefore = results.reduce((s, r) => s + r.late_before, 0);
+    const lateAfter = results.reduce((s, r) => s + r.score.late, 0);
+    const totalReassignments = orders.filter(o =>
+      o.employee_id !== null && originalEmployeeMap.get(o.id) !== null &&
+      originalEmployeeMap.get(o.id) !== o.employee_id
+    ).length;
+    const totalBufferRemoved = results.reduce((s, r) => s + r.buffer_removed.length, 0);
+
+    // Determine overall status
+    let status: 'success' | 'partial' | 'no_change' | 'warning' | 'error';
+    if (routesChanged === 0) {
+      status = 'no_change';
+    } else if (warnings.some(w => w.type === 'score_drop')) {
+      status = 'warning';
+    } else if (routesChanged < results.length) {
+      status = 'partial';
+    } else {
+      status = 'success';
+    }
+
+    const count = results.length;
+    let message: string;
+    if (status === 'no_change') {
+      message = 'Trasy są już zoptymalizowane';
+    } else if (status === 'warning') {
+      message = `Zoptymalizowano ${count} tras${count === 1 ? 'ę' : count < 5 ? 'y' : ''} — sprawdź ostrzeżenia`;
+    } else {
+      message = `Zoptymalizowano ${count} tras${count === 1 ? 'ę' : count < 5 ? 'y' : ''}`;
+    }
+
     return NextResponse.json({
+      status,
+      message,
+      summary: {
+        routes_changed: routesChanged,
+        routes_total: results.length,
+        score_before: scoreBefore,
+        score_after: scoreAfter,
+        km_before: kmBefore,
+        km_after: kmAfter,
+        late_before: lateBefore,
+        late_after: lateAfter,
+        reassignments: totalReassignments,
+        buffer_removed: totalBufferRemoved,
+      },
       optimized: results.length,
       results,
+      warnings,
       committed: commit,
+      undo_token: commit && results.length > 0 ? undoToken : null,
+      undo_expires_at: commit && results.length > 0 ? undoExpiresAt : null,
+      routing_source: globalRoutingSource,
+      computation_ms: Date.now() - startTime,
     });
   } catch (err) {
     console.error('[planner/optimize]', err);
