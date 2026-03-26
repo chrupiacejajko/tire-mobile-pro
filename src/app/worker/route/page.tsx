@@ -7,7 +7,9 @@ import {
   Loader2, Wrench, Home as HomeIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useOrdersRealtime } from '@/hooks/use-orders-realtime';
+import { AlertTriangle } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -242,6 +244,7 @@ export default function WorkerRoutePage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [realtimeBanner, setRealtimeBanner] = useState(false);
 
   useEffect(() => {
     async function fetchMe() {
@@ -292,6 +295,15 @@ export default function WorkerRoutePage() {
   useEffect(() => {
     if (employeeId) fetchTasks();
   }, [employeeId, fetchTasks]);
+
+  // Supabase Realtime: auto-reload when orders change
+  const handleOrderChange = useCallback(() => {
+    setRealtimeBanner(true);
+    fetchTasks(true);
+    setTimeout(() => setRealtimeBanner(false), 5000);
+  }, [fetchTasks]);
+
+  useOrdersRealtime(handleOrderChange, !!employeeId && !loading);
 
   return (
     <div className="max-w-lg mx-auto p-4">
@@ -345,6 +357,21 @@ export default function WorkerRoutePage() {
           </div>
         </motion.div>
       )}
+
+      {/* Realtime update banner */}
+      <AnimatePresence>
+        {realtimeBanner && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-[24px] p-4 mb-4 text-sm text-amber-700"
+          >
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 text-amber-500" />
+            <span className="font-medium">Plan zaktualizowany</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Error */}
       {error && (

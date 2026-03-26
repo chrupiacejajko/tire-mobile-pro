@@ -1,11 +1,14 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Home, Navigation2, Bell, User, Loader2, WifiOff } from 'lucide-react';
+import { Home, Navigation2, Bell, User, Loader2, WifiOff, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useSyncStatus, type SyncStatus } from '@/hooks/use-sync-status';
+import { createClient } from '@/lib/supabase/client';
+import { subscribeToPush } from '@/lib/worker/push-notifications';
 
 type WorkStatus = 'off_work' | 'on_work' | 'break';
 
@@ -31,7 +34,10 @@ export default function WorkerShell({ children }: { children: React.ReactNode })
   const [checking, setChecking] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
   const [shellData, setShellData] = useState<ShellData | null>(null);
-  const [syncStatus, setSyncStatus] = useState<'online' | 'syncing' | 'offline'>('online');
+  const { status: pwaSync, pendingCount } = useSyncStatus();
+  const [syncedVisible, setSyncedVisible] = useState(false);
+  const [employeeId, setEmployeeId] = useState<string | null>(null);
+  const pushRequested = useRef(false);
 
   // Auth check
   useEffect(() => {
@@ -45,12 +51,12 @@ export default function WorkerShell({ children }: { children: React.ReactNode })
               work_status: data.work_status,
               current_shift: data.current_shift,
             });
+            setEmployeeId(data.employee_id ?? null);
             setChecking(false);
           });
         }
       })
       .catch(() => {
-        setSyncStatus('offline');
         setChecking(false);
       });
   }, [router]);
@@ -58,7 +64,7 @@ export default function WorkerShell({ children }: { children: React.ReactNode })
   // Unread notification badge
   const fetchUnread = useCallback(async () => {
     try {
-      const r = await fetch('/api/worker/notifications?unread_only=true');
+      const r = await fetch('/api/worker-notifications?unread_only=true');
       const d = await r.json();
       setUnreadCount(d.total ?? 0);
     } catch { /* offline */ }
@@ -76,7 +82,6 @@ export default function WorkerShell({ children }: { children: React.ReactNode })
     if (checking) return;
     const interval = setInterval(async () => {
       try {
-        setSyncStatus('syncing');
         const res = await fetch('/api/worker/me');
         if (res.ok) {
           const data = await res.json();
@@ -84,14 +89,63 @@ export default function WorkerShell({ children }: { children: React.ReactNode })
             work_status: data.work_status,
             current_shift: data.current_shift,
           });
-          setSyncStatus('online');
         }
       } catch {
-        setSyncStatus('offline');
+        // offline state handled by useSyncStatus
       }
     }, 60_000);
     return () => clearInterval(interval);
   }, [checking]);
+
+  // Supabase Realtime: subscribe to worker_notifications for badge updates
+  useEffect(() => {
+    if (checking || !employeeId) return;
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel('worker-notifications-badge')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'worker_notifications',
+          filter: `employee_id=eq.${employeeId}`,
+        },
+        () => {
+          // Re-fetch unread count when a new notification arrives
+          fetchUnread();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [checking, employeeId, fetchUnread]);
+
+  // Request push permission on first shift start
+  useEffect(() => {
+    if (pushRequested.current) return;
+    if (!shellData) return;
+    if (shellData.work_status === 'on_work' && shellData.current_shift.clock_in) {
+      pushRequested.current = true;
+      subscribeToPush().catch(() => {
+        // Silently ignore push permission failures
+      });
+    }
+  }, [shellData]);
+
+  // Show "synced" briefly then hide
+  useEffect(() => {
+    if (pwaSync === 'synced') {
+      setSyncedVisible(true);
+      const timer = setTimeout(() => setSyncedVisible(false), 2000);
+      return () => clearTimeout(timer);
+    } else {
+      setSyncedVisible(false);
+    }
+  }, [pwaSync]);
 
   if (checking) {
     return (
@@ -104,28 +158,86 @@ export default function WorkerShell({ children }: { children: React.ReactNode })
   return (
     <div className="min-h-screen bg-[#FDF6F0] flex flex-col">
       {/* Sync indicator — small pill at top center */}
-      {syncStatus !== 'online' && (
-        <div className="fixed top-0 left-0 right-0 z-50 flex justify-center safe-top pt-2 pointer-events-none">
+      <AnimatePresence>
+        {pwaSync === 'offline' && (
           <motion.div
+            key="offline-banner"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-0 left-0 right-0 z-50 bg-red-500 text-white text-center safe-top"
+          >
+            <div className="flex items-center justify-center gap-2 py-2 px-4">
+              <WifiOff className="w-3.5 h-3.5 shrink-0" />
+              <span className="text-[12px] font-medium">
+                Offline {'\u2014'} akcje zostan{'\u0105'} wys{'\u0142'}ane po po{'\u0142\u0105'}czeniu
+              </span>
+            </div>
+          </motion.div>
+        )}
+
+        {pwaSync === 'syncing' && (
+          <motion.div
+            key="syncing-pill"
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-1.5 bg-white/90 backdrop-blur-sm rounded-full px-3 py-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.08)] pointer-events-auto"
+            exit={{ opacity: 0, y: -10 }}
+            className="fixed top-0 left-0 right-0 z-50 flex justify-center safe-top pt-2 pointer-events-none"
           >
-            {syncStatus === 'syncing' && (
-              <>
-                <Loader2 className="w-3 h-3 text-amber-500 animate-spin" />
-                <span className="text-[11px] text-amber-600 font-medium">Synchronizacja...</span>
-              </>
-            )}
-            {syncStatus === 'offline' && (
-              <>
-                <WifiOff className="w-3 h-3 text-red-500" />
-                <span className="text-[11px] text-red-600 font-medium">Offline</span>
-              </>
-            )}
+            <div className="flex items-center gap-1.5 bg-white/90 backdrop-blur-sm rounded-full px-3 py-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.08)]">
+              <Loader2 className="w-3 h-3 text-amber-500 animate-spin" />
+              <span className="text-[11px] text-amber-600 font-medium">Synchronizacja...</span>
+            </div>
           </motion.div>
-        </div>
-      )}
+        )}
+
+        {pwaSync === 'pending' && pendingCount > 0 && (
+          <motion.div
+            key="pending-pill"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="fixed top-0 left-0 right-0 z-50 flex justify-center safe-top pt-2 pointer-events-none"
+          >
+            <div className="flex items-center gap-1.5 bg-yellow-50 border border-yellow-200 rounded-full px-3 py-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.08)]">
+              <span className="w-2 h-2 rounded-full bg-yellow-400" />
+              <span className="text-[11px] text-yellow-700 font-medium">
+                {pendingCount} oczekuj{pendingCount === 1 ? '\u0105ce' : '\u0105cych'}
+              </span>
+            </div>
+          </motion.div>
+        )}
+
+        {pwaSync === 'error' && (
+          <motion.div
+            key="error-pill"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="fixed top-0 left-0 right-0 z-50 flex justify-center safe-top pt-2 pointer-events-none"
+          >
+            <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-full px-3 py-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.08)]">
+              <AlertCircle className="w-3 h-3 text-red-500" />
+              <span className="text-[11px] text-red-600 font-medium">B\u0142\u0105d synchronizacji</span>
+            </div>
+          </motion.div>
+        )}
+
+        {pwaSync === 'synced' && syncedVisible && (
+          <motion.div
+            key="synced-pill"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="fixed top-0 left-0 right-0 z-50 flex justify-center safe-top pt-2 pointer-events-none"
+          >
+            <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-full px-3 py-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.08)]">
+              <CheckCircle2 className="w-3 h-3 text-green-500" />
+              <span className="text-[11px] text-green-600 font-medium">Zsynchronizowano</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Page content */}
       <main className="flex-1 overflow-y-auto pb-20">

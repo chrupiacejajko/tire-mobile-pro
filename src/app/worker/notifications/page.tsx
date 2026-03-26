@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Bell, CheckCheck, MapPin, Loader2,
   Zap, XCircle, ArrowRightCircle, ChevronRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { createClient } from '@/lib/supabase/client';
+import { showLocalNotification } from '@/lib/worker/push-notifications';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -106,6 +108,64 @@ export default function NotificationsPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const employeeIdRef = useRef<string | null>(null);
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
+
+  // Supabase Realtime: subscribe for instant notification updates
+  useEffect(() => {
+    let channel: ReturnType<ReturnType<typeof createClient>['channel']> | null = null;
+
+    async function setupRealtime() {
+      try {
+        const meRes = await fetch('/api/worker/me');
+        if (!meRes.ok) return;
+        const me = await meRes.json();
+        employeeIdRef.current = me.employee_id;
+
+        const supabase = createClient();
+        channel = supabase
+          .channel('worker-notifications-page')
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'worker_notifications',
+              filter: `employee_id=eq.${me.employee_id}`,
+            },
+            (payload) => {
+              const newNotif = payload.new as WorkerNotification;
+              // Add to the beginning of the list with fade-in animation
+              setNotifications(prev => [newNotif, ...prev]);
+              setNewIds(prev => new Set(prev).add(newNotif.id));
+              // Show local notification
+              showLocalNotification(newNotif.title, newNotif.body, `notif-${newNotif.id}`);
+              // Remove from newIds after animation
+              setTimeout(() => {
+                setNewIds(prev => {
+                  const next = new Set(prev);
+                  next.delete(newNotif.id);
+                  return next;
+                });
+              }, 1000);
+            },
+          )
+          .subscribe();
+      } catch {
+        // Silently ignore realtime setup failures
+      }
+    }
+
+    setupRealtime();
+
+    return () => {
+      if (channel) {
+        const supabase = createClient();
+        supabase.removeChannel(channel);
+      }
+    };
+  }, []);
+
   async function markAllRead() {
     setMarkingAll(true);
     try {
@@ -190,11 +250,15 @@ export default function NotificationsPage() {
               >
                 {items.map((n, i) => {
                   const typeCfg = TYPE_CONFIG[n.type] ?? TYPE_CONFIG.default;
+                  const isNew = newIds.has(n.id);
 
                   return (
                     <motion.button
                       key={n.id}
                       variants={itemVariants}
+                      initial={isNew ? { opacity: 0, y: -12, backgroundColor: 'rgba(251, 191, 36, 0.15)' } : undefined}
+                      animate={isNew ? { opacity: 1, y: 0, backgroundColor: 'rgba(251, 191, 36, 0)' } : undefined}
+                      transition={isNew ? { duration: 0.5, backgroundColor: { duration: 1.5 } } : undefined}
                       whileTap={{ scale: 0.98 }}
                       type="button"
                       onClick={() => {

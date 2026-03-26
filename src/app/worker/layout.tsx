@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import WorkerShell from './worker-shell';
+import { ServiceWorkerRegistrar } from './_components/ServiceWorkerRegistrar';
 
 export const metadata: Metadata = {
   title: 'RouteTire — Panel Pracownika',
@@ -21,5 +22,10 @@ export const viewport: Viewport = {
 };
 
 export default function WorkerLayout({ children }: { children: React.ReactNode }) {
-  return <WorkerShell>{children}</WorkerShell>;
+  return (
+    <>
+      <ServiceWorkerRegistrar />
+      <WorkerShell>{children}</WorkerShell>
+    </>
+  );
 }
