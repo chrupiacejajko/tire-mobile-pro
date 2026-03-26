@@ -246,7 +246,7 @@ export default function TaskDetailPage() {
         >
           <ArrowLeft className="w-5 h-5 text-gray-600" />
         </motion.button>
-        <div className="rounded-[24px] bg-white shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-5 text-sm text-red-700">
+        <div className="rounded-3xl bg-red-50 border border-red-100 p-5 text-sm text-red-700 font-medium">
           {error ?? 'Nie znaleziono zlecenia'}
         </div>
       </div>
@@ -256,7 +256,7 @@ export default function TaskDetailPage() {
   const isTerminal = task.status === 'completed' || task.status === 'cancelled';
 
   return (
-    <div className="max-w-lg mx-auto p-4 pb-28 pt-6">
+    <div className="max-w-lg mx-auto px-5 pb-32 pt-5">
       {/* Toast */}
       <AnimatePresence>
         {transitToast && (
@@ -264,10 +264,10 @@ export default function TaskDetailPage() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white px-5 py-3 rounded-full shadow-lg text-sm font-medium flex items-center gap-2"
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white px-5 py-3 rounded-2xl shadow-lg text-sm font-semibold flex items-center gap-2"
           >
             <Car className="w-4 h-4" />
-            Rozpoczeto przejazd do klienta
+            Rozpoczęto przejazd do klienta
           </motion.div>
         )}
       </AnimatePresence>
@@ -277,9 +277,9 @@ export default function TaskDetailPage() {
         whileTap={{ scale: 0.95 }}
         type="button"
         onClick={() => router.back()}
-        className="w-10 h-10 rounded-full bg-white shadow-[0_2px_12px_rgba(0,0,0,0.04)] flex items-center justify-center mb-4"
+        className="w-10 h-10 rounded-2xl bg-white shadow-[0_2px_16px_rgba(0,0,0,0.06)] flex items-center justify-center mb-5"
       >
-        <ArrowLeft className="w-5 h-5 text-gray-600" />
+        <ArrowLeft className="w-5 h-5 text-gray-700" />
       </motion.button>
 
       <motion.div
@@ -325,7 +325,7 @@ export default function TaskDetailPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="rounded-[24px] bg-white shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-4 text-sm text-red-700"
+              className="rounded-3xl bg-red-50 border border-red-100 p-4 text-sm text-red-700 font-medium"
             >
               {actionError}
             </motion.div>
@@ -337,9 +337,9 @@ export default function TaskDetailPage() {
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="flex items-center gap-3 bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-5"
+            className="flex items-center gap-3 bg-emerald-50 border border-emerald-100 rounded-3xl p-5"
           >
-            <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
               <CheckCircle2 className="w-6 h-6 text-emerald-600" />
             </div>
             <div>

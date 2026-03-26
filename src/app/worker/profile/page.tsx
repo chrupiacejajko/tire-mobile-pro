@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   Mail, Phone, Car, MapPin, LogOut,
   ChevronRight, Loader2, HelpCircle, Clock, Award,
+  ShieldCheck,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
@@ -26,51 +27,21 @@ interface WorkerMe {
   skills?: string[];
 }
 
-const STATUS_BADGE: Record<string, { label: string; bg: string; text: string }> = {
-  active:  { label: 'Aktywne', bg: 'bg-emerald-100', text: 'text-emerald-700' },
-  invited: { label: 'Nieaktywowane', bg: 'bg-amber-100', text: 'text-amber-700' },
-  blocked: { label: 'Zablokowane', bg: 'bg-red-100', text: 'text-red-700' },
+const STATUS_BADGE: Record<string, { label: string; bg: string; dot: string }> = {
+  active:  { label: 'Aktywne',        bg: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-400' },
+  invited: { label: 'Nieaktywowane',  bg: 'bg-amber-100 text-amber-700',    dot: 'bg-amber-400'   },
+  blocked: { label: 'Zablokowane',    bg: 'bg-red-100 text-red-700',        dot: 'bg-red-400'     },
 };
 
-// Pastel badge colors for skills
-const SKILL_COLORS = [
-  'bg-[#FFE8D6] text-orange-700',
-  'bg-[#D4F0E7] text-emerald-700',
-  'bg-[#E8E0F0] text-purple-700',
-  'bg-[#D6EAF8] text-blue-700',
-  'bg-amber-100 text-amber-700',
-  'bg-pink-100 text-pink-700',
-];
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map(w => w[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
+function getInitials(name: string) {
+  return name.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 }
-
-// ── Stagger animation ──────────────────────────────────────────────────────────
-
-const containerVariants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.06 } },
-} as const;
-
-const itemVariants = {
-  hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' as const } },
-} as const;
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function WorkerProfilePage() {
   const router = useRouter();
-  const [me, setMe] = useState<WorkerMe | null>(null);
+  const [me, setMe]           = useState<WorkerMe | null>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -87,15 +58,13 @@ export default function WorkerProfilePage() {
       const supabase = createClient();
       await supabase.auth.signOut();
       router.replace('/login');
-    } catch {
-      setLoggingOut(false);
-    }
+    } catch { setLoggingOut(false); }
   }
 
   if (loading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+        <Loader2 className="w-6 h-6 animate-spin text-gray-300" />
       </div>
     );
   }
@@ -105,24 +74,20 @@ export default function WorkerProfilePage() {
   const statusBadge = STATUS_BADGE[me.account_status] ?? STATUS_BADGE.active;
 
   return (
-    <motion.div
-      className="p-4 max-w-lg mx-auto space-y-4 pb-8"
-      variants={containerVariants}
-      initial="hidden"
-      animate="show"
-    >
-      {/* Header */}
-      <motion.div variants={itemVariants} className="pt-2">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Profil</h1>
-      </motion.div>
+    <div className="px-5 max-w-lg mx-auto pb-8 space-y-4">
 
-      {/* Avatar + name card */}
-      <motion.div
-        variants={itemVariants}
-        className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-6 flex flex-col items-center text-center"
-      >
-        {/* Large avatar — 80px orange gradient */}
-        <div className="w-20 h-20 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center flex-shrink-0 overflow-hidden shadow-lg shadow-orange-500/20 mb-3">
+      {/* ── Header ────────────────────────────────────────────────────────── */}
+      <div className="pt-5">
+        <h1 className="text-[22px] font-bold text-gray-900 tracking-tight">Profil</h1>
+      </div>
+
+      {/* ── Avatar card ───────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] p-6 flex flex-col items-center text-center">
+        {/* Avatar */}
+        <div
+          className="w-20 h-20 rounded-3xl flex items-center justify-center flex-shrink-0 mb-3 overflow-hidden"
+          style={{ background: 'linear-gradient(135deg, #f97316, #ea580c)' }}
+        >
           {me.avatar_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={me.avatar_url} alt={me.full_name} className="w-full h-full object-cover" />
@@ -130,169 +95,132 @@ export default function WorkerProfilePage() {
             <span className="text-white text-2xl font-bold">{getInitials(me.full_name)}</span>
           )}
         </div>
+
         <p className="font-bold text-gray-900 text-xl tracking-tight">{me.full_name}</p>
-        <span className={cn(
-          'inline-flex text-xs font-semibold px-3 py-1 rounded-full mt-2',
-          statusBadge.bg, statusBadge.text,
-        )}>
+        <p className="text-sm text-gray-400 mt-0.5">RouteTire Worker</p>
+
+        <div className={cn('inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold mt-3', statusBadge.bg)}>
+          <span className={cn('w-1.5 h-1.5 rounded-full', statusBadge.dot)} />
           {statusBadge.label}
-        </span>
-      </motion.div>
+        </div>
+      </div>
 
-      {/* Contact info */}
-      <motion.div
-        variants={itemVariants}
-        className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] overflow-hidden"
-      >
-        {me.email && (
-          <ProfileRow
-            icon={<Mail className="w-4 h-4 text-gray-400" />}
-            label="Email"
-            value={me.email}
-          />
-        )}
-        {me.phone && (
-          <ProfileRow
-            icon={<Phone className="w-4 h-4 text-gray-400" />}
-            label="Telefon"
-            value={me.phone}
-            href={`tel:${me.phone}`}
-          />
-        )}
-        {me.phone_secondary && (
-          <ProfileRow
-            icon={<Phone className="w-4 h-4 text-gray-400" />}
-            label="Tel. dodatkowy"
-            value={me.phone_secondary}
-            href={`tel:${me.phone_secondary}`}
-          />
-        )}
-      </motion.div>
+      {/* ── Contact ───────────────────────────────────────────────────────── */}
+      {(me.email || me.phone || me.phone_secondary) && (
+        <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] overflow-hidden">
+          {me.email && (
+            <ProfileRow icon={<Mail className="w-4 h-4 text-orange-400" />} label="Email" value={me.email} />
+          )}
+          {me.phone && (
+            <ProfileRow icon={<Phone className="w-4 h-4 text-blue-400" />} label="Telefon" value={me.phone} href={`tel:${me.phone}`} />
+          )}
+          {me.phone_secondary && (
+            <ProfileRow icon={<Phone className="w-4 h-4 text-blue-400" />} label="Tel. dodatkowy" value={me.phone_secondary} href={`tel:${me.phone_secondary}`} />
+          )}
+        </div>
+      )}
 
-      {/* Shift info card */}
-      <motion.div
-        variants={itemVariants}
-        className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] overflow-hidden"
-      >
-        {me.shift_today.scheduled && (
-          <ProfileRow
-            icon={<Clock className="w-4 h-4 text-gray-400" />}
-            label="Zmiana dzis"
-            value={`${me.shift_today.start_time} - ${me.shift_today.end_time}`}
-          />
-        )}
-        {me.vehicle?.plate_number && (
-          <ProfileRow
-            icon={<Car className="w-4 h-4 text-gray-400" />}
-            label="Pojazd"
-            value={`${me.vehicle.brand ?? ''} ${me.vehicle.model ?? ''} ${me.vehicle.plate_number}`.trim()}
-          />
-        )}
-        {me.region && (
-          <ProfileRow
-            icon={<MapPin className="w-4 h-4 text-gray-400" />}
-            label="Region"
-            value={me.region.name}
-          />
-        )}
-      </motion.div>
+      {/* ── Shift / Vehicle / Region ──────────────────────────────────────── */}
+      {(me.shift_today.scheduled || me.vehicle?.plate_number || me.region) && (
+        <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] overflow-hidden">
+          {me.shift_today.scheduled && (
+            <ProfileRow icon={<Clock className="w-4 h-4 text-violet-400" />} label="Zmiana dziś" value={`${me.shift_today.start_time} – ${me.shift_today.end_time}`} />
+          )}
+          {me.vehicle?.plate_number && (
+            <ProfileRow
+              icon={<Car className="w-4 h-4 text-emerald-400" />}
+              label="Pojazd"
+              value={[me.vehicle.brand, me.vehicle.model, me.vehicle.plate_number].filter(Boolean).join(' ')}
+            />
+          )}
+          {me.region && (
+            <ProfileRow icon={<MapPin className="w-4 h-4 text-rose-400" />} label="Region" value={me.region.name} />
+          )}
+        </div>
+      )}
 
-      {/* Skills badges — pastel colors */}
+      {/* ── Skills ────────────────────────────────────────────────────────── */}
       {me.skills && me.skills.length > 0 && (
-        <motion.div
-          variants={itemVariants}
-          className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-5"
-        >
+        <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] p-5">
           <div className="flex items-center gap-2 mb-3">
-            <Award className="w-4 h-4 text-gray-400" />
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Umiejetnosci</span>
+            <Award className="w-4 h-4 text-gray-300" />
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Umiejętności</span>
           </div>
           <div className="flex flex-wrap gap-2">
             {me.skills.map((skill, i) => (
-              <span
-                key={i}
-                className={cn(
-                  'inline-flex items-center rounded-full px-3 py-1.5 text-xs font-medium',
-                  SKILL_COLORS[i % SKILL_COLORS.length],
-                )}
-              >
+              <span key={i} className="bg-orange-50 text-orange-700 text-xs font-semibold px-3 py-1.5 rounded-full">
                 {skill}
               </span>
             ))}
           </div>
-        </motion.div>
+        </div>
       )}
 
-      {/* Support */}
-      <motion.div
-        variants={itemVariants}
-        className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] overflow-hidden"
-      >
-        <button
-          className="w-full flex items-center gap-3 p-4 text-left active:bg-gray-50 transition-colors min-h-[56px]"
-          onClick={() => window.open('mailto:support@routetire.pl', '_blank')}
-        >
-          <HelpCircle className="w-4 h-4 text-gray-400" />
-          <span className="flex-1 text-sm text-gray-700 font-medium">Wsparcie techniczne</span>
-          <ChevronRight className="w-4 h-4 text-gray-300" />
-        </button>
-      </motion.div>
-
-      {/* Logout */}
-      <motion.div variants={itemVariants}>
+      {/* ── Options ───────────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] overflow-hidden">
         <motion.button
-          whileTap={{ scale: 0.98 }}
-          onClick={handleLogout}
-          disabled={loggingOut}
-          className="w-full flex items-center justify-center gap-2 bg-red-50 text-red-600 py-3.5 rounded-full text-sm font-semibold transition-colors disabled:opacity-50 border-2 border-red-200 hover:bg-red-100"
-          style={{ minHeight: 48 }}
+          whileTap={{ scale: 0.99 }}
+          className="w-full flex items-center gap-3 px-4 py-4 text-left active:bg-gray-50 border-b border-gray-100/80"
+          onClick={() => window.open('mailto:support@routetire.pl', '_blank')}
+          style={{ minHeight: 56 }}
         >
-          {loggingOut ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <LogOut className="w-4 h-4" />
-          )}
-          Wyloguj sie
+          <div className="w-8 h-8 rounded-xl bg-blue-50 flex items-center justify-center">
+            <HelpCircle className="w-4 h-4 text-blue-400" />
+          </div>
+          <span className="flex-1 text-sm font-semibold text-gray-800">Wsparcie techniczne</span>
+          <ChevronRight className="w-4 h-4 text-gray-300" />
         </motion.button>
-      </motion.div>
+        <motion.button
+          whileTap={{ scale: 0.99 }}
+          className="w-full flex items-center gap-3 px-4 py-4 text-left active:bg-gray-50"
+          style={{ minHeight: 56 }}
+        >
+          <div className="w-8 h-8 rounded-xl bg-emerald-50 flex items-center justify-center">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+          </div>
+          <span className="flex-1 text-sm font-semibold text-gray-800">Polityka prywatności</span>
+          <ChevronRight className="w-4 h-4 text-gray-300" />
+        </motion.button>
+      </div>
 
-      {/* Version */}
-      <motion.p
-        variants={itemVariants}
-        className="text-center text-xs text-gray-300 pb-2"
+      {/* ── Logout ────────────────────────────────────────────────────────── */}
+      <motion.button
+        whileTap={{ scale: 0.97 }}
+        onClick={handleLogout}
+        disabled={loggingOut}
+        className="w-full flex items-center justify-center gap-2 bg-red-50 text-red-600 py-4 rounded-3xl text-sm font-bold disabled:opacity-50 border border-red-100"
+        style={{ minHeight: 56 }}
       >
-        RouteTire Worker v2.0
-      </motion.p>
-    </motion.div>
+        {loggingOut ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+        Wyloguj się
+      </motion.button>
+
+      <p className="text-center text-xs text-gray-300 pb-2">RouteTire Worker v2.0</p>
+    </div>
   );
 }
 
 // ── Profile Row ────────────────────────────────────────────────────────────────
 
-function ProfileRow({
-  icon,
-  label,
-  value,
-  href,
-}: {
+function ProfileRow({ icon, label, value, href }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   href?: string;
 }) {
-  const content = (
-    <div className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-100 last:border-b-0" style={{ minHeight: 56 }}>
-      {icon}
+  const inner = (
+    <div className="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100/80 last:border-b-0" style={{ minHeight: 60 }}>
+      <div className="w-8 h-8 rounded-xl bg-gray-50 flex items-center justify-center flex-shrink-0">
+        {icon}
+      </div>
       <div className="flex-1 min-w-0">
-        <p className="text-[11px] text-gray-400 uppercase tracking-wider font-medium">{label}</p>
-        <p className="text-sm text-gray-900 font-medium truncate mt-0.5">{value}</p>
+        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{label}</p>
+        <p className="text-sm font-semibold text-gray-900 truncate mt-0.5">{value}</p>
       </div>
       {href && <ChevronRight className="w-4 h-4 text-gray-300" />}
     </div>
   );
 
-  if (href) {
-    return <a href={href} className="block active:bg-gray-50 transition-colors">{content}</a>;
-  }
-  return <div>{content}</div>;
+  if (href) return <a href={href} className="block active:bg-gray-50 transition-colors">{inner}</a>;
+  return <div>{inner}</div>;
 }

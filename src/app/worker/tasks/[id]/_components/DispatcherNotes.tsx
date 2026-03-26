@@ -14,7 +14,7 @@ export default function DispatcherNotes({
   return (
     <div className="space-y-3">
       {notes && (
-        <div className="bg-[#FFE8D6] rounded-[24px] p-5">
+        <div className="bg-orange-50 border border-orange-100 rounded-3xl p-5">
           <div className="flex items-center gap-2 mb-2">
             <StickyNote className="w-4 h-4 text-orange-600" />
             <p className="text-xs font-bold text-orange-700 uppercase tracking-wider">
@@ -25,7 +25,7 @@ export default function DispatcherNotes({
         </div>
       )}
       {description && (
-        <div className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-5">
+        <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] p-5">
           <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
             Opis
           </p>

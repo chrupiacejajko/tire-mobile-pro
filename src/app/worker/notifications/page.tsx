@@ -23,22 +23,22 @@ interface WorkerNotification {
   order_id: string | null;
 }
 
-// ── Type icon config ───────────────────────────────────────────────────────────
+// ── Type config ────────────────────────────────────────────────────────────────
 
-const TYPE_CONFIG: Record<string, { icon: React.ReactNode; bg: string }> = {
-  order_assigned:   { icon: <MapPin className="w-4 h-4 text-blue-600" />, bg: 'bg-blue-100' },
-  order_cancelled:  { icon: <XCircle className="w-4 h-4 text-red-600" />, bg: 'bg-red-100' },
-  order_changed:    { icon: <ArrowRightCircle className="w-4 h-4 text-amber-600" />, bg: 'bg-amber-100' },
-  order_asap:       { icon: <Zap className="w-4 h-4 text-purple-600" />, bg: 'bg-purple-100' },
-  default:          { icon: <Bell className="w-4 h-4 text-gray-500" />, bg: 'bg-gray-100' },
+const TYPE_CONFIG: Record<string, { icon: React.ReactNode; bg: string; color: string }> = {
+  order_assigned:  { icon: <MapPin className="w-4 h-4" />,          bg: 'bg-blue-50',   color: 'text-blue-500'   },
+  order_cancelled: { icon: <XCircle className="w-4 h-4" />,         bg: 'bg-red-50',    color: 'text-red-500'    },
+  order_changed:   { icon: <ArrowRightCircle className="w-4 h-4" />, bg: 'bg-amber-50',  color: 'text-amber-500'  },
+  order_asap:      { icon: <Zap className="w-4 h-4" />,             bg: 'bg-violet-50', color: 'text-violet-500' },
+  default:         { icon: <Bell className="w-4 h-4" />,            bg: 'bg-gray-100',  color: 'text-gray-400'   },
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function timeAgo(iso: string): string {
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 60) return 'przed chwila';
-  if (diff < 3600) return `${Math.floor(diff / 60)} min temu`;
+  if (diff < 60)    return 'przed chwilą';
+  if (diff < 3600)  return `${Math.floor(diff / 60)} min temu`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h temu`;
   return new Date(iso).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' });
 }
@@ -48,55 +48,41 @@ function getDateGroup(iso: string): string {
   const today = new Date();
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-
-  if (date.toDateString() === today.toDateString()) return 'Dzis';
+  if (date.toDateString() === today.toDateString()) return 'Dziś';
   if (date.toDateString() === yesterday.toDateString()) return 'Wczoraj';
-  return 'Wczesniej';
+  return 'Wcześniej';
 }
 
 function groupNotifications(notifications: WorkerNotification[]): Map<string, WorkerNotification[]> {
   const groups = new Map<string, WorkerNotification[]>();
-  const order = ['Dzis', 'Wczoraj', 'Wczesniej'];
-
   for (const n of notifications) {
-    const group = getDateGroup(n.sent_at);
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group)!.push(n);
+    const g = getDateGroup(n.sent_at);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g)!.push(n);
   }
-
   const sorted = new Map<string, WorkerNotification[]>();
-  for (const key of order) {
+  for (const key of ['Dziś', 'Wczoraj', 'Wcześniej']) {
     if (groups.has(key)) sorted.set(key, groups.get(key)!);
   }
   return sorted;
 }
-
-// ── Stagger animation ──────────────────────────────────────────────────────────
-
-const listVariants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.05 } },
-} as const;
-
-const itemVariants = {
-  hidden: { opacity: 0, y: 8 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: 'easeOut' as const } },
-} as const;
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function NotificationsPage() {
   const router = useRouter();
   const [notifications, setNotifications] = useState<WorkerNotification[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]   = useState(true);
   const [markingAll, setMarkingAll] = useState(false);
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  const employeeIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const meRes = await fetch('/api/worker/me');
       if (!meRes.ok) return;
       const me = await meRes.json();
-
+      employeeIdRef.current = me.employee_id;
       const res = await fetch(`/api/worker-notifications?employee_id=${me.employee_id}`);
       if (!res.ok) return;
       const data = await res.json();
@@ -108,61 +94,33 @@ export default function NotificationsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const employeeIdRef = useRef<string | null>(null);
-  const [newIds, setNewIds] = useState<Set<string>>(new Set());
-
-  // Supabase Realtime: subscribe for instant notification updates
+  // Realtime
   useEffect(() => {
     let channel: ReturnType<ReturnType<typeof createClient>['channel']> | null = null;
-
-    async function setupRealtime() {
+    async function setup() {
       try {
         const meRes = await fetch('/api/worker/me');
         if (!meRes.ok) return;
         const me = await meRes.json();
-        employeeIdRef.current = me.employee_id;
-
         const supabase = createClient();
         channel = supabase
           .channel('worker-notifications-page')
-          .on(
-            'postgres_changes',
-            {
-              event: 'INSERT',
-              schema: 'public',
-              table: 'worker_notifications',
-              filter: `employee_id=eq.${me.employee_id}`,
-            },
-            (payload) => {
-              const newNotif = payload.new as WorkerNotification;
-              // Add to the beginning of the list with fade-in animation
-              setNotifications(prev => [newNotif, ...prev]);
-              setNewIds(prev => new Set(prev).add(newNotif.id));
-              // Show local notification
-              showLocalNotification(newNotif.title, newNotif.body, `notif-${newNotif.id}`);
-              // Remove from newIds after animation
-              setTimeout(() => {
-                setNewIds(prev => {
-                  const next = new Set(prev);
-                  next.delete(newNotif.id);
-                  return next;
-                });
-              }, 1000);
-            },
-          )
+          .on('postgres_changes', {
+            event: 'INSERT', schema: 'public', table: 'worker_notifications',
+            filter: `employee_id=eq.${me.employee_id}`,
+          }, (payload) => {
+            const n = payload.new as WorkerNotification;
+            setNotifications(prev => [n, ...prev]);
+            setNewIds(prev => new Set(prev).add(n.id));
+            showLocalNotification(n.title, n.body, `notif-${n.id}`);
+            setTimeout(() => setNewIds(prev => { const next = new Set(prev); next.delete(n.id); return next; }), 1000);
+          })
           .subscribe();
-      } catch {
-        // Silently ignore realtime setup failures
-      }
+      } catch { /* offline */ }
     }
-
-    setupRealtime();
-
+    setup();
     return () => {
-      if (channel) {
-        const supabase = createClient();
-        supabase.removeChannel(channel);
-      }
+      if (channel) { const supabase = createClient(); supabase.removeChannel(channel); }
     };
   }, []);
 
@@ -172,7 +130,6 @@ export default function NotificationsPage() {
       const meRes = await fetch('/api/worker/me');
       if (!meRes.ok) return;
       const me = await meRes.json();
-
       await fetch('/api/worker-notifications', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -190,19 +147,22 @@ export default function NotificationsPage() {
   if (loading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+        <Loader2 className="w-6 h-6 animate-spin text-gray-300" />
       </div>
     );
   }
 
   return (
-    <div className="p-4 max-w-lg mx-auto">
+    <div className="px-5 max-w-lg mx-auto">
+
       {/* Header */}
-      <div className="flex items-center justify-between mb-5 pt-2">
+      <div className="flex items-center justify-between pt-5 mb-5">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Powiadomienia</h1>
+          <h1 className="text-[22px] font-bold text-gray-900 tracking-tight">Powiadomienia</h1>
           {unreadCount > 0 && (
-            <p className="text-sm text-gray-500 mt-0.5">{unreadCount} nieprzeczytanych</p>
+            <p className="text-xs font-medium text-gray-400 mt-0.5">
+              {unreadCount} nieprzeczytanych
+            </p>
           )}
         </div>
         {unreadCount > 0 && (
@@ -210,92 +170,84 @@ export default function NotificationsPage() {
             whileTap={{ scale: 0.95 }}
             onClick={markAllRead}
             disabled={markingAll}
-            className="flex items-center gap-1.5 text-sm text-orange-600 font-medium hover:text-orange-700 disabled:opacity-50 min-h-[44px] px-2"
+            className="flex items-center gap-1.5 bg-orange-50 text-orange-600 text-sm font-semibold rounded-2xl px-3.5 py-2 min-h-[40px] disabled:opacity-50"
           >
-            {markingAll ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <CheckCheck className="w-4 h-4" />
-            )}
-            Oznacz wszystkie
+            {markingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCheck className="w-4 h-4" />}
+            Wszystkie
           </motion.button>
         )}
       </div>
 
       {/* Empty state */}
       {notifications.length === 0 ? (
-        <div className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-12 text-center">
-          <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
-            <Bell className="w-8 h-8 text-gray-300" />
+        <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] p-14 text-center">
+          <div className="w-16 h-16 rounded-3xl bg-gray-100 flex items-center justify-center mx-auto mb-4">
+            <Bell className="w-7 h-7 text-gray-300" />
           </div>
-          <p className="text-gray-500 font-medium">Brak powiadomien</p>
-          <p className="text-sm text-gray-400 mt-1">Powiadomienia pojawia sie tutaj</p>
+          <p className="font-bold text-gray-700">Brak powiadomień</p>
+          <p className="text-sm text-gray-400 mt-1">Powiadomienia pojawią się tutaj</p>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-5 pb-4">
           {Array.from(grouped.entries()).map(([groupName, items]) => (
             <div key={groupName}>
-              {/* Group header */}
+              {/* Group label */}
               <div className="flex items-center gap-3 mb-3">
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{groupName}</span>
-                <div className="flex-1 h-px bg-gray-200/60" />
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{groupName}</span>
+                <div className="flex-1 h-px bg-gray-200/70" />
               </div>
 
-              {/* Items in one white card */}
-              <motion.div
-                className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] overflow-hidden"
-                variants={listVariants}
-                initial="hidden"
-                animate="show"
-              >
+              {/* Items card */}
+              <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] overflow-hidden">
                 {items.map((n, i) => {
-                  const typeCfg = TYPE_CONFIG[n.type] ?? TYPE_CONFIG.default;
+                  const cfg = TYPE_CONFIG[n.type] ?? TYPE_CONFIG.default;
                   const isNew = newIds.has(n.id);
 
                   return (
-                    <motion.button
-                      key={n.id}
-                      variants={itemVariants}
-                      initial={isNew ? { opacity: 0, y: -12, backgroundColor: 'rgba(251, 191, 36, 0.15)' } : undefined}
-                      animate={isNew ? { opacity: 1, y: 0, backgroundColor: 'rgba(251, 191, 36, 0)' } : undefined}
-                      transition={isNew ? { duration: 0.5, backgroundColor: { duration: 1.5 } } : undefined}
-                      whileTap={{ scale: 0.98 }}
-                      type="button"
-                      onClick={() => {
-                        if (n.order_id) router.push(`/worker/tasks/${n.order_id}`);
-                      }}
-                      className={cn(
-                        'w-full text-left flex items-center gap-3 p-4 transition-all',
-                        i < items.length - 1 && 'border-b border-gray-100',
-                        !n.is_read && 'bg-blue-50/30',
-                        n.order_id && 'cursor-pointer active:bg-gray-50',
-                      )}
-                      style={{ minHeight: 56 }}
-                    >
-                      {/* Type icon */}
-                      <div className={cn('w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0', typeCfg.bg)}>
-                        {typeCfg.icon}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className={cn(
-                          'text-sm leading-snug',
-                          n.is_read ? 'text-gray-700' : 'font-semibold text-gray-900',
-                        )}>
-                          {n.title}
-                        </p>
-                        <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{n.body}</p>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <span className="text-xs text-gray-400">{timeAgo(n.sent_at)}</span>
-                        {n.order_id && <ChevronRight className="w-4 h-4 text-gray-300" />}
-                        {!n.is_read && !n.order_id && (
-                          <span className="w-2 h-2 rounded-full bg-blue-500" />
+                    <AnimatePresence key={n.id}>
+                      <motion.button
+                        initial={isNew ? { opacity: 0, y: -8 } : undefined}
+                        animate={isNew ? { opacity: 1, y: 0 } : undefined}
+                        whileTap={{ scale: 0.99 }}
+                        type="button"
+                        onClick={() => { if (n.order_id) router.push(`/worker/tasks/${n.order_id}`); }}
+                        className={cn(
+                          'w-full text-left flex items-start gap-3 px-4 py-3.5 transition-colors active:bg-gray-50',
+                          i < items.length - 1 && 'border-b border-gray-100/80',
+                          !n.is_read && 'bg-orange-50/30',
+                          n.order_id && 'cursor-pointer',
                         )}
-                      </div>
-                    </motion.button>
+                        style={{ minHeight: 60 }}
+                      >
+                        {/* Icon circle */}
+                        <div className={cn('w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 mt-0.5', cfg.bg)}>
+                          <span className={cfg.color}>{cfg.icon}</span>
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <p className={cn(
+                            'text-sm leading-snug',
+                            n.is_read ? 'text-gray-600' : 'font-semibold text-gray-900',
+                          )}>
+                            {n.title}
+                          </p>
+                          {n.body && (
+                            <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{n.body}</p>
+                          )}
+                          <p className="text-[11px] text-gray-300 mt-1 font-medium">{timeAgo(n.sent_at)}</p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0 mt-1">
+                          {!n.is_read && (
+                            <span className="w-2 h-2 rounded-full bg-orange-400" />
+                          )}
+                          {n.order_id && <ChevronRight className="w-4 h-4 text-gray-300" />}
+                        </div>
+                      </motion.button>
+                    </AnimatePresence>
                   );
                 })}
-              </motion.div>
+              </div>
             </div>
           ))}
         </div>

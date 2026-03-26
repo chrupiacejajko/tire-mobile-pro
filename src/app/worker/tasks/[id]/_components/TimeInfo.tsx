@@ -35,7 +35,7 @@ export default function TimeInfo({
   if (!timeDisplay && bufferMinutes === undefined) return null;
 
   return (
-    <div className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-5">
+    <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] p-5">
       <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
         Czas
       </h2>

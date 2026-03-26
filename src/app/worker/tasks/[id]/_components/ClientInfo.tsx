@@ -19,7 +19,7 @@ export default function ClientInfo({
   const mapsUrl = navigateUrl ?? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 
   return (
-    <div className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] overflow-hidden">
+    <div className="bg-white rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] overflow-hidden">
       {/* Client name */}
       <div className="px-5 pt-5 pb-3">
         <h1 className="text-xl font-bold text-gray-900 leading-tight tracking-tight">{clientName}</h1>
@@ -32,7 +32,7 @@ export default function ClientInfo({
           className="flex items-center gap-3 px-5 py-3.5 border-t border-gray-100 active:bg-gray-50 transition-colors"
           style={{ minHeight: 56 }}
         >
-          <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+          <div className="w-10 h-10 rounded-2xl bg-emerald-50 flex items-center justify-center flex-shrink-0">
             <Phone className="w-5 h-5 text-emerald-600" />
           </div>
           <div className="flex-1 min-w-0">
@@ -51,7 +51,7 @@ export default function ClientInfo({
         className="flex items-center gap-3 px-5 py-3.5 border-t border-gray-100 active:bg-gray-50 transition-colors"
         style={{ minHeight: 56 }}
       >
-        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+        <div className="w-10 h-10 rounded-2xl bg-blue-50 flex items-center justify-center flex-shrink-0">
           <MapPin className="w-5 h-5 text-blue-600" />
         </div>
         <div className="flex-1 min-w-0">

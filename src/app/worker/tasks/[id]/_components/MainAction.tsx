@@ -44,9 +44,9 @@ export default function MainAction({
   if (!config) {
     if (status === 'completed') {
       return (
-        <div className="fixed bottom-20 left-0 right-0 z-40 px-4 pb-2 safe-bottom">
+        <div className="fixed bottom-24 left-0 right-0 z-40 px-4 pb-2 safe-bottom">
           <div className="max-w-lg mx-auto">
-            <div className="flex items-center justify-center gap-2 w-full rounded-full bg-gray-100 text-gray-400 py-4 text-base font-semibold cursor-not-allowed"
+            <div className="flex items-center justify-center gap-2 w-full rounded-2xl bg-gray-100 text-gray-400 py-4 text-base font-semibold cursor-not-allowed"
               style={{ minHeight: 56 }}
             >
               <CheckCircle className="w-5 h-5" />
@@ -60,7 +60,7 @@ export default function MainAction({
   }
 
   return (
-    <div className="fixed bottom-20 left-0 right-0 z-40 px-4 pb-2 safe-bottom">
+    <div className="fixed bottom-24 left-0 right-0 z-40 px-4 pb-2 safe-bottom">
       <div className="max-w-lg mx-auto">
         <motion.button
           whileTap={{ scale: 0.97 }}
@@ -68,7 +68,7 @@ export default function MainAction({
           onClick={onPress}
           disabled={loading}
           className={cn(
-            'flex items-center justify-center gap-2 w-full rounded-full text-white text-base font-semibold disabled:opacity-60 transition-all shadow-lg',
+            'flex items-center justify-center gap-2 w-full rounded-2xl text-white text-base font-semibold disabled:opacity-60 transition-all shadow-lg',
             config.bg,
           )}
           style={{ minHeight: 56 }}
