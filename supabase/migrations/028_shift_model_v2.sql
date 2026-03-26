@@ -25,9 +25,21 @@ WHERE start_at IS NULL;
 ALTER TABLE work_schedules ALTER COLUMN start_at SET NOT NULL;
 ALTER TABLE work_schedules ALTER COLUMN duration_minutes SET NOT NULL;
 
--- 4. Generated stored column: end_at = start_at + duration
-ALTER TABLE work_schedules ADD COLUMN IF NOT EXISTS end_at TIMESTAMPTZ
-  GENERATED ALWAYS AS (start_at + (duration_minutes * interval '1 minute')) STORED;
+-- 4. end_at column + trigger (generated columns can't use interval arithmetic — not immutable)
+ALTER TABLE work_schedules ADD COLUMN IF NOT EXISTS end_at TIMESTAMPTZ;
+UPDATE work_schedules SET end_at = start_at + (duration_minutes * interval '1 minute') WHERE end_at IS NULL;
+
+CREATE OR REPLACE FUNCTION compute_end_at() RETURNS trigger AS $$
+BEGIN
+  NEW.end_at := NEW.start_at + (NEW.duration_minutes * interval '1 minute');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_compute_end_at ON work_schedules;
+CREATE TRIGGER trg_compute_end_at
+  BEFORE INSERT OR UPDATE OF start_at, duration_minutes ON work_schedules
+  FOR EACH ROW EXECUTE FUNCTION compute_end_at();
 
 -- 5. Drop old unique constraint and create new one
 ALTER TABLE work_schedules DROP CONSTRAINT IF EXISTS work_schedules_employee_id_date_key;
