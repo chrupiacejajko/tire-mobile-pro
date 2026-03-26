@@ -3,10 +3,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Play, Coffee, RotateCcw, Square, MapPin, ChevronRight,
-  Clock, CheckCircle, Loader2, AlertCircle, RefreshCw, Car,
+  Play, Coffee, Square, MapPin, ChevronRight,
+  Clock, CheckCircle, Loader2, AlertCircle, RefreshCw,
+  Navigation, AlertTriangle, Wrench, Car, ClipboardList,
+  Timer, Route as RouteIcon, Gauge,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { motion, AnimatePresence } from 'framer-motion';
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 type WorkStatus = 'off_work' | 'on_work' | 'break';
 
@@ -28,6 +33,7 @@ interface WorkerMe {
     on_break: boolean;
   };
   vehicle: { plate_number: string | null; brand: string | null; model: string | null } | null;
+  region?: { name: string } | null;
 }
 
 interface Task {
@@ -49,21 +55,7 @@ interface TaskStats {
   progress_pct: number;
 }
 
-const STATUS_CONFIG: Record<WorkStatus, {
-  label: string;
-  dot: string;
-  bg: string;
-  text: string;
-}> = {
-  off_work: { label: 'Poza zmianą',  dot: 'bg-gray-400',    bg: 'bg-gray-100',    text: 'text-gray-600' },
-  on_work:  { label: 'W pracy',      dot: 'bg-emerald-500', bg: 'bg-emerald-100', text: 'text-emerald-700' },
-  break:    { label: 'Na przerwie',  dot: 'bg-amber-500',   bg: 'bg-amber-100',   text: 'text-amber-700' },
-};
-
-function formatTime(iso: string | null): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
-}
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function elapsedSince(iso: string | null): string {
   if (!iso) return '';
@@ -74,6 +66,30 @@ function elapsedSince(iso: string | null): string {
   return `${m} min`;
 }
 
+function elapsedParts(iso: string | null): { h: string; m: string } {
+  if (!iso) return { h: '0', m: '00' };
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(diffMs / 3600000);
+  const m = Math.floor((diffMs % 3600000) / 60000);
+  return { h: String(h), m: String(m).padStart(2, '0') };
+}
+
+// ── Stagger animation variants ─────────────────────────────────────────────────
+
+const containerVariants = {
+  hidden: {},
+  show: {
+    transition: { staggerChildren: 0.08 },
+  },
+} as const;
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
+} as const;
+
+// ── Main Page ──────────────────────────────────────────────────────────────────
+
 export default function WorkerTodayPage() {
   const router = useRouter();
   const [me, setMe] = useState<WorkerMe | null>(null);
@@ -83,6 +99,8 @@ export default function WorkerTodayPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [planChanged, setPlanChanged] = useState(false);
+  const [elapsed, setElapsed] = useState({ h: '0', m: '00' });
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -98,6 +116,7 @@ export default function WorkerTodayPage() {
         const tasksData = await tasksRes.json();
         setTasks(tasksData.tasks ?? []);
         setStats(tasksData.stats ?? null);
+        setPlanChanged(tasksData.plan_changed ?? false);
         const nextId = tasksData.next_task_id;
         if (nextId) {
           setNextTask((tasksData.tasks ?? []).find((t: Task) => t.id === nextId) ?? null);
@@ -106,7 +125,7 @@ export default function WorkerTodayPage() {
         }
       }
     } catch {
-      setError('Błąd połączenia');
+      setError('Blad polaczenia');
     } finally {
       setLoading(false);
     }
@@ -114,10 +133,21 @@ export default function WorkerTodayPage() {
 
   useEffect(() => {
     loadData();
-    // Refresh every 2 minutes
     const interval = setInterval(loadData, 2 * 60 * 1000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  // Update elapsed clock
+  useEffect(() => {
+    if (!me?.current_shift.clock_in) {
+      setElapsed({ h: '0', m: '00' });
+      return;
+    }
+    const update = () => setElapsed(elapsedParts(me.current_shift.clock_in));
+    update();
+    const interval = setInterval(update, 60_000);
+    return () => clearInterval(interval);
+  }, [me?.current_shift.clock_in]);
 
   async function performAction(endpoint: string, label: string) {
     setActionLoading(label);
@@ -138,13 +168,12 @@ export default function WorkerTodayPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? 'Wystąpił błąd');
+        setError(data.error ?? 'Wystapil blad');
         return;
       }
-      // Refresh data after state change
       await loadData();
     } catch {
-      setError('Błąd połączenia');
+      setError('Blad polaczenia');
     } finally {
       setActionLoading(null);
     }
@@ -152,7 +181,7 @@ export default function WorkerTodayPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-[60vh] flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
       </div>
     );
@@ -160,227 +189,468 @@ export default function WorkerTodayPage() {
 
   if (!me) return null;
 
-  const statusConfig = STATUS_CONFIG[me.work_status];
+  const completedTasks = tasks.filter(t => t.status === 'completed');
+  const totalKm = tasks.reduce((sum, t) => sum + (t.distance_km ?? 0), 0);
 
   return (
-    <div className="p-4 space-y-4 max-w-lg mx-auto">
-      {/* Header */}
-      <div className="pt-2">
-        <p className="text-sm text-gray-500">
-          {new Date().toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })}
-        </p>
-        <h1 className="text-2xl font-bold text-gray-900 mt-0.5">
-          Cześć, {me.full_name.split(' ')[0]} 👋
-        </h1>
-      </div>
-
-      {/* Status card */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className={cn('flex items-center gap-2 px-3 py-1 rounded-full', statusConfig.bg)}>
-            <span className={cn('w-2 h-2 rounded-full', statusConfig.dot)} />
-            <span className={cn('text-sm font-medium', statusConfig.text)}>{statusConfig.label}</span>
+    <motion.div
+      className="p-4 space-y-4 max-w-lg mx-auto"
+      variants={containerVariants}
+      initial="hidden"
+      animate="show"
+    >
+      {/* Greeting + date */}
+      <motion.div variants={itemVariants} className="pt-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-500">
+              {new Date().toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })}
+            </p>
+            <h1 className="text-2xl font-bold text-gray-900 mt-0.5 tracking-tight">
+              Czesc, {me.full_name.split(' ')[0]} <span role="img" aria-label="wave">&#128075;</span>
+            </h1>
           </div>
-          <button onClick={loadData} className="p-1.5 text-gray-400 hover:text-gray-600">
-            <RefreshCw className="w-4 h-4" />
-          </button>
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            onClick={loadData}
+            className="w-10 h-10 rounded-full bg-white shadow-[0_2px_12px_rgba(0,0,0,0.04)] flex items-center justify-center"
+          >
+            <RefreshCw className="w-4 h-4 text-gray-500" />
+          </motion.button>
         </div>
+      </motion.div>
 
-        {/* Shift info */}
-        {me.shift_today.scheduled && (
-          <div className="flex items-center gap-4 text-sm text-gray-600 mb-3">
-            <div className="flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" />
-              <span>{me.shift_today.start_time} – {me.shift_today.end_time}</span>
-            </div>
-            {me.shift_today.vehicle_plate && (
-              <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-xs">
-                {me.shift_today.vehicle_plate}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Clock-in info */}
-        {me.current_shift.clock_in && (
-          <div className="text-xs text-gray-500">
-            Zmiana od {formatTime(me.current_shift.clock_in)}
-            {' · '}{elapsedSince(me.current_shift.clock_in)}
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="flex gap-2 mt-4">
-          {me.work_status === 'off_work' && (
-            <ActionButton
-              onClick={() => performAction('/api/worker/shift/start', 'start')}
-              loading={actionLoading === 'start'}
-              icon={<Play className="w-4 h-4" />}
-              label="Zacznij zmianę"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white flex-1"
-            />
-          )}
-          {me.work_status === 'on_work' && (
-            <>
-              <ActionButton
-                onClick={() => performAction('/api/worker/shift/break/start', 'break')}
-                loading={actionLoading === 'break'}
-                icon={<Coffee className="w-4 h-4" />}
-                label="Przerwa"
-                className="bg-amber-500 hover:bg-amber-600 text-white flex-1"
-              />
-              <ActionButton
-                onClick={() => performAction('/api/worker/shift/end', 'end')}
-                loading={actionLoading === 'end'}
-                icon={<Square className="w-4 h-4" />}
-                label="Zakończ"
-                className="bg-gray-200 hover:bg-gray-300 text-gray-700 flex-1"
-              />
-            </>
-          )}
-          {me.work_status === 'break' && (
-            <>
-              <ActionButton
-                onClick={() => performAction('/api/worker/shift/break/end', 'resume')}
-                loading={actionLoading === 'resume'}
-                icon={<RotateCcw className="w-4 h-4" />}
-                label="Wróć z przerwy"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white flex-1"
-              />
-              <ActionButton
-                onClick={() => performAction('/api/worker/shift/end', 'end')}
-                loading={actionLoading === 'end'}
-                icon={<Square className="w-4 h-4" />}
-                label="Zakończ zmianę"
-                className="bg-gray-200 hover:bg-gray-300 text-gray-700 flex-1"
-              />
-            </>
-          )}
-        </div>
-      </div>
+      {/* Hero shift card */}
+      <motion.div variants={itemVariants}>
+        <HeroShiftCard
+          me={me}
+          elapsed={elapsed}
+          actionLoading={actionLoading}
+          performAction={performAction}
+        />
+      </motion.div>
 
       {/* Error */}
-      {error && (
-        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-600">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          {error}
-        </div>
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="flex items-center gap-2 bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-4 text-sm text-red-600"
+          >
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            {error}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Plan changed alert */}
+      <AnimatePresence>
+        {planChanged && (
+          <motion.button
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => { setPlanChanged(false); router.push('/worker/route'); }}
+            className="w-full flex items-center gap-2 bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-4 text-sm text-amber-700"
+          >
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 text-amber-500" />
+            <span className="font-medium">Plan zaktualizowany</span>
+            <span className="text-amber-500 ml-auto text-xs">sprawdz trase &rarr;</span>
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      {/* Pastel stat tiles — 2x2 grid */}
+      {stats && (
+        <motion.div variants={itemVariants} className="grid grid-cols-2 gap-3">
+          <StatTile
+            icon={<ClipboardList className="w-4 h-4 text-orange-600" />}
+            iconBg="bg-orange-100"
+            tileBg="bg-[#FFE8D6]"
+            value={`${stats.completed}/${stats.total}`}
+            label="Zlecenia"
+          />
+          <StatTile
+            icon={<RouteIcon className="w-4 h-4 text-emerald-600" />}
+            iconBg="bg-emerald-100"
+            tileBg="bg-[#D4F0E7]"
+            value={`${Math.round(totalKm)}`}
+            suffix=" km"
+            label="Dystans"
+          />
+          <StatTile
+            icon={<Timer className="w-4 h-4 text-blue-600" />}
+            iconBg="bg-blue-100"
+            tileBg="bg-[#D6EAF8]"
+            value={me.shift_today.scheduled ? `${me.shift_today.start_time}-${me.shift_today.end_time}` : '--'}
+            label="Dyzur"
+          />
+          <StatTile
+            icon={<Gauge className="w-4 h-4 text-purple-600" />}
+            iconBg="bg-purple-100"
+            tileBg="bg-[#E8E0F0]"
+            value={`${stats.progress_pct}%`}
+            label="Postep"
+          />
+        </motion.div>
       )}
 
-      {/* Progress */}
-      {stats && stats.total > 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-700">Postęp dnia</span>
-            <span className="text-sm text-gray-500">{stats.completed}/{stats.total} zleceń</span>
-          </div>
-          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-              style={{ width: `${stats.progress_pct}%` }}
-            />
-          </div>
-          <div className="flex justify-between mt-1.5 text-xs text-gray-400">
-            <span>{stats.completed} ukończonych</span>
-            <span>{stats.remaining} pozostałych</span>
-          </div>
-        </div>
-      )}
+      {/* Next task section */}
+      <motion.div variants={itemVariants}>
+        <NextTaskSection nextTask={nextTask} stats={stats} router={router} />
+      </motion.div>
 
-      {/* Next task */}
-      {nextTask && (
-        <div
-          className={`rounded-2xl shadow-sm p-4 cursor-pointer active:bg-gray-50 transition-colors ${
-            nextTask.status === 'in_transit'
-              ? 'bg-orange-50 border-2 border-orange-300 hover:border-orange-400'
-              : 'bg-white border border-gray-100 hover:border-gray-200'
-          }`}
-          onClick={() => router.push(`/worker/tasks/${nextTask.id}`)}
-        >
-          <div className="flex items-center justify-between mb-1">
-            {nextTask.status === 'in_transit' ? (
-              <span className="flex items-center gap-1.5 text-xs font-medium text-orange-600 uppercase tracking-wide">
-                <Car className="w-3.5 h-3.5 animate-pulse" />
-                W drodze do klienta
-              </span>
-            ) : (
-              <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">Następne zlecenie</span>
-            )}
-            <ChevronRight className="w-4 h-4 text-gray-400" />
+      {/* Recent activity section */}
+      {completedTasks.length > 0 && (
+        <motion.div variants={itemVariants}>
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">Ostatnia aktywnosc</h2>
+          <div className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] overflow-hidden">
+            {completedTasks.slice(0, 4).map((task, i) => (
+              <motion.button
+                key={task.id}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => router.push(`/worker/tasks/${task.id}`)}
+                className={cn(
+                  'w-full flex items-center gap-3 p-4 text-left transition-colors active:bg-gray-50',
+                  i < completedTasks.length - 1 && i < 3 && 'border-b border-gray-100',
+                )}
+                style={{ minHeight: 56 }}
+              >
+                <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                  <CheckCircle className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate">{task.client_name}</p>
+                  <p className="text-xs text-gray-400 truncate">{task.address}</p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-xs text-gray-400">
+                    {task.scheduled_time_start ? task.scheduled_time_start.slice(0, 5) : ''}
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-gray-300" />
+                </div>
+              </motion.button>
+            ))}
           </div>
-          <p className="font-semibold text-gray-900">{nextTask.client_name}</p>
-          <div className="flex items-center gap-1 text-sm text-gray-500 mt-0.5">
-            <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
-            <span className="truncate">{nextTask.address}</span>
+        </motion.div>
+      )}
+    </motion.div>
+  );
+}
+
+// ── Stat Tile ─────────────────────────────────────────────────────────────────
+
+function StatTile({
+  icon,
+  iconBg,
+  tileBg,
+  value,
+  suffix,
+  label,
+}: {
+  icon: React.ReactNode;
+  iconBg: string;
+  tileBg: string;
+  value: string;
+  suffix?: string;
+  label: string;
+}) {
+  return (
+    <motion.div
+      whileTap={{ scale: 0.97 }}
+      className={cn('rounded-2xl p-4', tileBg)}
+    >
+      <div className={cn('w-8 h-8 rounded-full flex items-center justify-center mb-2', iconBg)}>
+        {icon}
+      </div>
+      <p className="text-xl font-bold text-gray-900 tracking-tight">
+        {value}
+        {suffix && <span className="text-sm font-medium text-gray-500">{suffix}</span>}
+      </p>
+      <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+    </motion.div>
+  );
+}
+
+// ── Hero Shift Card ───────────────────────────────────────────────────────────
+
+function HeroShiftCard({
+  me,
+  elapsed,
+  actionLoading,
+  performAction,
+}: {
+  me: WorkerMe;
+  elapsed: { h: string; m: string };
+  actionLoading: string | null;
+  performAction: (endpoint: string, label: string) => void;
+}) {
+  // OFF WORK
+  if (me.work_status === 'off_work') {
+    return (
+      <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-br from-[#1E2A5E] to-[#3B4F8A] p-6">
+        {/* Decorative circles */}
+        <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-orange-500/20 blur-3xl" />
+        <div className="absolute -bottom-10 -left-10 w-28 h-28 rounded-full bg-pink-500/15 blur-3xl" />
+
+        <div className="relative z-10">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="w-2 h-2 rounded-full bg-gray-400" />
+            <span className="text-sm font-medium text-white/60">Poza zmiana</span>
           </div>
-          {(nextTask.scheduled_time_start || nextTask.distance_km) && (
-            <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
-              {nextTask.scheduled_time_start && (
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  {nextTask.scheduled_time_start}
-                </span>
-              )}
-              {nextTask.distance_km != null && (
-                <span>{nextTask.distance_km} km</span>
-              )}
+
+          {me.shift_today.scheduled && (
+            <div className="flex items-center gap-2 text-white/40 text-sm mb-4">
+              <Clock className="w-4 h-4" />
+              <span>Zaplanowana: {me.shift_today.start_time} - {me.shift_today.end_time}</span>
             </div>
           )}
-          {nextTask.navigate_url && (
-            <a
-              href={nextTask.navigate_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              className="mt-3 w-full flex items-center justify-center gap-2 bg-gray-900 text-white py-2 rounded-xl text-sm font-medium"
+
+          <p className="text-3xl font-bold text-white tracking-tight mb-1">Gotowy?</p>
+          <p className="text-sm text-white/50 mb-6">Rozpocznij swoj dyzur</p>
+
+          <motion.button
+            whileTap={{ scale: 0.97 }}
+            onClick={() => performAction('/api/worker/shift/start', 'start')}
+            disabled={actionLoading === 'start'}
+            className="w-full flex items-center justify-center gap-3 bg-orange-500 hover:bg-orange-600 text-white rounded-full py-4 text-base font-semibold disabled:opacity-60 transition-all"
+            style={{ minHeight: 56 }}
+          >
+            {actionLoading === 'start' ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <Play className="w-5 h-5" />
+            )}
+            Rozpocznij dyzur
+          </motion.button>
+        </div>
+      </div>
+    );
+  }
+
+  // ON BREAK
+  if (me.work_status === 'break') {
+    return (
+      <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-br from-amber-600 to-amber-500 p-6">
+        {/* Decorative circles */}
+        <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-yellow-300/30 blur-3xl" />
+        <div className="absolute -bottom-10 -left-10 w-28 h-28 rounded-full bg-orange-400/20 blur-3xl" />
+
+        <div className="relative z-10">
+          <div className="flex items-center gap-2 mb-3">
+            <Coffee className="w-4 h-4 text-white/80" />
+            <span className="text-sm font-medium text-white/80">Na przerwie</span>
+          </div>
+
+          <p className="text-4xl font-bold text-white tracking-tight mb-1">
+            {elapsed.h}h {elapsed.m}min
+          </p>
+          <p className="text-sm text-white/50 mb-5">Czas pracy</p>
+
+          <div className="flex gap-3">
+            <motion.button
+              whileTap={{ scale: 0.97 }}
+              onClick={() => performAction('/api/worker/shift/break/end', 'resume')}
+              disabled={actionLoading === 'resume'}
+              className="flex-1 flex items-center justify-center gap-2 bg-white/20 backdrop-blur-sm text-white rounded-full py-3 text-sm font-semibold disabled:opacity-60"
+              style={{ minHeight: 48 }}
             >
-              <MapPin className="w-4 h-4" />
-              Nawiguj
-            </a>
-          )}
+              {actionLoading === 'resume' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              Wroc do pracy
+            </motion.button>
+            <motion.button
+              whileTap={{ scale: 0.97 }}
+              onClick={() => performAction('/api/worker/shift/end', 'end')}
+              disabled={actionLoading === 'end'}
+              className="flex items-center justify-center gap-2 bg-white/10 text-white/80 rounded-full py-3 px-5 text-sm font-medium disabled:opacity-60"
+              style={{ minHeight: 48 }}
+            >
+              {actionLoading === 'end' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+              Zakoncz
+            </motion.button>
+          </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* No tasks today */}
-      {stats?.total === 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center">
-          <CheckCircle className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">Brak zleceń na dziś</p>
-        </div>
-      )}
+  // ON WORK
+  return (
+    <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-br from-[#1E2A5E] to-[#3B4F8A] p-6">
+      {/* Decorative circles */}
+      <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-orange-500/20 blur-3xl" />
+      <div className="absolute -bottom-10 -left-10 w-28 h-28 rounded-full bg-pink-500/15 blur-3xl" />
 
-      {/* All done */}
-      {stats && stats.total > 0 && stats.remaining === 0 && (
-        <div className="bg-emerald-50 rounded-2xl border border-emerald-100 p-4 text-center">
-          <CheckCircle className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-          <p className="font-medium text-emerald-700">Wszystkie zlecenia ukończone!</p>
-          <p className="text-sm text-emerald-600 mt-0.5">Świetna robota 🎉</p>
+      <div className="relative z-10">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-sm font-medium text-white/80">W pracy</span>
+          </div>
+          <Clock className="w-4 h-4 text-white/40" />
         </div>
-      )}
+
+        <p className="text-4xl font-bold text-white tracking-tight mb-1">
+          {elapsed.h}h {elapsed.m}min
+        </p>
+        <p className="text-sm text-white/50 mb-5">Czas pracy</p>
+
+        <div className="flex gap-3">
+          <motion.button
+            whileTap={{ scale: 0.97 }}
+            onClick={() => performAction('/api/worker/shift/break/start', 'break')}
+            disabled={actionLoading === 'break'}
+            className="flex-1 flex items-center justify-center gap-2 bg-white/20 backdrop-blur-sm text-white rounded-full py-3 text-sm font-semibold disabled:opacity-60"
+            style={{ minHeight: 48 }}
+          >
+            {actionLoading === 'break' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Coffee className="w-4 h-4" />}
+            Przerwa
+          </motion.button>
+          <motion.button
+            whileTap={{ scale: 0.97 }}
+            onClick={() => performAction('/api/worker/shift/end', 'end')}
+            disabled={actionLoading === 'end'}
+            className="flex-1 flex items-center justify-center gap-2 bg-white/10 text-white/80 rounded-full py-3 text-sm font-medium disabled:opacity-60"
+            style={{ minHeight: 48 }}
+          >
+            {actionLoading === 'end' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+            Zakoncz
+          </motion.button>
+        </div>
+      </div>
     </div>
   );
 }
 
-function ActionButton({
-  onClick, loading, icon, label, className,
+// ── Next Task Section ─────────────────────────────────────────────────────────
+
+function NextTaskSection({
+  nextTask,
+  stats,
+  router,
 }: {
-  onClick: () => void;
-  loading: boolean;
-  icon: React.ReactNode;
-  label: string;
-  className: string;
+  nextTask: Task | null;
+  stats: TaskStats | null;
+  router: ReturnType<typeof useRouter>;
 }) {
+  // All done
+  if (stats && stats.total > 0 && stats.remaining === 0) {
+    return (
+      <div className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-6 text-center">
+        <CheckCircle className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+        <p className="font-semibold text-emerald-700 text-lg">Wszystkie zlecenia ukonczone!</p>
+        <p className="text-sm text-gray-400 mt-1">Swietna robota</p>
+      </div>
+    );
+  }
+
+  // No tasks
+  if (!nextTask && stats?.total === 0) {
+    return (
+      <div className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-6 text-center">
+        <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
+          <Clock className="w-6 h-6 text-gray-300" />
+        </div>
+        <p className="text-gray-500 font-medium">Czekaj na przydzial</p>
+        <p className="text-xs text-gray-400 mt-1">Brak zlecen na dzis</p>
+      </div>
+    );
+  }
+
+  // Waiting
+  if (!nextTask) {
+    return (
+      <div className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-6 text-center">
+        <Loader2 className="w-8 h-8 text-gray-300 mx-auto mb-2 animate-spin" />
+        <p className="text-gray-500 font-medium">Czekaj na przydzial</p>
+      </div>
+    );
+  }
+
+  const isInTransit = nextTask.status === 'in_transit';
+  const isInProgress = nextTask.status === 'in_progress';
+
   return (
-    <button
-      onClick={onClick}
-      disabled={loading}
-      className={cn(
-        'flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-medium transition-colors disabled:opacity-50',
-        className
-      )}
-    >
-      {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : icon}
-      {label}
-    </button>
+    <div>
+      <h2 className="text-lg font-semibold text-gray-900 mb-3">
+        {isInTransit ? 'W drodze' : isInProgress ? 'W trakcie' : 'Nastepne zadanie'}
+      </h2>
+      <motion.div
+        whileTap={{ scale: 0.98 }}
+        onClick={() => router.push(`/worker/tasks/${nextTask.id}`)}
+        className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.04)] p-5 cursor-pointer"
+      >
+        <div className="flex items-start gap-3">
+          {/* Sequence circle */}
+          <div className={cn(
+            'w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold',
+            isInTransit
+              ? 'bg-orange-100 text-orange-600'
+              : isInProgress
+                ? 'bg-blue-100 text-blue-600'
+                : 'bg-gray-900 text-white',
+          )}>
+            {isInTransit ? <Car className="w-5 h-5 animate-pulse" /> : isInProgress ? <Wrench className="w-5 h-5" /> : '1'}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              {nextTask.scheduled_time_start && (
+                <span className="text-sm font-bold text-gray-900">
+                  {nextTask.scheduled_time_start.slice(0, 5)}
+                </span>
+              )}
+              <span className="text-sm font-semibold text-gray-900 truncate">{nextTask.client_name}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-sm text-gray-500">
+              <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />
+              <span className="truncate">{nextTask.address}</span>
+            </div>
+
+            {/* Service chips */}
+            {nextTask.services.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {nextTask.services.slice(0, 3).map((s, i) => (
+                  <span
+                    key={i}
+                    className="inline-block bg-gray-100 text-gray-600 text-[10px] font-medium px-2 py-0.5 rounded-full"
+                  >
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <ChevronRight className="w-5 h-5 text-gray-300 flex-shrink-0 mt-2" />
+        </div>
+
+        {/* CTA button */}
+        <motion.button
+          whileTap={{ scale: 0.97 }}
+          onClick={(e) => { e.stopPropagation(); router.push(`/worker/tasks/${nextTask.id}`); }}
+          className={cn(
+            'w-full flex items-center justify-center gap-2 text-white rounded-full py-3.5 mt-4 text-sm font-semibold',
+            isInTransit
+              ? 'bg-blue-600'
+              : isInProgress
+                ? 'bg-emerald-600'
+                : 'bg-orange-500 hover:bg-orange-600',
+          )}
+          style={{ minHeight: 48 }}
+        >
+          {isInTransit ? (
+            <><MapPin className="w-4 h-4" /> Na miejscu</>
+          ) : isInProgress ? (
+            <><CheckCircle className="w-4 h-4" /> Zakoncz zlecenie</>
+          ) : (
+            <><Navigation className="w-4 h-4" /> Wyjezdzam</>
+          )}
+        </motion.button>
+      </motion.div>
+    </div>
   );
 }

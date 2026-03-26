@@ -80,7 +80,8 @@ export async function updateSession(request: NextRequest) {
   }
 
   // Admin/dispatcher trying to access /worker → redirect to /dashboard
-  if (user && isAdminOrDispatcher && pathname.startsWith('/worker')) {
+  // (disabled in dev for preview/testing)
+  if (user && isAdminOrDispatcher && pathname.startsWith('/worker') && process.env.NODE_ENV === 'production') {
     const url = request.nextUrl.clone();
     url.pathname = '/dashboard';
     return NextResponse.redirect(url);

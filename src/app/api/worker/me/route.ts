@@ -16,6 +16,18 @@ export async function GET(request: NextRequest) {
   if (!auth.ok) return auth.response;
 
   if (!auth.employeeId) {
+    // DEV: admin preview mode — return demo data
+    if (process.env.NODE_ENV !== 'production' && auth.role === 'admin') {
+      return NextResponse.json({
+        employee_id: 'demo-admin-preview',
+        full_name: 'Jan Kowalski',
+        work_status: 'off_work',
+        account_status: 'active',
+        shift_today: { scheduled: true, start_time: '08:00', end_time: '20:00', vehicle_plate: 'EL 12345' },
+        current_shift: { clock_in: null, clock_out: null, break_minutes: 0, on_break: false },
+        vehicle: { plate_number: 'EL 12345', brand: 'Mercedes', model: 'Sprinter' },
+      });
+    }
     return NextResponse.json({ error: 'No employee record for this account' }, { status: 404 });
   }
 
