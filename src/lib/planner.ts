@@ -220,6 +220,7 @@ export function buildSchedule(
       delay_minutes: delayMinutes,
       flexibility_minutes: order.flexibility_minutes ?? 0,
       order_status: order.order_status ?? 'pending',
+      scheduled_time_start: order.scheduled_time_start ?? null,
     };
   });
 

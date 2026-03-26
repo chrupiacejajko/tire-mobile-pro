@@ -124,7 +124,11 @@ function rescoreRoute(
     const travelMin = etaMinutes(distKm);
 
     stop.travel_minutes = travelMin;
-    const arrivalMin = currentTimeMin + travelMin;
+    // Use scheduled_time_start as anchor if set (user-dragged time)
+    const hasFixedTime = stop.scheduled_time_start && /^\d{2}:\d{2}/.test(stop.scheduled_time_start);
+    const arrivalMin = hasFixedTime
+      ? parseTime(stop.scheduled_time_start!)
+      : currentTimeMin + travelMin;
     stop.arrival_time = formatTime(arrivalMin);
 
     // Check time window for wait

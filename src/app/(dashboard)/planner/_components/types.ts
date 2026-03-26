@@ -36,6 +36,7 @@ export interface Stop {
   delay_minutes: number;
   flexibility_minutes: number;
   order_status: string;
+  scheduled_time_start?: string | null;
 }
 
 export interface RouteScore {
