@@ -7,9 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
-  ClipboardList, CheckCircle2, Users, DollarSign, Clock, MapPin,
+  ClipboardList, CheckCircle2, Clock, MapPin,
   Calendar, LayoutDashboard, Download, RefreshCw,
-  GanttChartSquare,
+  GanttChartSquare, Users, Loader2, AlertCircle,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { GanttView } from '../planner/_components/GanttView';
@@ -22,9 +22,9 @@ const ANIM = {
 
 interface DashStats {
   todayOrders: number;
-  completedToday: number;
-  activeEmployees: number;
-  revenueToday: number;
+  inProgress: number;
+  completed: number;
+  unassigned: number;
 }
 
 interface TodayOrder {
@@ -54,11 +54,10 @@ const statusLabels: Record<string, { label: string; color: string }> = {
 };
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashStats>({ todayOrders: 0, completedToday: 0, activeEmployees: 0, revenueToday: 0 });
+  const [stats, setStats] = useState<DashStats>({ todayOrders: 0, inProgress: 0, completed: 0, unassigned: 0 });
   const [todayOrders, setTodayOrders] = useState<TodayOrder[]>([]);
   const [empStatuses, setEmpStatuses] = useState<EmployeeStatus[]>([]);
   const [recentActivity, setRecentActivity] = useState<{ text: string; time: string; dot: string }[]>([]);
-  const [weeklyData, setWeeklyData] = useState<{ day: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
 
   // ── Gantt state ──
@@ -81,14 +80,12 @@ export default function DashboardPage() {
       .order('scheduled_time_start');
 
     const orders = ordersData || [];
-    const completed = orders.filter(o => o.status === 'completed');
-    const revenue = completed.reduce((s, o) => s + Number(o.total_price), 0);
 
     setStats({
       todayOrders: orders.length,
-      completedToday: completed.length,
-      activeEmployees: 0,
-      revenueToday: revenue,
+      inProgress: orders.filter((o: any) => o.status === 'in_progress').length,
+      completed: orders.filter((o: any) => o.status === 'completed').length,
+      unassigned: orders.filter((o: any) => o.status === 'new').length,
     });
 
     setTodayOrders(orders.map((o: any) => ({
@@ -102,14 +99,13 @@ export default function DashboardPage() {
       priority: o.priority,
     })));
 
-    // Active employees
+    // Employees for Zespół section
     const { data: empData } = await supabase
       .from('employees')
       .select('id, is_active, user:profiles(full_name), region:regions(name, color)')
       .eq('is_active', true);
 
     if (empData) {
-      setStats(prev => ({ ...prev, activeEmployees: empData.length }));
       setEmpStatuses(empData.map((e: any) => ({
         name: e.user?.full_name || 'Nieznany',
         status: 'Dostępny',
@@ -117,19 +113,6 @@ export default function DashboardPage() {
         regionColor: e.region?.color || '#3B82F6',
       })));
     }
-
-    // Weekly orders for chart
-    const weekData: { day: string; count: number }[] = [];
-    const dayLabels = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nd'];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
-      const dayIdx = d.getDay() === 0 ? 6 : d.getDay() - 1;
-      const { count } = await supabase.from('orders').select('id', { count: 'exact', head: true }).eq('scheduled_date', dateStr);
-      weekData.push({ day: dayLabels[dayIdx], count: count || 0 });
-    }
-    setWeeklyData(weekData);
 
     // Recent orders (activity)
     const { data: recentData } = await supabase
@@ -167,6 +150,18 @@ export default function DashboardPage() {
     }
   }, [today]);
 
+  // Silent refresh — used by GanttView D&D (no spinner, no unmount)
+  const silentRefreshGantt = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/planner?date=${today}`);
+      if (res.ok) {
+        const data = await res.json();
+        setGanttRoutes(data.routes ?? []);
+        setGanttUnassigned(data.unassigned ?? []);
+      }
+    } catch {}
+  }, [today]);
+
   useEffect(() => {
     fetchDashboard();
     fetchGantt();
@@ -176,20 +171,42 @@ export default function DashboardPage() {
       .channel('dashboard-orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         fetchDashboard();
-        fetchGantt();
+        silentRefreshGantt(); // silent — nie odmountowuje GanttView
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [fetchDashboard, fetchGantt]);
-
-  const maxWeekly = Math.max(...weeklyData.map(d => d.count), 1);
+  }, [fetchDashboard, fetchGantt, silentRefreshGantt]);
 
   const statCards = [
-    { title: 'Zlecenia dziś', value: stats.todayOrders.toString(), subtitle: `${stats.completedToday} ukończonych`, gradient: 'from-blue-500 to-blue-600', icon: ClipboardList },
-    { title: 'Ukończone', value: stats.completedToday.toString(), subtitle: stats.todayOrders > 0 ? `${Math.round((stats.completedToday / stats.todayOrders) * 100)}% skuteczności` : '0%', gradient: 'from-emerald-500 to-emerald-600', icon: CheckCircle2 },
-    { title: 'Pracownicy', value: stats.activeEmployees.toString(), subtitle: 'aktywnych w zespole', gradient: 'from-violet-500 to-violet-600', icon: Users },
-    { title: 'Przychód dziś', value: `${stats.revenueToday.toLocaleString()} zł`, subtitle: 'z ukończonych zleceń', gradient: 'from-rose-500 to-rose-600', icon: DollarSign },
+    {
+      title: 'Zlecenia dziś',
+      value: stats.todayOrders.toString(),
+      subtitle: stats.todayOrders > 0 ? `${stats.completed} ukończonych, ${stats.unassigned} nowych` : 'Brak zleceń',
+      gradient: 'from-blue-500 to-blue-600',
+      icon: ClipboardList,
+    },
+    {
+      title: 'W trakcie',
+      value: stats.inProgress.toString(),
+      subtitle: stats.inProgress > 0 ? 'aktywne realizacje' : 'brak aktywnych',
+      gradient: 'from-orange-500 to-orange-600',
+      icon: Loader2,
+    },
+    {
+      title: 'Zakończone dziś',
+      value: stats.completed.toString(),
+      subtitle: stats.todayOrders > 0 ? `${Math.round((stats.completed / stats.todayOrders) * 100)}% skuteczności` : '0% skuteczności',
+      gradient: 'from-emerald-500 to-emerald-600',
+      icon: CheckCircle2,
+    },
+    {
+      title: 'Nieprzypisane',
+      value: stats.unassigned.toString(),
+      subtitle: stats.unassigned > 0 ? 'wymagają przydzielenia' : 'wszystko przydzielone',
+      gradient: stats.unassigned > 0 ? 'from-rose-500 to-rose-600' : 'from-slate-400 to-slate-500',
+      icon: AlertCircle,
+    },
   ];
 
   return (
@@ -225,56 +242,8 @@ export default function DashboardPage() {
           ))}
         </motion.div>
 
-        {/* Row 2: Weekly chart + Employees */}
-        <motion.div className="grid grid-cols-1 gap-6 lg:grid-cols-3"
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.3 }}>
-          <Card className="lg:col-span-2 rounded-2xl border-gray-100 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base font-bold">Zlecenia - ostatnie 7 dni</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-end justify-between h-44 pt-4 gap-3">
-                {weeklyData.map((d, i) => (
-                  <div key={i} className="flex flex-1 flex-col items-center gap-2">
-                    <span className="text-[10px] text-gray-500 font-medium">{d.count}</span>
-                    <motion.div
-                      className="w-full max-w-[40px] bg-blue-500 rounded-t-lg"
-                      initial={{ height: 0 }}
-                      animate={{ height: `${(d.count / maxWeekly) * 140}px` }}
-                      transition={{ duration: 0.5, delay: i * 0.05 }}
-                    />
-                    <span className="text-xs text-gray-500">{d.day}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl border-gray-100 shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-bold flex items-center gap-2"><Users className="h-4 w-4" /> Zespół</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {empStatuses.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-4">Brak pracowników</p>
-              ) : empStatuses.map((emp, i) => (
-                <div key={i} className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: emp.regionColor }} />
-                    <div>
-                      <p className="text-sm font-medium">{emp.name}</p>
-                      <p className="text-xs text-gray-400">{emp.region}</p>
-                    </div>
-                  </div>
-                  <span className="text-xs text-gray-500">{emp.status}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </motion.div>
-
-        {/* Row 3: Gantt timeline */}
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.4 }}>
+        {/* Row 2: Gantt (full width) */}
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.2 }}>
           <Card className="rounded-2xl border-gray-100 shadow-sm overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between py-3 px-5 border-b border-gray-100">
               <CardTitle className="text-base font-bold flex items-center gap-2">
@@ -295,24 +264,60 @@ export default function DashboardPage() {
               </Button>
             </CardHeader>
             <CardContent className="p-0">
-              {ganttLoading ? (
-                <div className="flex items-center justify-center h-32 text-gray-400 gap-2 text-sm">
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  Ładowanie harmonogramu…
-                </div>
-              ) : ganttRoutes.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-1">
-                  <GanttChartSquare className="h-8 w-8 opacity-30" />
-                  <p className="text-sm">Brak tras na dziś</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
+              {/*
+                GanttView is ALWAYS mounted once the card renders — this prevents
+                the "widget refresh" flash. Loading and empty states are overlays,
+                not conditional unmounts.
+              */}
+              <div className="relative">
+                {/* Always-mounted GanttView */}
+                <div className={`overflow-x-auto ${ganttRoutes.length === 0 ? 'invisible h-0 overflow-hidden' : ''}`}>
                   <GanttView
                     routes={ganttRoutes}
                     unassigned={ganttUnassigned}
                     date={today}
-                    onRefresh={fetchGantt}
+                    onRefresh={silentRefreshGantt}
                   />
+                </div>
+                {/* Overlays — shown on top when no data yet */}
+                {ganttLoading && ganttRoutes.length === 0 && (
+                  <div className="flex items-center justify-center h-32 text-gray-400 gap-2 text-sm">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Ładowanie harmonogramu…
+                  </div>
+                )}
+                {!ganttLoading && ganttRoutes.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-1">
+                    <GanttChartSquare className="h-8 w-8 opacity-30" />
+                    <p className="text-sm">Brak tras na dziś</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Row 3: Zespół (full width, horizontal grid) */}
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.3 }}>
+          <Card className="rounded-2xl border-gray-100 shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-bold flex items-center gap-2"><Users className="h-4 w-4" /> Zespół</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {empStatuses.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">Brak pracowników</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                  {empStatuses.map((emp, i) => (
+                    <div key={i} className="flex items-center gap-2.5 rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-2.5">
+                      <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: emp.regionColor }} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{emp.name}</p>
+                        <p className="text-xs text-gray-400 truncate">{emp.region}</p>
+                      </div>
+                      <span className="text-[10px] text-emerald-600 font-medium bg-emerald-50 px-1.5 py-0.5 rounded-full flex-shrink-0">●</span>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
@@ -321,7 +326,7 @@ export default function DashboardPage() {
 
         {/* Row 4: Today's Orders + Activity */}
         <motion.div className="grid grid-cols-1 gap-6 lg:grid-cols-3"
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.55 }}>
+          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.4 }}>
           <Card className="lg:col-span-2 rounded-2xl border-gray-100 shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-base font-bold flex items-center gap-2"><Calendar className="h-4 w-4" /> Dzisiejsze zlecenia</CardTitle>

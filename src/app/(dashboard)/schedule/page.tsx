@@ -192,27 +192,27 @@ export default function SchedulePage() {
         title="Grafik zmian"
         subtitle="Planowanie dyżurów pracowników"
         icon={<CalendarDays className="h-5 w-5" />}
-        actions={
-          <div className="flex items-center gap-2">
-            <Button
-              className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
-              onClick={data.openNewShift}
-            >
-              <Plus className="h-4 w-4" /> Utwórz dyżur
-            </Button>
-            <Button
-              className="h-9 rounded-xl text-sm gap-2 bg-emerald-600 hover:bg-emerald-700"
-              onClick={data.openDutyDialog}
-            >
-              <Shield className="h-4 w-4" /> Generuj 48/48
-            </Button>
-          </div>
-        }
       />
 
       <div className="p-4 lg:p-6 space-y-4">
         {/* ── Controls ── */}
         <div className="flex flex-wrap items-center gap-3">
+          {/* Action buttons */}
+          <Button
+            className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
+            onClick={data.openNewShift}
+          >
+            <Plus className="h-4 w-4" /> Utwórz dyżur
+          </Button>
+          <Button
+            className="h-9 rounded-xl text-sm gap-2 bg-emerald-600 hover:bg-emerald-700"
+            onClick={data.openDutyDialog}
+          >
+            <Shield className="h-4 w-4" /> Generuj 48/48
+          </Button>
+
+          <div className="h-5 w-px bg-gray-200" />
+
           {/* View switcher */}
           <div className="relative flex items-center bg-white border border-gray-200 rounded-xl p-1 gap-0.5 shadow-sm">
             {(['day', 'week', 'month'] as ViewMode[]).map(v => (

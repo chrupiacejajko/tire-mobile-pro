@@ -16,11 +16,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Tabs, TabsContent, TabsList, TabsTrigger,
-} from '@/components/ui/tabs';
-import {
-  Plus, Search, Pencil, UserCog, Users, Clock,
-  CalendarOff, Trash2, Award, Mail, RotateCcw, Link, MapPin,
+  Plus, Search, Pencil, UserCog, Trash2, Award, Mail, RotateCcw, Link, MapPin, Eye, EyeOff,
 } from 'lucide-react';
 import type { Region, Skill } from '@/lib/types';
 
@@ -156,6 +152,7 @@ export default function EmployeesPage() {
   const [allSkills, setAllSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [showInactive, setShowInactive] = useState(false);
 
   // Add dialog
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -188,9 +185,11 @@ export default function EmployeesPage() {
   const [addressSuggestions, setAddressSuggestions] = useState<HereSuggestion[]>([]);
   const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
   const addressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [addressDetails, setAddressDetails] = useState<{ street: string; postal: string; city: string } | null>(null);
 
   const handleAddressChange = (value: string, setFormData: React.Dispatch<React.SetStateAction<EmployeeForm>>) => {
     setFormData(f => ({ ...f, default_location: value, default_lat: null, default_lng: null }));
+    setAddressDetails(null);
     if (addressTimeoutRef.current) clearTimeout(addressTimeoutRef.current);
     if (value.length < 3) {
       setAddressSuggestions([]);
@@ -222,6 +221,11 @@ export default function EmployeesPage() {
         if (data.lat && data.lng) {
           setFormData(f => ({ ...f, default_lat: data.lat, default_lng: data.lng }));
         }
+        setAddressDetails({
+          street: data.street || '',
+          postal: data.postalCode || '',
+          city: data.city || '',
+        });
       }
     } catch {
       // ignore
@@ -331,6 +335,7 @@ export default function EmployeesPage() {
 
   // ── Edit Employee ──────────────────────────────────────
   const openEdit = (emp: EmployeeRow) => {
+    setAddressDetails(null);
     setEditingEmployee(emp);
     setEditForm({
       first_name: emp.first_name || emp.user?.full_name?.split(' ')[0] || '',
@@ -444,20 +449,15 @@ export default function EmployeesPage() {
     return true;
   });
 
-  // ── Filtering & Stats ─────────────────────────────────
+  // ── Filtering ─────────────────────────────────────────
   const filtered = employees.filter(e => {
+    if (!showInactive && !e.is_active) return false;
     const name = e.first_name && e.last_name
       ? `${e.first_name} ${e.last_name}`
       : e.user?.full_name || '';
     return name.toLowerCase().includes(search.toLowerCase()) ||
       e.region?.name?.toLowerCase().includes(search.toLowerCase());
   });
-
-  const activeCount = employees.filter(e => e.is_active).length;
-  const regionCount = new Set(employees.filter(e => e.region_id).map(e => e.region_id)).size;
-  const avgShiftRate = employees.length > 0
-    ? Math.round(employees.reduce((s, e) => s + (Number(e.shift_rate) || 0), 0) / employees.length)
-    : 0;
 
   const getDisplayName = (emp: EmployeeRow) => {
     if (emp.first_name && emp.last_name) return `${emp.first_name} ${emp.last_name}`;
@@ -539,10 +539,35 @@ export default function EmployeesPage() {
             ))}
           </div>
         )}
-        {formData.default_lat && formData.default_lng && (
-          <p className="text-xs text-gray-400">
-            GPS: {formData.default_lat.toFixed(5)}, {formData.default_lng.toFixed(5)}
-          </p>
+        {/* Expanded address details after HERE lookup */}
+        {addressDetails && formData.default_lat && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <div className="space-y-1">
+                <Label className="text-[11px] text-gray-400">Ulica</Label>
+                <Input value={addressDetails.street} readOnly tabIndex={-1}
+                  className="h-8 text-sm bg-gray-50 text-gray-600 cursor-default border-gray-100" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-gray-400">Kod pocztowy</Label>
+                <Input value={addressDetails.postal} readOnly tabIndex={-1}
+                  className="h-8 text-sm bg-gray-50 text-gray-600 cursor-default border-gray-100" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-gray-400">Miasto</Label>
+                <Input value={addressDetails.city} readOnly tabIndex={-1}
+                  className="h-8 text-sm bg-gray-50 text-gray-600 cursor-default border-gray-100" />
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1.5">
+              📍 GPS: {formData.default_lat.toFixed(5)}, {formData.default_lng?.toFixed(5)}
+            </p>
+          </motion.div>
         )}
       </div>
 
@@ -577,8 +602,14 @@ export default function EmployeesPage() {
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Domyślny obszar</Label>
-          <Select value={formData.region_id} onValueChange={v => setFormData(f => ({ ...f, region_id: v === '__none__' ? '' : (v ?? '') }))}>
-            <SelectTrigger><SelectValue placeholder="Wybierz region" /></SelectTrigger>
+          <Select value={formData.region_id || '__none__'} onValueChange={v => setFormData(f => ({ ...f, region_id: v === '__none__' ? '' : (v ?? '') }))}>
+            <SelectTrigger>
+              <span className={formData.region_id ? 'text-gray-900' : 'text-gray-400 text-sm'}>
+                {formData.region_id
+                  ? (regions.find(r => r.id === formData.region_id)?.name || 'Wybierz region')
+                  : 'Wybierz region'}
+              </span>
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">Brak</SelectItem>
               {regions.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
@@ -587,8 +618,14 @@ export default function EmployeesPage() {
         </div>
         <div className="space-y-2">
           <Label>Domyślny pojazd</Label>
-          <Select value={formData.default_vehicle_id} onValueChange={v => setFormData(f => ({ ...f, default_vehicle_id: v === '__none__' ? '' : (v ?? '') }))}>
-            <SelectTrigger><SelectValue placeholder="Wybierz pojazd" /></SelectTrigger>
+          <Select value={formData.default_vehicle_id || '__none__'} onValueChange={v => setFormData(f => ({ ...f, default_vehicle_id: v === '__none__' ? '' : (v ?? '') }))}>
+            <SelectTrigger>
+              <span className={formData.default_vehicle_id ? 'text-gray-900' : 'text-gray-400 text-sm'}>
+                {formData.default_vehicle_id
+                  ? (() => { const v = vehicles.find(v => v.id === formData.default_vehicle_id); return v ? `${v.plate_number}${v.brand ? ` - ${v.brand}` : ''}${v.model ? ` ${v.model}` : ''}` : 'Wybierz pojazd'; })()
+                  : 'Wybierz pojazd'}
+              </span>
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">Brak</SelectItem>
               {vehicles.map(v => (
@@ -655,257 +692,139 @@ export default function EmployeesPage() {
         title="Pracownicy"
         subtitle="Zarządzaj zespołem"
         icon={<UserCog className="h-5 w-5" />}
-        actions={
-          <Button className="h-9 rounded-xl text-sm gap-2 bg-orange-500 hover:bg-orange-600" onClick={() => { setForm({ ...emptyForm }); setDialogOpen(true); }}>
+      />
+      <div className="p-6 space-y-4">
+        {/* Toolbar above table */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[200px] max-w-xs">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Input placeholder="Szukaj pracownika..." className="pl-9 h-9 rounded-xl" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          {/* Pokaż nieaktywnych toggle */}
+          <button
+            type="button"
+            onClick={() => setShowInactive(v => !v)}
+            className={`flex items-center gap-2 h-9 px-3 rounded-xl border text-sm font-medium transition-colors ${
+              showInactive
+                ? 'border-orange-300 bg-orange-50 text-orange-700'
+                : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+            }`}
+          >
+            {showInactive ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+            Pokaż nieaktywnych
+          </button>
+          <div className="flex-1" />
+          <Button className="h-9 rounded-xl text-sm gap-2 bg-orange-500 hover:bg-orange-600" onClick={() => { setAddressDetails(null); setForm({ ...emptyForm }); setDialogOpen(true); }}>
             <Plus className="h-4 w-4" /> Dodaj pracownika
           </Button>
-        }
-      />
-      <div className="p-6 space-y-6">
-        {/* Stats */}
-        <motion.div className="grid grid-cols-1 gap-4 sm:grid-cols-4" variants={ANIM.container} initial="hidden" animate="show">
-          {[
-            { label: 'Wszyscy', value: employees.length, color: 'from-orange-500 to-orange-600' },
-            { label: 'Aktywni', value: activeCount, color: 'from-emerald-500 to-emerald-600' },
-            { label: 'Regiony', value: regionCount, color: 'from-violet-500 to-violet-600' },
-            { label: 'Śr. stawka/dyżur', value: avgShiftRate > 0 ? `${avgShiftRate} zł` : '0 zł', color: 'from-amber-500 to-amber-600' },
-          ].map(s => (
-            <motion.div key={s.label} variants={ANIM.item} className={`rounded-2xl bg-gradient-to-br ${s.color} p-4 text-white shadow-lg`}>
-              <p className="text-sm text-white/80">{s.label}</p>
-              <p className="text-2xl font-bold mt-1">{s.value}</p>
-            </motion.div>
-          ))}
-        </motion.div>
+        </div>
 
-        {/* Tabs */}
-        <Tabs defaultValue="list">
-          <div className="flex items-center justify-between">
-            <TabsList>
-              <TabsTrigger value="list" className="gap-2"><Users className="h-4 w-4" /> Lista pracowników</TabsTrigger>
-              <TabsTrigger value="schedule" className="gap-2"><Clock className="h-4 w-4" /> Grafik pracy</TabsTrigger>
-              <TabsTrigger value="unavailabilities" className="gap-2"><CalendarOff className="h-4 w-4" /> Niedostępności</TabsTrigger>
-            </TabsList>
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-              <Input placeholder="Szukaj pracownika..." className="pl-9 h-9 rounded-xl" value={search} onChange={e => setSearch(e.target.value)} />
-            </div>
-          </div>
-
-          {/* ── LIST TAB ── */}
-          <TabsContent value="list" className="mt-4">
-            <Card className="rounded-2xl border-gray-100 shadow-sm">
-              <CardContent className="p-0">
-                {loading ? (
-                  <div className="flex items-center justify-center py-20">
-                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-orange-500 border-t-transparent" />
-                  </div>
-                ) : filtered.length === 0 ? (
-                  <div className="text-center py-20 text-gray-400">
-                    <UserCog className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                    <p className="font-medium">Brak pracowników</p>
-                    <p className="text-sm mt-1">Dodaj pierwszego pracownika</p>
-                  </div>
-                ) : (
-                  <motion.div variants={ANIM.container} initial="hidden" animate="show">
-                    {/* Header */}
-                    <div className="grid grid-cols-[1fr_100px_100px_1fr_100px_100px_80px_80px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                      <span>Pracownik</span><span>Telefon</span><span>Obszar</span><span>Umiejętności</span><span>Stawka</span><span>Konto</span><span>Status</span><span></span>
+        {/* Employee list */}
+        <Card className="rounded-2xl border-gray-100 shadow-sm">
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-orange-500 border-t-transparent" />
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="text-center py-20 text-gray-400">
+                <UserCog className="h-12 w-12 mx-auto mb-3 opacity-40" />
+                <p className="font-medium">Brak pracowników</p>
+                <p className="text-sm mt-1">Dodaj pierwszego pracownika lub włącz widok nieaktywnych</p>
+              </div>
+            ) : (
+              <motion.div variants={ANIM.container} initial="hidden" animate="show">
+                {/* Header */}
+                <div className="grid grid-cols-[minmax(180px,1fr)_120px_130px_minmax(160px,1fr)_90px_90px_90px] gap-3 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <span>Pracownik</span><span>Telefon</span><span>Obszar</span><span>Umiejętności</span><span>Stawka</span><span>Status</span><span></span>
+                </div>
+                {filtered.map(emp => (
+                  <motion.div
+                    key={emp.id}
+                    variants={ANIM.item}
+                    className={`grid grid-cols-[minmax(180px,1fr)_120px_130px_minmax(160px,1fr)_90px_90px_90px] gap-3 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors ${!emp.is_active ? 'opacity-50' : ''}`}
+                  >
+                    {/* Name + login */}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white text-xs font-bold">
+                        {getInitials(emp)}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{getDisplayName(emp)}</p>
+                        <p className="text-xs text-gray-400 truncate">
+                          {emp.user?.email?.replace('@roottire.internal', '') || '—'}
+                        </p>
+                      </div>
                     </div>
-                    {filtered.map(emp => (
-                      <motion.div
-                        key={emp.id}
-                        variants={ANIM.item}
-                        className="grid grid-cols-[1fr_100px_100px_1fr_100px_100px_80px_80px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
-                      >
-                        {/* Name + email */}
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white text-xs font-bold">
-                            {getInitials(emp)}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">{getDisplayName(emp)}</p>
-                            <p className="text-xs text-gray-400 truncate">{emp.user?.email}</p>
-                          </div>
-                        </div>
 
-                        {/* Phone */}
-                        <span className="text-sm text-gray-600 truncate">{emp.user?.phone || '-'}</span>
+                    {/* Phone */}
+                    <span className="text-sm text-gray-600 truncate">{emp.user?.phone || '-'}</span>
 
-                        {/* Region */}
-                        <div className="flex items-center gap-1.5">
-                          {emp.region && <div className="h-2 w-2 rounded-full" style={{ backgroundColor: emp.region.color }} />}
-                          <span className="text-sm text-gray-600 truncate">{emp.region?.name || '-'}</span>
-                        </div>
-
-                        {/* Skills */}
-                        <div className="flex flex-wrap gap-1">
-                          {emp.employee_skills && emp.employee_skills.length > 0 ? (
-                            emp.employee_skills.map((es, idx) => (
-                              <Badge key={es.skill_id} className={`text-[10px] rounded-lg ${SKILL_BADGE_COLORS[idx % SKILL_BADGE_COLORS.length]}`}>
-                                {es.skill?.name || '?'}
-                              </Badge>
-                            ))
-                          ) : (
-                            <span className="text-xs text-gray-400">-</span>
-                          )}
-                        </div>
-
-                        {/* Shift rate */}
-                        <span className="text-sm font-medium">
-                          {emp.shift_rate != null ? `${Number(emp.shift_rate)} zł` : '-'}
-                        </span>
-
-                        {/* Account / invite status */}
-                        {emp.account_status === 'invited' ? (
-                          <Badge className="text-[10px] rounded-lg bg-amber-100 text-amber-700 border-0">Zaproszony</Badge>
-                        ) : emp.account_status === 'active' ? (
-                          <Badge className="text-[10px] rounded-lg bg-emerald-100 text-emerald-700 border-0">Aktywny</Badge>
-                        ) : emp.account_status === 'blocked' ? (
-                          <Badge className="text-[10px] rounded-lg bg-red-100 text-red-700 border-0">Zablokowany</Badge>
-                        ) : (
-                          <span className="text-xs text-gray-400">—</span>
-                        )}
-
-                        {/* Status */}
-                        <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-[10px] rounded-lg">
-                          {emp.is_active ? 'Aktywny' : 'Nieaktywny'}
-                        </Badge>
-
-                        {/* Actions */}
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-orange-500 hover:text-orange-600 hover:bg-orange-50" onClick={() => openEdit(emp)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          {emp.account_status === 'invited' ? (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 rounded-lg text-amber-500 hover:text-amber-600 hover:bg-amber-50"
-                              title="Ponów zaproszenie"
-                              onClick={() => handleInvite(emp.id, 'resend')}
-                            >
-                              <RotateCcw className="h-4 w-4" />
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 rounded-lg text-blue-400 hover:text-blue-600 hover:bg-blue-50"
-                              title="Wyślij zaproszenie"
-                              onClick={() => handleInvite(emp.id, 'create')}
-                            >
-                              <Mail className="h-4 w-4" />
-                            </Button>
-                          )}
-                          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50" onClick={() => openDelete(emp)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </motion.div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* ── SCHEDULE TAB ── */}
-          <TabsContent value="schedule" className="mt-4">
-            <Card className="rounded-2xl border-gray-100 shadow-sm">
-              <CardContent className="p-6 text-center text-gray-400">
-                <Clock className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                <p className="font-medium">Grafik pracy</p>
-                <p className="text-sm mt-1">Harmonogram pracowników na ten tydzień (wkrótce)</p>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* ── UNAVAILABILITIES TAB ── */}
-          <TabsContent value="unavailabilities" className="mt-4 space-y-4">
-            <div className="flex items-center gap-3 flex-wrap">
-              <Select value={unavailFilterEmployee} onValueChange={v => setUnavailFilterEmployee(v === '__all__' ? '' : (v ?? ''))}>
-                <SelectTrigger className="w-48 h-9 rounded-xl text-sm">
-                  <SelectValue placeholder="Wszyscy pracownicy" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Wszyscy pracownicy</SelectItem>
-                  {employees.map(emp => (
-                    <SelectItem key={emp.id} value={emp.id}>{getDisplayName(emp)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={unavailFilterType} onValueChange={v => setUnavailFilterType(v === '__all__' ? '' : (v ?? ''))}>
-                <SelectTrigger className="w-48 h-9 rounded-xl text-sm">
-                  <SelectValue placeholder="Wszystkie typy" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Wszystkie typy</SelectItem>
-                  {Object.entries(TYPE_LABELS).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="flex-1" />
-              <Button className="h-9 rounded-xl text-sm gap-2 bg-orange-500 hover:bg-orange-600" onClick={() => setUnavailDialogOpen(true)}>
-                <Plus className="h-4 w-4" /> Dodaj niedostępność
-              </Button>
-            </div>
-
-            <Card className="rounded-2xl border-gray-100 shadow-sm">
-              <CardContent className="p-0">
-                {unavailLoading ? (
-                  <div className="flex items-center justify-center py-20">
-                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-orange-500 border-t-transparent" />
-                  </div>
-                ) : filteredUnavailabilities.length === 0 ? (
-                  <div className="text-center py-20 text-gray-400">
-                    <CalendarOff className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                    <p className="font-medium">Brak niedostępności</p>
-                    <p className="text-sm mt-1">Dodaj pierwszą niedostępność</p>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="grid grid-cols-[1fr_140px_180px_1fr_50px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                      <span>Pracownik</span><span>Typ</span><span>Okres</span><span>Notatki</span><span></span>
+                    {/* Region */}
+                    <div className="flex items-center gap-1.5">
+                      {emp.region && <div className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: emp.region.color }} />}
+                      <span className="text-sm text-gray-600 truncate">{emp.region?.name || '-'}</span>
                     </div>
-                    {filteredUnavailabilities.map(u => {
-                      const empName = u.employee?.user?.full_name || 'Pracownik (brak danych)';
-                      const typeColor = TYPE_COLORS[u.type] || TYPE_COLORS.other;
-                      return (
-                        <div
-                          key={u.id}
-                          className="grid grid-cols-[1fr_140px_180px_1fr_50px] gap-4 items-center px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white text-xs font-bold">
-                              {empName.split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
-                            </div>
-                            <span className="text-sm font-medium text-gray-900 truncate">{empName}</span>
-                          </div>
-                          <Badge className={`text-[10px] rounded-lg ${typeColor}`}>
-                            {TYPE_LABELS[u.type] || u.type}
+
+                    {/* Skills */}
+                    <div className="flex flex-wrap gap-1">
+                      {emp.employee_skills && emp.employee_skills.length > 0 ? (
+                        emp.employee_skills.map((es, idx) => (
+                          <Badge key={es.skill_id} className={`text-[10px] rounded-lg ${SKILL_BADGE_COLORS[idx % SKILL_BADGE_COLORS.length]}`}>
+                            {es.skill?.name || '?'}
                           </Badge>
-                          <span className="text-sm text-gray-600">
-                            {u.start_date === u.end_date ? u.start_date : `${u.start_date} — ${u.end_date}`}
-                          </span>
-                          <span className="text-sm text-gray-500 truncate">{u.notes || '-'}</span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50"
-                            onClick={() => handleDeleteUnavailability(u.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+                        ))
+                      ) : (
+                        <span className="text-xs text-gray-400">-</span>
+                      )}
+                    </div>
+
+                    {/* Shift rate */}
+                    <span className="text-sm font-medium">
+                      {emp.shift_rate != null ? `${Number(emp.shift_rate)} zł` : '-'}
+                    </span>
+
+                    {/* Status */}
+                    <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-[10px] rounded-lg">
+                      {emp.is_active ? 'Aktywny' : 'Nieaktywny'}
+                    </Badge>
+
+                    {/* Actions */}
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-orange-500 hover:text-orange-600 hover:bg-orange-50" onClick={() => openEdit(emp)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      {emp.account_status === 'invited' ? (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-lg text-amber-500 hover:text-amber-600 hover:bg-amber-50"
+                          title="Ponów zaproszenie"
+                          onClick={() => handleInvite(emp.id, 'resend')}
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-lg text-blue-400 hover:text-blue-600 hover:bg-blue-50"
+                          title="Wyślij zaproszenie"
+                          onClick={() => handleInvite(emp.id, 'create')}
+                        >
+                          <Mail className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50" onClick={() => openDelete(emp)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </motion.div>
+                ))}
+              </motion.div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* ── Invite toast ── */}

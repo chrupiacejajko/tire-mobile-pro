@@ -83,6 +83,7 @@ export interface GanttDragState {
   origLeft: number;
   origRow: string;
   isUnassigned?: boolean;
+  blockWidth?: number;  // px width of the dragged block — used for ghost preview
 }
 
 export interface GanttContextMenu {

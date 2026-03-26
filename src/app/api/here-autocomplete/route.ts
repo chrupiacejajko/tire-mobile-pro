@@ -12,14 +12,17 @@ export async function GET(request: NextRequest) {
     `&apiKey=${apiKey}` +
     `&lang=pl` +
     `&in=countryCode:POL` +
-    `&limit=5` +
-    `&resultTypes=houseNumber,street`;
+    `&limit=6`;
 
   try {
     const res = await fetch(url);
     const data = await res.json();
+    if (!res.ok || data.error) {
+      console.error('[here-autocomplete] API error:', res.status, JSON.stringify(data));
+    }
     return NextResponse.json({ items: data.items ?? [] });
-  } catch {
+  } catch (err) {
+    console.error('[here-autocomplete] fetch failed:', err);
     return NextResponse.json({ items: [] });
   }
 }

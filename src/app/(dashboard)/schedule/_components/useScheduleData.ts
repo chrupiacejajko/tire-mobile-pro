@@ -355,13 +355,13 @@ export function useScheduleData() {
     setConflictError(null);
     const todayStr = toDateStr(new Date());
     setEditForm({
-      employee_id: employees[0]?.id || '',
+      employee_id: '',
       start_date: todayStr,
       start_time: '07:00',
       end_date: toDateStr(addDaysTo(new Date(), 1)),
       end_time: '07:00',
-      vehicle_id: employees[0]?.default_vehicle_id || '',
-      region_id: employees[0]?.region_id || '',
+      vehicle_id: '',
+      region_id: '',
       notes: '',
       isNew: true,
       originalDate: '',

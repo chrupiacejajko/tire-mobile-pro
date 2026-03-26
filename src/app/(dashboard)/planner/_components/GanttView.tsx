@@ -93,14 +93,40 @@ export function GanttView({
   const TOTAL_WIDTH = (END_HOUR - START_HOUR) * HOUR_WIDTH;
   const ROW_HEIGHT = 64;
 
+  // ── Local state — mirrors props, updated optimistically on drag ───────────
+  const [localRoutes, setLocalRoutes] = useState<EmployeeRoute[]>(routes);
+  const [localUnassigned, setLocalUnassigned] = useState<UnassignedOrder[]>(unassigned);
+  // Sync from props after background refresh — but never wipe existing data with empty array
+  // (prevents flashing empty state between fetch start/end)
+  useEffect(() => {
+    if (routes.length > 0) setLocalRoutes(routes);
+    else if (localRoutes.length === 0) setLocalRoutes(routes); // ok to set empty only if already empty
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routes]);
+  useEffect(() => {
+    setLocalUnassigned(unassigned);
+  }, [unassigned]);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<GanttDragState | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [dragSnapX, setDragSnapX] = useState<number>(0);   // snapped X in timeline px
   const [dragTargetRow, setDragTargetRow] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<GanttContextMenu | null>(null);
   const [lockedOrders, setLockedOrders] = useState<Set<string>>(new Set());
   const [tooltip, setTooltip] = useState<GanttTooltip | null>(null);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const dragSnapXRef = useRef<number>(0); // stable ref for mouseup handler
+
+  const SNAP_MINUTES = 15;
+  const LEFT_COL_WIDTH = 192; // w-48 = 12rem = 192px
+
+  function snapToMinutes(x: number): number {
+    const pxPerMin = TOTAL_WIDTH / TOTAL_MINUTES;
+    const rawMin = x / pxPerMin;
+    const snapped = Math.round(rawMin / SNAP_MINUTES) * SNAP_MINUTES;
+    return Math.max(0, Math.min(TOTAL_MINUTES, snapped)) * pxPerMin;
+  }
 
   function timeToX(timeStr: string): number {
     const [h, m] = timeStr.split(':').map(Number);
@@ -139,6 +165,21 @@ export function GanttView({
       const dx = e.clientX - dragging.startX;
       const dy = e.clientY - dragging.startY;
       setDragOffset({ x: dx, y: dy });
+
+      // Cursor-relative position: more accurate for cross-row drags
+      // Falls back to delta-based if container ref isn't ready
+      let rawX = dragging.origLeft + dx;
+      if (containerRef.current) {
+        const cRect = containerRef.current.getBoundingClientRect();
+        const cursorInTimeline = e.clientX - cRect.left - LEFT_COL_WIDTH;
+        // Preserve the click-offset within the block so it doesn't jump
+        const clickOffset = dragging.startX - (cRect.left + LEFT_COL_WIDTH + dragging.origLeft);
+        rawX = cursorInTimeline - clickOffset;
+      }
+      const snapped = snapToMinutes(rawX);
+      setDragSnapX(snapped);
+      dragSnapXRef.current = snapped;
+
       let targetRow: string | null = null;
       rowRefs.current.forEach((el, empId) => {
         const rect = el.getBoundingClientRect();
@@ -147,31 +188,96 @@ export function GanttView({
       setDragTargetRow(targetRow);
     };
     const handleMouseUp = async (e: MouseEvent) => {
-      const dx = e.clientX - dragging.startX;
-      const finalX = dragging.origLeft + dx;
-      const newTime = xToTime(finalX);
+      const newTime = xToTime(dragSnapXRef.current);
+      const snappedX = dragSnapXRef.current;
       const targetEmployee = dragTargetRow;
+      const dx = e.clientX - dragging.startX;
       const movedEnough = Math.abs(dx) > 5 || (targetEmployee && targetEmployee !== dragging.origRow);
-      setDragging(null); setDragOffset({ x: 0, y: 0 }); setDragTargetRow(null);
+      // Snapshot drag state before clearing
+      const { orderId, origRow, isUnassigned, blockWidth } = dragging;
+      setDragging(null); setDragOffset({ x: 0, y: 0 }); setDragSnapX(0); setDragTargetRow(null);
       if (!movedEnough) return;
-      if (dragging.isUnassigned && targetEmployee) {
-        try { await fetch('/api/planner/insert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: dragging.orderId, employee_id: targetEmployee, date }) }); onRefresh(); } catch (err) { console.error('Insert failed', err); }
-        return;
-      }
-      if (targetEmployee && targetEmployee !== dragging.origRow) {
-        try { await fetch('/api/planner/insert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: dragging.orderId, employee_id: targetEmployee, date }) }); onRefresh(); } catch (err) { console.error('Reassign failed', err); }
+
+      // ── Optimistic updates — apply immediately so no snap-back ───────────
+      if (isUnassigned && targetEmployee) {
+        // Move from unassigned to employee row
+        setLocalUnassigned(prev => prev.filter(o => o.id !== orderId));
+        setLocalRoutes(prev => prev.map(r => {
+          if (r.employee_id !== targetEmployee) return r;
+          const durationMin = 60; // placeholder until real refresh
+          const [sh, sm] = newTime.split(':').map(Number);
+          const endMin = sh * 60 + sm + durationMin;
+          const endH = Math.floor(endMin / 60), endM = endMin % 60;
+          const newStop: Stop = {
+            order_id: orderId, sequence: r.schedule.length + 1, client_name: '…',
+            address: '', lat: 0, lng: 0, services: [], time_window: null,
+            time_window_label: null, time_window_color: null, time_window_status: 'no_window',
+            travel_minutes: 0, arrival_time: newTime, wait_minutes: 0, service_start: newTime,
+            service_duration_minutes: durationMin, departure_time: `${String(endH).padStart(2,'0')}:${String(endM).padStart(2,'0')}`,
+            delay_minutes: 0, flexibility_minutes: 0, order_status: 'assigned',
+          };
+          return { ...r, schedule: [...r.schedule, newStop], total_orders: r.total_orders + 1 };
+        }));
+      } else if (targetEmployee && targetEmployee !== origRow) {
+        // Reassign between employee rows — move stop
+        let movedStop: Stop | null = null;
+        setLocalRoutes(prev => prev.map(r => {
+          if (r.employee_id !== origRow) return r;
+          const stop = r.schedule.find(s => s.order_id === orderId);
+          if (stop) movedStop = { ...stop, service_start: newTime, arrival_time: newTime };
+          return { ...r, schedule: r.schedule.filter(s => s.order_id !== orderId), total_orders: r.total_orders - 1 };
+        }));
+        if (movedStop) {
+          const s = movedStop as Stop;
+          setLocalRoutes(prev => prev.map(r => {
+            if (r.employee_id !== targetEmployee) return r;
+            const endMin = s.service_duration_minutes + parseInt(newTime.split(':')[0]) * 60 + parseInt(newTime.split(':')[1]);
+            const endH = Math.floor(endMin / 60), endM = endMin % 60;
+            const updated = { ...s, arrival_time: newTime, service_start: newTime, departure_time: `${String(endH).padStart(2,'0')}:${String(endM).padStart(2,'0')}` };
+            return { ...r, schedule: [...r.schedule, updated], total_orders: r.total_orders + 1 };
+          }));
+        }
       } else {
-        try { await fetch('/api/orders/update-time', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: dragging.orderId, scheduled_time_start: newTime, employee_id: dragging.employeeId || undefined }) }); onRefresh(); } catch (err) { console.error('Time update failed', err); }
+        // Time shift — same row
+        setLocalRoutes(prev => prev.map(r => {
+          if (r.employee_id !== origRow) return r;
+          return {
+            ...r,
+            schedule: r.schedule.map(s => {
+              if (s.order_id !== orderId) return s;
+              const [sh, sm] = newTime.split(':').map(Number);
+              const endMin = sh * 60 + sm + s.service_duration_minutes;
+              const endH = Math.floor(endMin / 60), endM = endMin % 60;
+              return { ...s, service_start: newTime, arrival_time: newTime, departure_time: `${String(endH).padStart(2,'0')}:${String(endM).padStart(2,'0')}` };
+            }),
+          };
+        }));
       }
+
+      // ── API call + background sync ─────────────────────────────────────────
+      if (isUnassigned && targetEmployee) {
+        fetch('/api/planner/insert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId, employee_id: targetEmployee, date, scheduled_time_start: newTime }) })
+          .then(() => onRefresh()).catch(err => console.error('Insert failed', err));
+      } else if (targetEmployee && targetEmployee !== origRow) {
+        fetch('/api/planner/insert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId, employee_id: targetEmployee, date, scheduled_time_start: newTime }) })
+          .then(() => onRefresh()).catch(err => console.error('Reassign failed', err));
+      } else {
+        fetch('/api/orders/update-time', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId, scheduled_time_start: newTime, employee_id: origRow || undefined }) })
+          .then(() => onRefresh()).catch(err => console.error('Time update failed', err));
+      }
+      void snappedX; void blockWidth; // used via dragSnapXRef / dragging.blockWidth elsewhere
     };
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
     return () => { document.removeEventListener('mousemove', handleMouseMove); document.removeEventListener('mouseup', handleMouseUp); };
   }, [dragging, dragTargetRow, date, onRefresh]);
 
-  const handleBlockMouseDown = (e: React.MouseEvent, orderId: string, employeeId: string, left: number, isUnassigned?: boolean) => {
+  const handleBlockMouseDown = (e: React.MouseEvent, orderId: string, employeeId: string, left: number, isUnassigned?: boolean, blockWidth?: number) => {
     if (e.button !== 0) return; e.preventDefault(); setTooltip(null);
-    setDragging({ orderId, employeeId, startX: e.clientX, startY: e.clientY, origLeft: left, origRow: employeeId, isUnassigned });
+    const snapped = snapToMinutes(left);
+    setDragSnapX(snapped);
+    dragSnapXRef.current = snapped;
+    setDragging({ orderId, employeeId, startX: e.clientX, startY: e.clientY, origLeft: left, origRow: employeeId, isUnassigned, blockWidth });
   };
 
   const handleContextMenu = (e: React.MouseEvent, orderId: string, employeeId: string) => {
@@ -281,6 +387,25 @@ export function GanttView({
     const dtStyle = DELAY_TOLERANCE_COLORS[level] || DELAY_TOLERANCE_COLORS.flexible;
     const isCompletedOrInProgress = level === 'completed' || level === 'in_progress';
 
+    // ── When dragging, show origin ghost (the hole where block was) ──
+    const originGhost = isDraggingThis && (
+      <div
+        key={`${stop.order_id}-ghost`}
+        className="absolute top-1/2 -translate-y-1/2 rounded-lg pointer-events-none"
+        style={{
+          left: serviceStartX,
+          width: serviceWidth,
+          height: '36px',
+          background: 'rgba(0,0,0,0.025)',
+          border: '2px dashed rgba(0,0,0,0.12)',
+          borderLeft: `4px solid rgba(0,0,0,0.1)`,
+        }}
+      />
+    );
+
+    // Dragging block uses snapped position
+    const blockLeft = isDraggingThis ? dragSnapX : serviceStartX;
+
     return (
       <Fragment key={stop.order_id}>
         {/* Travel bar — gradient rounded pill */}
@@ -308,23 +433,32 @@ export function GanttView({
             }}
           />
         )}
+        {/* Origin ghost — shows where block came from */}
+        {originGhost}
         {/* Service block — delay tolerance colored */}
         <div
           className={cn(
-            'absolute top-1/2 -translate-y-1/2 rounded-lg cursor-grab select-none transition-shadow overflow-hidden',
-            isDraggingThis ? 'z-50 shadow-lg opacity-75 cursor-grabbing' : 'hover:shadow-md hover:brightness-[1.02]',
+            'absolute top-1/2 -translate-y-1/2 rounded-lg cursor-grab select-none overflow-hidden',
+            isDraggingThis ? 'z-50 cursor-grabbing' : 'transition-shadow hover:shadow-md hover:brightness-[1.02]',
             isLocked && 'ring-1 ring-dashed ring-orange-400',
           )}
           style={{
-            left: serviceStartX + offsetX,
+            left: blockLeft,
             width: serviceWidth,
             height: '36px',
             background: dtStyle.bg,
             border: dtStyle.border,
             borderLeft: `4px solid ${dtStyle.accent}`,
-            ...(isDraggingThis ? { transform: `translate(0, calc(-50% + ${offsetY}px))`, zIndex: 50 } : {}),
+            // Smooth transition when server data updates position (not while dragging)
+            transition: isDraggingThis ? 'none' : 'left 0.3s ease-out, width 0.3s ease-out',
+            ...(isDraggingThis ? {
+              transform: `translate(0, calc(-50% + ${offsetY}px)) scale(1.04)`,
+              zIndex: 50,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.12)',
+              opacity: 0.92,
+            } : {}),
           }}
-          onMouseDown={(e) => handleBlockMouseDown(e, stop.order_id, employeeId, serviceStartX)}
+          onMouseDown={(e) => handleBlockMouseDown(e, stop.order_id, employeeId, serviceStartX, false, serviceWidth)}
           onContextMenu={(e) => handleContextMenu(e, stop.order_id, employeeId)}
           onMouseEnter={(e) => { if (!dragging) setTooltip({ x: e.clientX, y: e.clientY - 10, stop, employeeName }); }}
           onMouseLeave={() => setTooltip(null)}
@@ -363,7 +497,7 @@ export function GanttView({
   }
 
   return (
-    <div ref={containerRef} className="rounded-xl bg-white shadow-[0_1px_4px_rgba(0,0,0,0.06)] overflow-hidden">
+    <div ref={containerRef} className="rounded-xl bg-white shadow-[0_1px_4px_rgba(0,0,0,0.06)] relative" style={{ overflowX: 'clip', overflowY: 'visible' }}>
       {/* Header */}
       <div className="flex" style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
         <div className="w-48 flex-shrink-0 px-3 py-2 bg-white/98 backdrop-blur-sm">
@@ -389,7 +523,7 @@ export function GanttView({
       </div>
 
       {/* Employee rows */}
-      {(routes ?? []).map((route, rowIdx) => {
+      {(localRoutes ?? []).map((route, rowIdx) => {
         const isDropTarget = dragTargetRow === route.employee_id && dragging && dragging.origRow !== route.employee_id;
         const initials = route.employee_name.split(' ').map(w => w[0]).join('').slice(0, 2);
         const hasLate = route.score.late > 0;
@@ -448,6 +582,33 @@ export function GanttView({
                 return renderServiceBlock(stop, route.employee_id, route.employee_name, prevDeparture, lockedOrders.has(stop.order_id));
               })}
 
+              {/* Drop target ghost — shows where block will land in THIS row */}
+              {dragging && dragTargetRow === route.employee_id && (
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 rounded-lg pointer-events-none z-30"
+                  style={{
+                    left: Math.max(0, dragSnapX),
+                    width: Math.max(dragging.blockWidth ?? 80, 60),
+                    height: '38px',
+                    background: dragging.origRow !== route.employee_id
+                      ? 'rgba(251,146,60,0.15)'
+                      : 'rgba(59,130,246,0.10)',
+                    border: `2px dashed ${dragging.origRow !== route.employee_id ? 'rgba(251,146,60,0.85)' : 'rgba(59,130,246,0.6)'}`,
+                    borderLeft: `4px solid ${dragging.origRow !== route.employee_id ? '#f97316' : '#3b82f6'}`,
+                    boxShadow: `0 0 0 1px ${dragging.origRow !== route.employee_id ? 'rgba(251,146,60,0.2)' : 'rgba(59,130,246,0.15)'}`,
+                  }}
+                >
+                  <div className="flex items-center justify-center h-full gap-1 px-2">
+                    <span
+                      className="text-[10px] font-bold whitespace-nowrap"
+                      style={{ color: dragging.origRow !== route.employee_id ? '#ea580c' : '#2563eb' }}
+                    >
+                      {xToTime(Math.max(0, dragSnapX))}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Current time */}
               {isToday && nowX > 0 && nowX < TOTAL_WIDTH && (
                 <div className="absolute top-0 bottom-0 z-20 pointer-events-none" style={{ left: nowX }}>
@@ -461,7 +622,7 @@ export function GanttView({
       })}
 
       {/* Unassigned row */}
-      {unassigned.length > 0 && (
+      {localUnassigned.length > 0 && (
         <div
           ref={(el) => { if (el) rowRefs.current.set('__unassigned__', el); }}
           className="flex bg-gray-50/30"
@@ -473,11 +634,11 @@ export function GanttView({
             </div>
             <div className="min-w-0">
               <p className="text-[11px] font-semibold text-gray-500">Nieprzypisane</p>
-              <p className="text-[9px] text-red-500 font-bold">{unassigned.length} zlec.</p>
+              <p className="text-[9px] text-red-500 font-bold">{localUnassigned.length} zlec.</p>
             </div>
           </div>
           <div className="relative overflow-x-auto flex items-center gap-1.5 px-2 py-1" style={{ width: TOTAL_WIDTH, minHeight: ROW_HEIGHT }}>
-            {unassigned.map((order, idx) => {
+            {localUnassigned.map((order, idx) => {
               const blockWidth = 120;
               const left = idx * (blockWidth + 6);
               const isDraggingThis = dragging?.orderId === order.id;
@@ -507,7 +668,7 @@ export function GanttView({
                     borderLeft: `4px solid ${isUrgent ? '#dc2626' : isHigh ? '#d97706' : '#9ca3af'}`,
                     ...(isDraggingThis ? { transform: `translate(0, calc(-50% + ${offsetY}px))`, zIndex: 50 } : {}),
                   }}
-                  onMouseDown={(e) => handleBlockMouseDown(e, order.id, '', left, true)}
+                  onMouseDown={(e) => handleBlockMouseDown(e, order.id, '', left, true, blockWidth)}
                   onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, orderId: order.id, employeeId: '' }); }}
                   onMouseEnter={(e) => {
                     if (!dragging) {
@@ -536,6 +697,22 @@ export function GanttView({
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Snap guide line — vertical line across all rows while dragging */}
+      {dragging && dragSnapX > 0 && (
+        <div
+          className="absolute top-0 bottom-0 pointer-events-none z-40"
+          style={{ left: LEFT_COL_WIDTH + dragSnapX }}
+        >
+          <div className="w-[1.5px] h-full bg-gradient-to-b from-orange-500/80 via-orange-400/50 to-orange-300/20" />
+          <div
+            className="absolute top-2 -translate-x-1/2 bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap shadow-md"
+            style={{ left: 0 }}
+          >
+            {xToTime(dragSnapX)}
           </div>
         </div>
       )}
@@ -602,7 +779,7 @@ export function GanttView({
             </button>
             {contextMenu.showAssignSub && (
               <div className="absolute left-full top-0 bg-white rounded-xl shadow-2xl border border-gray-200/80 py-1 min-w-[200px] ml-1 z-[61]">
-                {(routes ?? []).map(r => {
+                {(localRoutes ?? []).map(r => {
                   const ri = r.employee_name.split(' ').map(w => w[0]).join('').slice(0, 2);
                   return (
                     <button key={r.employee_id} className={cn('w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors', r.employee_id === contextMenu.employeeId && 'font-semibold text-orange-600')} onClick={() => handleAssignTo(contextMenu.orderId, r.employee_id)}>

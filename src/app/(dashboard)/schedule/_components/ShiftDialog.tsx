@@ -92,7 +92,13 @@ export function ShiftDialog({
           <div className="space-y-2">
             <Label>Pracownik</Label>
             <Select value={editForm.employee_id} onValueChange={v => onEmployeeChange(v ?? '')}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <span className={editForm.employee_id ? 'text-gray-900' : 'text-gray-400 text-sm'}>
+                  {editForm.employee_id
+                    ? (employees.find(e => e.id === editForm.employee_id)?.name || 'Wybierz pracownika')
+                    : 'Wybierz pracownika'}
+                </span>
+              </SelectTrigger>
               <SelectContent>
                 {employees.map(e => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
               </SelectContent>
@@ -137,9 +143,15 @@ export function ShiftDialog({
           {/* Vehicle */}
           <div className="space-y-2">
             <Label>Pojazd</Label>
-            <Select value={editForm.vehicle_id}
+            <Select value={editForm.vehicle_id || '__none__'}
               onValueChange={v => setEditForm(f => ({ ...f, vehicle_id: v === '__none__' ? '' : (v ?? '') }))}>
-              <SelectTrigger><SelectValue placeholder="Wybierz pojazd" /></SelectTrigger>
+              <SelectTrigger>
+                <span className={editForm.vehicle_id ? 'text-gray-900' : 'text-gray-400 text-sm'}>
+                  {editForm.vehicle_id
+                    ? (() => { const v = vehicles.find(v => v.id === editForm.vehicle_id); return v ? `${v.plate_number} (${v.brand} ${v.model})` : 'Wybierz pojazd'; })()
+                    : '— Brak —'}
+                </span>
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">— Brak —</SelectItem>
                 {vehicles.map(v => (
@@ -152,9 +164,15 @@ export function ShiftDialog({
           {/* Region */}
           <div className="space-y-2">
             <Label>Obszar</Label>
-            <Select value={editForm.region_id}
+            <Select value={editForm.region_id || '__none__'}
               onValueChange={v => setEditForm(f => ({ ...f, region_id: v === '__none__' ? '' : (v ?? '') }))}>
-              <SelectTrigger><SelectValue placeholder="Wybierz obszar" /></SelectTrigger>
+              <SelectTrigger>
+                <span className={editForm.region_id ? 'text-gray-900' : 'text-gray-400 text-sm'}>
+                  {editForm.region_id
+                    ? (() => { const r = regions.find(r => r.id === editForm.region_id); return r ? r.name : 'Wybierz obszar'; })()
+                    : '— Brak —'}
+                </span>
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">— Brak —</SelectItem>
                 {regions.map(r => (

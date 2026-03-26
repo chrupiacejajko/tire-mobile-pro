@@ -163,7 +163,12 @@ export async function POST(request: NextRequest) {
       scheduledMinutes = Math.round((prevTime + nextTime) / 2);
     }
 
-    const scheduledTimeStart = formatTime(scheduledMinutes);
+    let scheduledTimeStart = formatTime(scheduledMinutes);
+
+    // Use user-specified time if provided (from Gantt drag-and-drop)
+    if (body.scheduled_time_start && /^\d{2}:\d{2}$/.test(body.scheduled_time_start)) {
+      scheduledTimeStart = body.scheduled_time_start;
+    }
 
     // ── Feasibility simulation ───────────────────────────────────────────────
     // Simulate the full schedule with the new order inserted to detect

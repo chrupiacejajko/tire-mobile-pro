@@ -67,10 +67,22 @@ export default function PlannerPage() {
     }
   }, []);
 
+  // Silent load — used by GanttView D&D (no spinner, preserves mounted state)
+  const silentLoad = useCallback(async (d: string) => {
+    try {
+      const res = await fetch(`/api/planner?date=${d}`);
+      if (res.ok) setData(await res.json());
+    } catch {}
+  }, []);
+
   useEffect(() => { load(date); }, [date, load]);
 
   // Auto-refresh when any order changes via Supabase Realtime
-  const handleRealtimeChange = useCallback(() => { load(date); }, [load, date]);
+  // Uses silentLoad when in gantt view (no loading spinner = no unmount)
+  const handleRealtimeChange = useCallback(() => {
+    if (viewMode === 'gantt') silentLoad(date);
+    else load(date);
+  }, [load, silentLoad, date, viewMode]);
   useOrdersRealtime(handleRealtimeChange);
 
   // Sync date to URL search params
@@ -354,7 +366,43 @@ export default function PlannerPage() {
             </div>
 
             {/* Route cards / Gantt */}
-            {loading ? (
+            {/* Gantt view — GanttView stays ALWAYS mounted while in gantt mode to prevent refresh flash */}
+            {viewMode === 'gantt' ? (
+              <div className="relative">
+                {/* Always-mounted GanttView */}
+                <div className={liveScoring.routes.length === 0 ? 'invisible h-0 overflow-hidden' : undefined}>
+                  {liveScoring.isLive && (
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-semibold">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                        </span>
+                        Live GPS
+                      </span>
+                      {liveScoring.lastUpdate && (
+                        <span className="text-[10px] text-gray-400">
+                          Aktualizacja: {liveScoring.lastUpdate.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <GanttView routes={liveScoring.routes} unassigned={data?.unassigned ?? []} date={date} onRefresh={() => silentLoad(date)} />
+                </div>
+                {/* Overlays for loading / empty states */}
+                {loading && liveScoring.routes.length === 0 && (
+                  <div className="space-y-4">
+                    {[1,2,3].map(i => <div key={i} className="h-48 bg-white animate-pulse rounded-2xl border border-gray-200" />)}
+                  </div>
+                )}
+                {!loading && (data?.routes?.length ?? 0) === 0 && (
+                  <div className="text-center py-16">
+                    <Route className="h-12 w-12 text-gray-200 mx-auto mb-3" />
+                    <p className="text-gray-400">Brak tras na wybrany dzień</p>
+                  </div>
+                )}
+              </div>
+            ) : loading ? (
               <div className="space-y-4">
                 {[1,2,3].map(i => <div key={i} className="h-48 bg-white animate-pulse rounded-2xl border border-gray-200" />)}
               </div>
@@ -363,26 +411,6 @@ export default function PlannerPage() {
                 <Route className="h-12 w-12 text-gray-200 mx-auto mb-3" />
                 <p className="text-gray-400">Brak tras na wybrany dzień</p>
               </div>
-            ) : viewMode === 'gantt' ? (
-              <>
-                {liveScoring.isLive && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-semibold">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                      </span>
-                      Live GPS
-                    </span>
-                    {liveScoring.lastUpdate && (
-                      <span className="text-[10px] text-gray-400">
-                        Aktualizacja: {liveScoring.lastUpdate.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </span>
-                    )}
-                  </div>
-                )}
-                <GanttView routes={liveScoring.routes} unassigned={data?.unassigned ?? []} date={date} onRefresh={() => load(date)} />
-              </>
             ) : (
               <div className="grid grid-cols-1 2xl:grid-cols-2 gap-4">
                 {data?.routes?.map(route => (

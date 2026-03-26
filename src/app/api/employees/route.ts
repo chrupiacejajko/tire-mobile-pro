@@ -132,6 +132,7 @@ export async function PUT(request: NextRequest) {
       region_id, default_vehicle_id, shift_rate,
       is_active, skill_ids,
       start_time, end_time, skills, hourly_rate,
+      default_location, default_lat, default_lng,
     } = body;
 
     if (!id) {
@@ -179,6 +180,9 @@ export async function PUT(request: NextRequest) {
     if (shift_rate !== undefined) employeeUpdate.shift_rate = shift_rate ? Number(shift_rate) : null;
     if (is_active !== undefined) employeeUpdate.is_active = is_active;
     if (region_id !== undefined) employeeUpdate.region_id = region_id || null;
+    if (default_location !== undefined) employeeUpdate.default_location = default_location || null;
+    if (default_lat !== undefined) employeeUpdate.default_lat = default_lat ?? null;
+    if (default_lng !== undefined) employeeUpdate.default_lng = default_lng ?? null;
     if (hourly_rate !== undefined) employeeUpdate.hourly_rate = Number(hourly_rate);
 
     // Legacy: support old skills field
