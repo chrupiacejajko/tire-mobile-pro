@@ -121,7 +121,8 @@ export interface Service {
   is_active: boolean;
   form_template_id?: string | null;
   vehicle_type_id: string | null;
-  required_skill_id: string | null;
+  required_skill_id: string | null;   // legacy single skill
+  required_skill_ids: string[];       // multi-skill (new)
 }
 
 export interface ServiceType {

@@ -122,7 +122,7 @@ export default function ServicesPage() {
   const [serviceForm, setServiceForm] = useState({
     name: '', description: '', duration_minutes: '60', price: '0',
     category: 'wymiana', is_active: true,
-    vehicle_type_id: '', required_skill_id: '',
+    vehicle_type_id: '', required_skill_ids: [] as string[],
   });
   const [serviceSaving, setServiceSaving] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -210,11 +210,15 @@ export default function ServicesPage() {
   // ─── Services tab handlers ────────────────────────────────────────────────
 
   const resetServiceForm = () => {
-    setServiceForm({ name: '', description: '', duration_minutes: '60', price: '0', category: 'wymiana', is_active: true, vehicle_type_id: '', required_skill_id: '' });
+    setServiceForm({ name: '', description: '', duration_minutes: '60', price: '0', category: 'wymiana', is_active: true, vehicle_type_id: '', required_skill_ids: [] });
     setEditingService(null);
   };
 
   const openEditService = (s: Service) => {
+    // Merge legacy required_skill_id into array if needed
+    const skillIds = s.required_skill_ids?.length
+      ? s.required_skill_ids
+      : s.required_skill_id ? [s.required_skill_id] : [];
     setServiceForm({
       name: s.name,
       description: s.description || '',
@@ -223,10 +227,19 @@ export default function ServicesPage() {
       category: s.category,
       is_active: s.is_active,
       vehicle_type_id: s.vehicle_type_id || '',
-      required_skill_id: s.required_skill_id || '',
+      required_skill_ids: skillIds,
     });
     setEditingService(s);
     setServiceDialogOpen(true);
+  };
+
+  const toggleSkillInForm = (skillId: string) => {
+    setServiceForm(prev => ({
+      ...prev,
+      required_skill_ids: prev.required_skill_ids.includes(skillId)
+        ? prev.required_skill_ids.filter(id => id !== skillId)
+        : [...prev.required_skill_ids, skillId],
+    }));
   };
 
   const handleServiceSave = async (e: React.FormEvent) => {
@@ -240,7 +253,9 @@ export default function ServicesPage() {
       category: serviceForm.category,
       is_active: serviceForm.is_active,
       vehicle_type_id: serviceForm.vehicle_type_id || null,
-      required_skill_id: serviceForm.required_skill_id || null,
+      required_skill_ids: serviceForm.required_skill_ids,
+      // keep legacy column in sync with first skill for backwards compat
+      required_skill_id: serviceForm.required_skill_ids[0] ?? null,
     };
     if (editingService) {
       await supabase.from('services').update(payload).eq('id', editingService.id);
@@ -456,7 +471,12 @@ export default function ServicesPage() {
                   {services.map(service => {
                     const catStyle = getCategoryStyle(service.category);
                     const vehicleType = vehicleTypes.find(v => v.id === service.vehicle_type_id);
-                    const requiredSkill = skills.find(s => s.id === service.required_skill_id);
+                    // multi-skill: merge legacy + new array, deduplicate
+                    const allSkillIds = Array.from(new Set([
+                      ...(service.required_skill_ids ?? []),
+                      ...(service.required_skill_id ? [service.required_skill_id] : []),
+                    ]));
+                    const requiredSkills = allSkillIds.map(id => skills.find(s => s.id === id)).filter(Boolean);
                     return (
                       <motion.div key={service.id} variants={ANIM.item} whileHover={{ y: -2 }}>
                         <Card className={`rounded-2xl border-gray-100 shadow-sm ${!service.is_active ? 'opacity-50' : ''}`}>
@@ -476,18 +496,18 @@ export default function ServicesPage() {
                                 <Clock className="h-3.5 w-3.5" />{service.duration_minutes} min
                               </span>
                             </div>
-                            {(vehicleType || requiredSkill) && (
+                            {(vehicleType || requiredSkills.length > 0) && (
                               <div className="flex flex-wrap gap-1 mb-3">
                                 {vehicleType && (
                                   <span className="inline-flex items-center gap-1 rounded-lg bg-sky-100 text-sky-700 text-[10px] font-medium px-2 py-0.5">
                                     <Car className="h-3 w-3" />{vehicleType.name}
                                   </span>
                                 )}
-                                {requiredSkill && (
-                                  <span className="inline-flex items-center gap-1 rounded-lg bg-orange-100 text-orange-700 text-[10px] font-medium px-2 py-0.5">
-                                    <Award className="h-3 w-3" />{requiredSkill.name}
+                                {requiredSkills.map(skill => skill && (
+                                  <span key={skill.id} className="inline-flex items-center gap-1 rounded-lg bg-orange-100 text-orange-700 text-[10px] font-medium px-2 py-0.5">
+                                    <Award className="h-3 w-3" />{skill.name}
                                   </span>
-                                )}
+                                ))}
                               </div>
                             )}
                             <div className="flex items-center justify-between pt-3 border-t">
@@ -664,31 +684,65 @@ export default function ServicesPage() {
                 </Select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Rodzaj pojazdu</Label>
-                <Select value={serviceForm.vehicle_type_id || '__none__'} onValueChange={v => setServiceForm({ ...serviceForm, vehicle_type_id: !v || v === '__none__' ? '' : v })}>
-                  <SelectTrigger><SelectValue placeholder="Dowolny" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Dowolny</SelectItem>
-                    {vehicleTypes.filter(vt => vt.is_active).map(vt => (
-                      <SelectItem key={vt.id} value={vt.id}>{vt.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Wymagana umiejętność</Label>
-                <Select value={serviceForm.required_skill_id || '__none__'} onValueChange={v => setServiceForm({ ...serviceForm, required_skill_id: !v || v === '__none__' ? '' : v })}>
-                  <SelectTrigger><SelectValue placeholder="Brak" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Brak</SelectItem>
-                    {skills.filter(s => s.is_active).map(s => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-2">
+              <Label>Rodzaj pojazdu</Label>
+              <Select
+                value={serviceForm.vehicle_type_id || '__none__'}
+                onValueChange={v => setServiceForm({ ...serviceForm, vehicle_type_id: !v || v === '__none__' ? '' : v })}
+              >
+                <SelectTrigger>
+                  {/* Show name explicitly to avoid UUID display bug */}
+                  <span className="truncate">
+                    {serviceForm.vehicle_type_id
+                      ? (vehicleTypes.find(v => v.id === serviceForm.vehicle_type_id)?.name ?? 'Dowolny')
+                      : 'Dowolny'}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Dowolny</SelectItem>
+                  {vehicleTypes.map(vt => (
+                    <SelectItem key={vt.id} value={vt.id}>{vt.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Wymagane umiejętności</Label>
+              {skills.filter(s => s.is_active).length === 0 ? (
+                <p className="text-xs text-gray-400 py-2">Brak zdefiniowanych umiejętności</p>
+              ) : (
+                <div className="flex flex-col gap-1 rounded-xl border border-gray-200 p-2 max-h-48 overflow-y-auto">
+                  {skills.filter(s => s.is_active).map(skill => {
+                    const checked = serviceForm.required_skill_ids.includes(skill.id);
+                    return (
+                      <label
+                        key={skill.id}
+                        className={cn(
+                          'flex items-center gap-2.5 rounded-lg px-3 py-2 cursor-pointer text-sm transition-colors select-none',
+                          checked
+                            ? 'bg-orange-50 text-orange-700 font-medium'
+                            : 'text-gray-600 hover:bg-gray-50',
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="accent-orange-500 h-4 w-4 rounded shrink-0"
+                          checked={checked}
+                          onChange={() => toggleSkillInForm(skill.id)}
+                        />
+                        <Award className={cn('h-3.5 w-3.5 shrink-0', checked ? 'text-orange-500' : 'text-gray-400')} />
+                        <span>{skill.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {serviceForm.required_skill_ids.length > 0 && (
+                <p className="text-[11px] text-orange-600 font-medium">
+                  Wybrano: {serviceForm.required_skill_ids.length} umiejętność/ci
+                </p>
+              )}
             </div>
             {editingService && (
               <div className="flex items-center gap-3">
