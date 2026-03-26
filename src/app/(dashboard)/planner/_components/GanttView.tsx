@@ -254,16 +254,17 @@ export function GanttView({
         }));
       }
 
-      // ── API call + background sync ─────────────────────────────────────────
+      // ── API call + delayed sync (avoid immediate refresh overwriting optimistic update) ──
+      const delayedRefresh = () => setTimeout(() => onRefresh(), 800);
       if (isUnassigned && targetEmployee) {
         fetch('/api/planner/insert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId, employee_id: targetEmployee, date, scheduled_time_start: newTime }) })
-          .then(() => onRefresh()).catch(err => console.error('Insert failed', err));
+          .then(delayedRefresh).catch(err => console.error('Insert failed', err));
       } else if (targetEmployee && targetEmployee !== origRow) {
         fetch('/api/planner/insert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId, employee_id: targetEmployee, date, scheduled_time_start: newTime }) })
-          .then(() => onRefresh()).catch(err => console.error('Reassign failed', err));
+          .then(delayedRefresh).catch(err => console.error('Reassign failed', err));
       } else {
         fetch('/api/orders/update-time', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: orderId, scheduled_time_start: newTime, employee_id: origRow || undefined }) })
-          .then(() => onRefresh()).catch(err => console.error('Time update failed', err));
+          .then(delayedRefresh).catch(err => console.error('Time update failed', err));
       }
       void snappedX; void blockWidth; // used via dragSnapXRef / dragging.blockWidth elsewhere
     };

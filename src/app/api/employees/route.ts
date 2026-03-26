@@ -27,12 +27,12 @@ function sanitizeForEmail(name: string): string {
 
 /**
  * Generate a fake internal email for workers who don't need a real email.
- * Format: {first_name}.{last_name}@roottire.internal
+ * Format: {first_name}.{last_name}@routetire.pl
  */
 function generateWorkerEmail(firstName: string, lastName: string): string {
   const sanitizedFirst = sanitizeForEmail(firstName || 'pracownik');
   const sanitizedLast = sanitizeForEmail(lastName || 'nowy');
-  return `${sanitizedFirst}.${sanitizedLast}@roottire.internal`;
+  return `${sanitizedFirst}.${sanitizedLast}@routetire.pl`;
 }
 
 export async function GET() {

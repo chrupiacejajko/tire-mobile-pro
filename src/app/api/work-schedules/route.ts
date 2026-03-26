@@ -300,7 +300,7 @@ export async function POST(request: NextRequest) {
       .neq('employee_id', '__skip__'); // always true, just to chain
 
     // If there's already a schedule for this employee+date, upsert will replace it
-    // But we need to check vehicle overlap with OTHER employees
+    // But we need to check vehicle overlap with OTHER employees (time-aware)
     if (vehicle_id) {
       const { data: vehicleConflicts } = await supabase
         .from('work_schedules')
@@ -309,9 +309,18 @@ export async function POST(request: NextRequest) {
         .eq('date', date)
         .neq('employee_id', employee_id);
 
-      if (vehicleConflicts && vehicleConflicts.length > 0) {
-        // Fetch employee name for the conflict
-        const conflictEmpId = vehicleConflicts[0].employee_id;
+      // Check actual time overlap (not just same date)
+      const newStart = start_time || '08:00';
+      const newEnd = end_time || '16:00';
+      const overlapping = (vehicleConflicts || []).filter(c => {
+        const cStart = c.start_time || '00:00';
+        const cEnd = c.end_time || '23:59';
+        // Overlap: NOT (newEnd <= cStart OR newStart >= cEnd)
+        return !(newEnd <= cStart || newStart >= cEnd);
+      });
+
+      if (overlapping.length > 0) {
+        const conflictEmpId = overlapping[0].employee_id;
         const { data: conflictEmp } = await supabase
           .from('employees')
           .select('id, profiles:user_id(full_name)')
@@ -321,7 +330,6 @@ export async function POST(request: NextRequest) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const empName = (conflictEmp as any)?.profiles?.full_name || 'inny pracownik';
 
-        // Fetch vehicle plate
         const { data: veh } = await supabase
           .from('vehicles')
           .select('plate_number')
@@ -329,7 +337,7 @@ export async function POST(request: NextRequest) {
           .single();
 
         return NextResponse.json({
-          error: `Pojazd ${veh?.plate_number || vehicle_id} jest przypisany do ${empName} w terminie ${vehicleConflicts[0].date}`,
+          error: `Pojazd ${veh?.plate_number || vehicle_id} jest przypisany do ${empName} (${overlapping[0].start_time}–${overlapping[0].end_time})`,
           conflict: 'vehicle',
         }, { status: 409 });
       }

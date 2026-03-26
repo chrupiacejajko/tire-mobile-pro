@@ -151,7 +151,11 @@ export function buildSchedule(
 
   const stops: ScheduledStop[] = orders.map((order, i) => {
     const duration = order.service_duration_minutes || DEFAULT_SERVICE_DURATION_MIN;
-    const arrivalMinutes = currentMinutes + order.travel_from_prev_minutes;
+    // Use scheduled_time_start as anchor if set (e.g. from Gantt drag)
+    const hasUserTime = order.scheduled_time_start && /^\d{2}:\d{2}/.test(order.scheduled_time_start);
+    const arrivalMinutes = hasUserTime
+      ? parseTime(order.scheduled_time_start!)
+      : currentMinutes + order.travel_from_prev_minutes;
 
     // Resolve time window — explicit start/end takes priority over preset name
     let windowStart: number | null = null;

@@ -56,7 +56,7 @@ function sanitizeForEmail(name: string): string {
 function generateWorkerEmail(firstName: string, lastName: string): string {
   const f = sanitizeForEmail(firstName || 'pracownik');
   const l = sanitizeForEmail(lastName || 'nowy');
-  return `${f}.${l}@roottire.internal`;
+  return `${f}.${l}@routetire.pl`;
 }
 
 interface UnavailabilityRow {
@@ -575,22 +575,26 @@ export default function EmployeesPage() {
         <div className="space-y-2">
           <Label className="flex items-center gap-1.5">
             <Mail className="h-3.5 w-3.5 text-orange-500" />
-            {formData.role === 'worker' ? 'Login do aplikacji' : 'Email *'}
+            {formData.role === 'worker' ? 'Login' : 'Email *'}
           </Label>
           {formData.role === 'worker' ? (
             <>
-              <Input
-                type="email"
-                readOnly
-                value={
-                  formData.first_name || formData.last_name
-                    ? generateWorkerEmail(formData.first_name, formData.last_name)
-                    : ''
-                }
-                className="bg-gray-50 text-gray-600 cursor-default"
-              />
+              <div className="flex items-center gap-0">
+                <Input
+                  readOnly
+                  value={
+                    formData.first_name || formData.last_name
+                      ? sanitizeForEmail(formData.first_name) + (formData.first_name && formData.last_name ? '.' : '') + sanitizeForEmail(formData.last_name)
+                      : ''
+                  }
+                  className="bg-gray-50 text-gray-600 cursor-default rounded-r-none border-r-0"
+                />
+                <span className="inline-flex h-9 items-center px-2 border border-l-0 border-gray-200 rounded-r-md bg-gray-100 text-xs text-gray-400 whitespace-nowrap">
+                  @routetire.pl
+                </span>
+              </div>
               <p className="text-xs text-gray-400">
-                Pracownik loguje się tym adresem do aplikacji mobilnej
+                Pracownik loguje się tym loginem i hasłem do aplikacji
               </p>
             </>
           ) : (
@@ -752,7 +756,7 @@ export default function EmployeesPage() {
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">{getDisplayName(emp)}</p>
                         <p className="text-xs text-gray-400 truncate">
-                          {emp.user?.email?.replace('@roottire.internal', '') || '—'}
+                          {emp.user?.email?.replace('@routetire.pl', '') || '—'}
                         </p>
                       </div>
                     </div>

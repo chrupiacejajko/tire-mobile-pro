@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
 /**
@@ -6,14 +6,16 @@ import { createClient } from '@/lib/supabase/client';
  * Calls `onChange` whenever any INSERT / UPDATE / DELETE happens on the table.
  *
  * Usage:
- *   const refresh = useCallback(() => fetchData(), [fetchData]);
- *   useTableRealtime('work_schedules', refresh);
+ *   useTableRealtime('work_schedules', fetchData);
  */
 export function useTableRealtime(
   table: string,
   onChange: () => void,
   enabled = true,
 ) {
+  const callbackRef = useRef(onChange);
+  callbackRef.current = onChange;
+
   useEffect(() => {
     if (!enabled) return;
 
@@ -25,7 +27,7 @@ export function useTableRealtime(
         'postgres_changes',
         { event: '*', schema: 'public', table },
         () => {
-          onChange();
+          callbackRef.current();
         },
       )
       .subscribe();
@@ -33,5 +35,6 @@ export function useTableRealtime(
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [table, onChange, enabled]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table, enabled]);
 }

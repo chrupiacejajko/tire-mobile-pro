@@ -325,7 +325,7 @@ export function useScheduleData() {
       from_date: todayStr,
       to_date: '',
       start_time: '07:00',
-      end_time: '07:00',
+      end_time: '23:00',
       duration_hours: '48',
       shift_count: '4',
     });
@@ -338,18 +338,26 @@ export function useScheduleData() {
 
     const durationH = Number(dutyForm.duration_hours) || 48;
     const shiftCount = Number(dutyForm.shift_count) || 1;
-    const durationDays = Math.ceil(durationH / 24);
-    // Total days: (on + off) * count for each rotation
-    const totalCycleDays = durationDays * 2 * shiftCount;
+    const onDays = Math.ceil(durationH / 24); // e.g. 48h = 2 days ON
+    // Total cycle: ON + OFF (off = same as on), repeated shiftCount times
+    const totalCycleDays = onDays * 2 * shiftCount;
     const toDate = toDateStr(addDaysTo(new Date(dutyForm.from_date + 'T00:00:00'), totalCycleDays));
 
-    // Group B starts after 1 full duty cycle (duration_hours offset)
-    const groupBStart = toDateStr(addDaysTo(new Date(dutyForm.from_date + 'T00:00:00'), durationDays));
+    // Group B starts after 1 full ON period
+    const groupBStart = toDateStr(addDaysTo(new Date(dutyForm.from_date + 'T00:00:00'), onDays));
 
-    // Calculate end_time from start_time + duration
-    const startMin = (() => { const [h, m] = dutyForm.start_time.split(':').map(Number); return h * 60 + (m || 0); })();
-    const endMin = (startMin + (durationH % 24) * 60) % 1440;
-    const endTimeStr = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+    // end_time = start_time for next-day wrap (e.g. 07:00→07:00 = 24h per day)
+    // Or if duration < 24h, calculate actual end time per day
+    let endTimeStr = dutyForm.end_time || dutyForm.start_time;
+    if (durationH >= 24) {
+      // Full-day shifts: each day runs start→end (same time = 24h wrap)
+      endTimeStr = dutyForm.end_time || '23:00';
+    } else {
+      // Partial day: calculate end from duration
+      const [sh, sm] = dutyForm.start_time.split(':').map(Number);
+      const endMin = (sh * 60 + (sm || 0) + durationH * 60) % 1440;
+      endTimeStr = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+    }
 
     await fetch('/api/work-schedules', {
       method: 'POST',

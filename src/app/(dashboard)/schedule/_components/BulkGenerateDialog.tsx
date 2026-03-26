@@ -139,35 +139,39 @@ export function BulkGenerateDialog({
                 onChange={e => setDutyForm(f => ({ ...f, from_date: e.target.value }))} />
             </div>
             <div className="space-y-2">
-              <Label>Godzina rozpoczęcia</Label>
-              <Input type="time" value={dutyForm.start_time}
-                onChange={e => setDutyForm(f => ({ ...f, start_time: e.target.value }))} />
+              <Label>Czas trwania dyżuru (godz.)</Label>
+              <Input type="number" min="1" max="96" value={dutyForm.duration_hours}
+                onChange={e => setDutyForm(f => ({ ...f, duration_hours: e.target.value }))}
+                placeholder="48" />
+              <p className="text-[10px] text-gray-400">48 = 2 dni ON, 24 = 1 dzień ON</p>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label>Czas trwania dyżuru (godz.)</Label>
-              <Input type="number" min="1" max="96" value={dutyForm.duration_hours}
-                onChange={e => setDutyForm(f => ({ ...f, duration_hours: e.target.value }))}
-                placeholder="48" />
-              <p className="text-[10px] text-gray-400">np. 48 = dwa dni po 24h</p>
+              <Label>Godzina startu</Label>
+              <Input type="time" value={dutyForm.start_time}
+                onChange={e => setDutyForm(f => ({ ...f, start_time: e.target.value }))} />
             </div>
             <div className="space-y-2">
-              <Label>Ilość dyżurów</Label>
-              <Input type="number" min="1" max="30" value={dutyForm.shift_count}
-                onChange={e => setDutyForm(f => ({ ...f, shift_count: e.target.value }))}
-                placeholder="1" />
-              <p className="text-[10px] text-gray-400">Ile rotacji wygenerować</p>
+              <Label>Godzina końca</Label>
+              <Input type="time" value={dutyForm.end_time}
+                onChange={e => setDutyForm(f => ({ ...f, end_time: e.target.value }))} />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Ilość rotacji do wygenerowania</Label>
+            <Input type="number" min="1" max="30" value={dutyForm.shift_count}
+              onChange={e => setDutyForm(f => ({ ...f, shift_count: e.target.value }))}
+              placeholder="4" className="max-w-[120px]" />
           </div>
 
           {/* Summary */}
           {dutyForm.from_date && (
             <div className="p-3 bg-emerald-50 rounded-xl text-xs text-emerald-700">
-              <strong>Podsumowanie:</strong> {durationH}h dyżur × {shiftCount} rotacji,
-              start {dutyForm.from_date} o {dutyForm.start_time || '07:00'},
-              przerwa = {durationH}h między dyżurami
+              <strong>Podsumowanie:</strong> {Math.ceil(durationH / 24)} dni ON / {Math.ceil(durationH / 24)} dni OFF × {shiftCount} rotacji,
+              start {dutyForm.from_date}, godziny {dutyForm.start_time || '07:00'}–{dutyForm.end_time || '23:00'}
             </div>
           )}
 
