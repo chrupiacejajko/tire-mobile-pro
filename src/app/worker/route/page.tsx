@@ -86,7 +86,7 @@ export default function RoutePage() {
     init();
   }, [fetchData]);
 
-  useOrdersRealtime(employeeId, () => fetchData());
+  useOrdersRealtime(() => fetchData(), !!employeeId);
 
   if (loading) {
     return (

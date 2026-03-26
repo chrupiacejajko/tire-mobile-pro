@@ -19,6 +19,9 @@ export interface DutyForm {
   to_date: string;
   start_time: string;
   end_time: string;
+  // New fields for flexible generation
+  duration_hours: string;
+  shift_count: string;
 }
 
 // ─── BulkGenerateDialog Component ───────────────────────────────────────────
@@ -38,10 +41,19 @@ export function BulkGenerateDialog({
   employees: EmployeeInfo[];
   onGenerate: () => void;
 }) {
+  const selectedCount = Object.keys(dutyForm.employee_groups).length;
+  const MAX_EMPLOYEES = 2;
+
   function toggleDutyEmployee(empId: string) {
     setDutyForm(prev => {
       const groups = { ...prev.employee_groups };
-      if (groups[empId]) { delete groups[empId]; } else { groups[empId] = 'A'; }
+      if (groups[empId]) {
+        delete groups[empId];
+      } else {
+        // Max 2 employees
+        if (Object.keys(groups).length >= MAX_EMPLOYEES) return prev;
+        groups[empId] = 'A';
+      }
       return { ...prev, employee_groups: groups };
     });
   }
@@ -50,27 +62,44 @@ export function BulkGenerateDialog({
     setDutyForm(prev => ({ ...prev, employee_groups: { ...prev.employee_groups, [empId]: group } }));
   }
 
+  // Compute end_date and end_time from start + duration + count
+  const durationH = Number(dutyForm.duration_hours) || 48;
+  const shiftCount = Number(dutyForm.shift_count) || 1;
+  const totalDays = Math.ceil((durationH * shiftCount * 2) / 24) + 4; // rough estimate for 48/48
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Shield className="h-5 w-5 text-emerald-600" /> Generuj dyżury 48/48
+            <Shield className="h-5 w-5 text-emerald-600" /> Generuj dyżury
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          {/* Employee selection (max 2) */}
           <div className="space-y-2">
-            <Label>Pracownicy i grupy</Label>
+            <Label>Pracownicy (maks. {MAX_EMPLOYEES})</Label>
             <p className="text-[11px] text-gray-400">
-              Grupa A — dyżur zaczyna od daty startowej. Grupa B — startuje 2 dni później.
+              Grupa A — dyżur zaczyna od daty startowej. Grupa B — startuje po przerwie.
             </p>
-            <div className="max-h-52 overflow-y-auto border border-gray-100 rounded-xl p-2 space-y-1">
+            <div className="max-h-48 overflow-y-auto border border-gray-100 rounded-xl p-2 space-y-1">
               {employees.map(e => {
                 const selected = !!dutyForm.employee_groups[e.id];
+                const disabled = !selected && selectedCount >= MAX_EMPLOYEES;
                 return (
-                  <div key={e.id} className={cn('flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors', selected ? 'bg-emerald-50' : 'hover:bg-gray-50')}>
-                    <Checkbox checked={selected} onCheckedChange={() => toggleDutyEmployee(e.id)} />
+                  <div key={e.id} className={cn(
+                    'flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors',
+                    selected ? 'bg-emerald-50' : disabled ? 'opacity-40' : 'hover:bg-gray-50',
+                  )}>
+                    <Checkbox
+                      checked={selected}
+                      disabled={disabled}
+                      onCheckedChange={() => toggleDutyEmployee(e.id)}
+                    />
                     <span className="text-sm flex-1 font-medium">{e.name}</span>
+                    {e.region_name && (
+                      <span className="text-[10px] text-gray-400 mr-2">{e.region_name}</span>
+                    )}
                     {selected && (
                       <div className="flex items-center gap-1">
                         {(['A', 'B'] as const).map(g => (
@@ -93,41 +122,60 @@ export function BulkGenerateDialog({
                 );
               })}
             </div>
-            {Object.keys(dutyForm.employee_groups).length > 0 && (
+            {selectedCount > 0 && (
               <p className="text-[11px] text-gray-400">
-                Wybrano {Object.keys(dutyForm.employee_groups).length} pracowników
+                Wybrano {selectedCount}/{MAX_EMPLOYEES} pracowników
                 — A: {Object.values(dutyForm.employee_groups).filter(g => g === 'A').length},
                 B: {Object.values(dutyForm.employee_groups).filter(g => g === 'B').length}
               </p>
             )}
           </div>
 
+          {/* Schedule params */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label>Od</Label>
-              <Input type="date" value={dutyForm.from_date} onChange={e => setDutyForm(f => ({ ...f, from_date: e.target.value }))} />
+              <Label>Data rozpoczęcia</Label>
+              <Input type="date" value={dutyForm.from_date}
+                onChange={e => setDutyForm(f => ({ ...f, from_date: e.target.value }))} />
             </div>
             <div className="space-y-2">
-              <Label>Do</Label>
-              <Input type="date" value={dutyForm.to_date} onChange={e => setDutyForm(f => ({ ...f, to_date: e.target.value }))} />
+              <Label>Godzina rozpoczęcia</Label>
+              <Input type="time" value={dutyForm.start_time}
+                onChange={e => setDutyForm(f => ({ ...f, start_time: e.target.value }))} />
             </div>
           </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label>Godzina startu</Label>
-              <Input type="time" value={dutyForm.start_time} onChange={e => setDutyForm(f => ({ ...f, start_time: e.target.value }))} />
+              <Label>Czas trwania dyżuru (godz.)</Label>
+              <Input type="number" min="1" max="96" value={dutyForm.duration_hours}
+                onChange={e => setDutyForm(f => ({ ...f, duration_hours: e.target.value }))}
+                placeholder="48" />
+              <p className="text-[10px] text-gray-400">np. 48 = dwa dni po 24h</p>
             </div>
             <div className="space-y-2">
-              <Label>Godzina końca</Label>
-              <Input type="time" value={dutyForm.end_time} onChange={e => setDutyForm(f => ({ ...f, end_time: e.target.value }))} />
+              <Label>Ilość dyżurów</Label>
+              <Input type="number" min="1" max="30" value={dutyForm.shift_count}
+                onChange={e => setDutyForm(f => ({ ...f, shift_count: e.target.value }))}
+                placeholder="1" />
+              <p className="text-[10px] text-gray-400">Ile rotacji wygenerować</p>
             </div>
           </div>
+
+          {/* Summary */}
+          {dutyForm.from_date && (
+            <div className="p-3 bg-emerald-50 rounded-xl text-xs text-emerald-700">
+              <strong>Podsumowanie:</strong> {durationH}h dyżur × {shiftCount} rotacji,
+              start {dutyForm.from_date} o {dutyForm.start_time || '07:00'},
+              przerwa = {durationH}h między dyżurami
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Anuluj</Button>
             <Button
               className="bg-emerald-600 hover:bg-emerald-700 gap-1.5"
-              disabled={Object.keys(dutyForm.employee_groups).length === 0 || !dutyForm.from_date || !dutyForm.to_date}
+              disabled={selectedCount === 0 || !dutyForm.from_date}
               onClick={onGenerate}
             >
               <Shield className="h-4 w-4" /> Generuj

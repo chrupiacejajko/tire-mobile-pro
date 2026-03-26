@@ -70,13 +70,15 @@ export function useScheduleData() {
     originalDate: '',
   });
 
-  // 48/48 form
+  // Duty form
   const [dutyForm, setDutyForm] = useState<DutyForm>({
     employee_groups: {},
     from_date: '',
     to_date: '',
     start_time: '07:00',
-    end_time: '23:00',
+    end_time: '07:00',
+    duration_hours: '48',
+    shift_count: '4',
   });
 
   // ── Days in view ──
@@ -130,7 +132,8 @@ export function useScheduleData() {
       console.error('[schedule] fetch error', err);
     }
     setLoading(false);
-  }, [dateRange, supabase]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange.from, dateRange.to]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -320,9 +323,11 @@ export function useScheduleData() {
     setDutyForm({
       employee_groups: {},
       from_date: todayStr,
-      to_date: toDateStr(addDaysTo(new Date(), 30)),
+      to_date: '',
       start_time: '07:00',
-      end_time: '23:00',
+      end_time: '07:00',
+      duration_hours: '48',
+      shift_count: '4',
     });
     setDutyDialogOpen(true);
   }
@@ -330,7 +335,22 @@ export function useScheduleData() {
   async function handleDutyGenerate() {
     const selected = Object.entries(dutyForm.employee_groups);
     if (selected.length === 0) return;
-    const groupBStart = toDateStr(addDaysTo(new Date(dutyForm.from_date + 'T00:00:00'), 2));
+
+    const durationH = Number(dutyForm.duration_hours) || 48;
+    const shiftCount = Number(dutyForm.shift_count) || 1;
+    const durationDays = Math.ceil(durationH / 24);
+    // Total days: (on + off) * count for each rotation
+    const totalCycleDays = durationDays * 2 * shiftCount;
+    const toDate = toDateStr(addDaysTo(new Date(dutyForm.from_date + 'T00:00:00'), totalCycleDays));
+
+    // Group B starts after 1 full duty cycle (duration_hours offset)
+    const groupBStart = toDateStr(addDaysTo(new Date(dutyForm.from_date + 'T00:00:00'), durationDays));
+
+    // Calculate end_time from start_time + duration
+    const startMin = (() => { const [h, m] = dutyForm.start_time.split(':').map(Number); return h * 60 + (m || 0); })();
+    const endMin = (startMin + (durationH % 24) * 60) % 1440;
+    const endTimeStr = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+
     await fetch('/api/work-schedules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -342,9 +362,9 @@ export function useScheduleData() {
           first_on_date: group === 'A' ? dutyForm.from_date : groupBStart,
         })),
         from_date: dutyForm.from_date,
-        to_date: dutyForm.to_date,
+        to_date: toDate,
         start_time: dutyForm.start_time,
-        end_time: dutyForm.end_time,
+        end_time: endTimeStr,
       }),
     });
     setDutyDialogOpen(false);

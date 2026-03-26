@@ -11,26 +11,10 @@ import { Button } from '@/components/ui/button';
 import { Topbar } from '@/components/layout/topbar';
 import { cn } from '@/lib/utils';
 
-import { ShiftBlock, type WorkSchedule } from './_components/ShiftBlock';
+import type { WorkSchedule } from './_components/ShiftBlock';
 import { ShiftDialog } from './_components/ShiftDialog';
 import { BulkGenerateDialog } from './_components/BulkGenerateDialog';
 import { useScheduleData, toDateStr, type ViewMode } from './_components/useScheduleData';
-
-// ─── Empty Cell Ghost ─────────────────────────────────────────────────────────
-
-function EmptyCell({ compact, onClick }: { compact: boolean; onClick: () => void }) {
-  return (
-    <div
-      className={cn(
-        'w-full cursor-pointer rounded-md group/empty flex items-center justify-center transition-colors hover:bg-gray-100/70',
-        compact ? 'h-[22px]' : 'h-[56px]',
-      )}
-      onClick={onClick}
-    >
-      <Plus className="h-3 w-3 text-gray-300 opacity-0 group-hover/empty:opacity-100 transition-opacity" />
-    </div>
-  );
-}
 
 // ─── Day Column Header ────────────────────────────────────────────────────────
 
@@ -73,7 +57,24 @@ function DayHeader({ date, compact }: { date: Date; compact: boolean }) {
   );
 }
 
-// ─── Gantt Grid ───────────────────────────────────────────────────────────────
+// ─── Time helpers ────────────────────────────────────────────────────────────
+
+function timeToMinutes(t: string): number {
+  const [h, m] = (t || '00:00').split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+function hexAlpha(hex: string, alpha: number): string {
+  const c = hex.replace('#', '');
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// ─── Gantt Grid (time-based bars) ────────────────────────────────────────────
+
+const HOUR_TICKS = [0, 6, 12, 18]; // Hour markers shown
 
 function GanttGrid({
   rows,
@@ -83,8 +84,6 @@ function GanttGrid({
   resourceLabel,
   renderResourceCell,
   onCellClick,
-  onShiftDragStart,
-  shiftDragPreview,
 }: {
   rows: { id: string }[];
   days: Date[];
@@ -93,8 +92,6 @@ function GanttGrid({
   resourceLabel: string;
   renderResourceCell: (id: string) => React.ReactNode;
   onCellClick: (id: string, dateStr: string) => void;
-  onShiftDragStart?: (schedule: WorkSchedule, mode: import('./_components/ShiftBlock').ShiftDragMode, startX: number, cellWidth: number) => void;
-  shiftDragPreview?: { scheduleId: string; start_time: string; end_time: string } | null;
 }) {
   if (rows.length === 0) {
     return (
@@ -105,13 +102,16 @@ function GanttGrid({
     );
   }
 
+  const ROW_H = compact ? 28 : 48;
+  const CELL_W = compact ? 36 : 120;
+
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-xs">
+      <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
         <thead>
           <tr className="border-b border-gray-100">
-            {/* Sticky resource column */}
-            <th className="sticky left-0 z-20 bg-white w-[160px] min-w-[160px] px-3 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider border-r border-gray-100">
+            <th className="sticky left-0 z-20 bg-white px-3 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider border-r border-gray-100"
+                style={{ width: 160, minWidth: 160 }}>
               {resourceLabel}
             </th>
             {days.map(d => (
@@ -121,17 +121,12 @@ function GanttGrid({
         </thead>
         <tbody>
           {rows.map((row, rowIdx) => (
-            <tr
-              key={row.id}
-              className={cn('border-b border-gray-50 last:border-0', rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/20')}
-            >
-              {/* Resource name cell */}
-              <td className="sticky left-0 z-10 w-[160px] min-w-[160px] px-3 py-1.5 border-r border-gray-100"
-                  style={{ backgroundColor: rowIdx % 2 === 0 ? 'white' : 'rgb(249 250 251 / 0.2)' }}>
+            <tr key={row.id} className={cn('border-b border-gray-50 last:border-0', rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/20')}>
+              <td className="sticky left-0 z-10 px-3 py-1 border-r border-gray-100"
+                  style={{ width: 160, minWidth: 160, backgroundColor: rowIdx % 2 === 0 ? 'white' : 'rgb(249 250 251 / 0.2)' }}>
                 {renderResourceCell(row.id)}
               </td>
 
-              {/* Day cells */}
               {days.map(d => {
                 const dateStr = toDateStr(d);
                 const isNow = dateFnsIsToday(d);
@@ -139,37 +134,29 @@ function GanttGrid({
                 const schedule = scheduleMap.get(`${row.id}:${dateStr}`);
 
                 return (
-                  <td
-                    key={dateStr}
+                  <td key={dateStr}
                     className={cn(
-                      'px-0.5 py-1 border-r border-gray-50',
-                      compact ? 'min-w-[30px]' : 'min-w-[100px]',
+                      'p-0 border-r border-gray-50 relative',
                       isWeekend && 'bg-gray-50/40',
                       isNow && 'bg-blue-50/20',
                     )}
+                    style={{ minWidth: CELL_W, height: ROW_H }}
                   >
-                    <AnimatePresence mode="wait">
-                      {schedule ? (
-                        <ShiftBlock
-                          key={schedule.id}
-                          schedule={schedule}
-                          compact={compact}
-                          onClick={() => onCellClick(row.id, dateStr)}
-                          onDragStart={onShiftDragStart}
-                          previewTime={
-                            shiftDragPreview?.scheduleId === schedule.id
-                              ? { start_time: shiftDragPreview.start_time, end_time: shiftDragPreview.end_time }
-                              : null
-                          }
-                        />
-                      ) : (
-                        <EmptyCell
-                          key={`empty-${row.id}-${dateStr}`}
-                          compact={compact}
-                          onClick={() => onCellClick(row.id, dateStr)}
-                        />
-                      )}
-                    </AnimatePresence>
+                    {/* Timeline grid marks */}
+                    {!compact && HOUR_TICKS.map(h => (
+                      <div key={h} className="absolute top-0 bottom-0 border-l border-gray-100/50"
+                        style={{ left: `${(h / 24) * 100}%` }} />
+                    ))}
+
+                    {schedule ? (
+                      <TimeBar schedule={schedule} compact={compact} rowH={ROW_H}
+                        onClick={() => onCellClick(row.id, dateStr)} />
+                    ) : (
+                      <div className="absolute inset-0 cursor-pointer group/empty flex items-center justify-center hover:bg-gray-100/40 transition-colors"
+                        onClick={() => onCellClick(row.id, dateStr)}>
+                        <Plus className="h-3 w-3 text-gray-300 opacity-0 group-hover/empty:opacity-100 transition-opacity" />
+                      </div>
+                    )}
                   </td>
                 );
               })}
@@ -178,6 +165,68 @@ function GanttGrid({
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ─── TimeBar (positioned bar within 24h cell) ────────────────────────────────
+
+function TimeBar({ schedule, compact, rowH, onClick }: {
+  schedule: WorkSchedule;
+  compact: boolean;
+  rowH: number;
+  onClick: () => void;
+}) {
+  const color = schedule.region_color || '#3b82f6';
+  const startMin = timeToMinutes(schedule.start_time);
+  const endMin = timeToMinutes(schedule.end_time);
+  const duration = endMin > startMin ? endMin - startMin : (1440 - startMin + endMin);
+  const leftPct = (startMin / 1440) * 100;
+  const widthPct = Math.max((duration / 1440) * 100, 3); // min 3% width for visibility
+  const st = schedule.start_time?.slice(0, 5) || '';
+  const et = schedule.end_time?.slice(0, 5) || '';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scaleX: 0.3 }}
+      animate={{ opacity: 1, scaleX: 1 }}
+      exit={{ opacity: 0, scaleX: 0.3 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      className="absolute cursor-pointer group/bar"
+      style={{
+        left: `${leftPct}%`,
+        width: `${widthPct}%`,
+        top: compact ? 3 : 6,
+        bottom: compact ? 3 : 6,
+        transformOrigin: 'left center',
+      }}
+      onClick={onClick}
+      title={`${st}–${et}${schedule.vehicle_plate ? ' · ' + schedule.vehicle_plate : ''}${schedule.region_name ? ' · ' + schedule.region_name : ''}`}
+    >
+      {/* Bar background */}
+      <div className="absolute inset-0 rounded-md overflow-hidden">
+        <div className="absolute inset-0" style={{ backgroundColor: hexAlpha(color, 0.18) }} />
+        <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ backgroundColor: color }} />
+        <div className="absolute inset-0 opacity-0 group-hover/bar:opacity-100 transition-opacity" style={{ backgroundColor: hexAlpha(color, 0.10) }} />
+      </div>
+
+      {/* Label */}
+      {!compact ? (
+        <div className="relative h-full flex items-center pl-2 pr-1 min-w-0">
+          <span className="text-[10px] font-bold truncate whitespace-nowrap" style={{ color }}>
+            {st}–{et}
+          </span>
+          {schedule.vehicle_plate && (
+            <span className="text-[9px] text-gray-400 ml-1 truncate hidden xl:inline">
+              {schedule.vehicle_plate}
+            </span>
+          )}
+        </div>
+      ) : (
+        <div className="relative h-full flex items-center justify-center">
+          <div className="w-full h-full rounded-sm" style={{ backgroundColor: hexAlpha(color, 0.25) }} />
+        </div>
+      )}
+    </motion.div>
   );
 }
 
@@ -333,8 +382,6 @@ export default function SchedulePage() {
                       );
                     }}
                     onCellClick={(id, dateStr) => data.handleCellClick(id, dateStr, true)}
-                    onShiftDragStart={data.handleShiftDragStart}
-                    shiftDragPreview={data.shiftDragPreview}
                   />
                 ) : (
                   <>
