@@ -61,15 +61,17 @@ export async function POST(request: NextRequest) {
     const {
       first_name, last_name, email, phone, phone_secondary,
       region_id, default_vehicle_id, shift_rate,
-      role, skill_ids,
+      role, skill_ids, login_username,
     } = body;
 
     const full_name = `${first_name || ''} ${last_name || ''}`.trim();
 
-    // If no email provided or role is worker, auto-generate a fake internal email
+    // Use login_username@routetire.pl if provided, else auto-generate
     const effectiveEmail = (email && email.trim())
       ? email.trim()
-      : generateWorkerEmail(first_name || '', last_name || '');
+      : login_username
+        ? `${login_username}@routetire.pl`
+        : generateWorkerEmail(first_name || '', last_name || '');
 
     // Create auth user
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
@@ -94,6 +96,7 @@ export async function POST(request: NextRequest) {
       user_id: authData.user.id,
       first_name: first_name || null,
       last_name: last_name || null,
+      login_username: login_username || null,
       region_id: region_id || null,
       default_vehicle_id: default_vehicle_id || null,
       shift_rate: shift_rate ? Number(shift_rate) : null,
@@ -130,7 +133,7 @@ export async function PUT(request: NextRequest) {
     const {
       id, first_name, last_name, phone, phone_secondary, role,
       region_id, default_vehicle_id, shift_rate,
-      is_active, skill_ids,
+      is_active, skill_ids, login_username,
       start_time, end_time, skills, hourly_rate,
       default_location, default_lat, default_lng,
     } = body;
@@ -184,6 +187,7 @@ export async function PUT(request: NextRequest) {
     if (default_lat !== undefined) employeeUpdate.default_lat = default_lat ?? null;
     if (default_lng !== undefined) employeeUpdate.default_lng = default_lng ?? null;
     if (hourly_rate !== undefined) employeeUpdate.hourly_rate = Number(hourly_rate);
+    if (login_username !== undefined) employeeUpdate.login_username = login_username || null;
 
     // Legacy: support old skills field
     if (skills !== undefined) {
@@ -241,14 +245,14 @@ export async function DELETE(request: NextRequest) {
   const id = searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const today = new Date().toISOString().split('T')[0];
+  const nowISO = new Date().toISOString();
 
   // Check for future work schedules assigned to this employee
   const { count: scheduleCount } = await supabase
     .from('work_schedules')
     .select('id', { count: 'exact', head: true })
     .eq('employee_id', id)
-    .gte('date', today);
+    .gte('start_at', nowISO);
 
   // Check for active (non-completed/cancelled) orders assigned to this employee
   const { count: orderCount } = await supabase

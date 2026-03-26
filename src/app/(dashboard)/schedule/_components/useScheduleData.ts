@@ -1,13 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { isToday as dateFnsIsToday } from 'date-fns';
 import { createClient } from '@/lib/supabase/client';
 import { useTableRealtime } from '@/hooks/use-table-realtime';
-import type { WorkSchedule, ShiftDragState, ShiftDragMode } from './ShiftBlock';
-import { timeStr, timeToMinutes, minutesToTime, snap15 } from './ShiftBlock';
+import type { WorkSchedule, DayShiftSlice } from './ShiftBlock';
 import type { EmployeeInfo, VehicleInfo, RegionInfo, EditForm } from './ShiftDialog';
 import type { DutyForm } from './BulkGenerateDialog';
+import { getShiftTimesForDate } from '@/lib/schedule-utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -58,25 +57,22 @@ export function useScheduleData() {
 
   // Edit form
   const [editForm, setEditForm] = useState<EditForm>({
+    id: '',
     employee_id: '',
-    start_date: '',
-    start_time: '07:00',
-    end_date: '',
-    end_time: '07:00',
+    start_at: '',
+    duration_hours: 24,
     vehicle_id: '',
     region_id: '',
     notes: '',
     isNew: true,
-    originalDate: '',
   });
 
   // Duty form
   const [dutyForm, setDutyForm] = useState<DutyForm>({
     employee_groups: {},
     from_date: '',
-    to_date: '',
     start_time: '07:00',
-    end_time: '07:00',
+    end_time: '23:00',
     duration_hours: '48',
     shift_count: '4',
   });
@@ -132,35 +128,67 @@ export function useScheduleData() {
       console.error('[schedule] fetch error', err);
     }
     setLoading(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateRange.from, dateRange.to]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Auto-refresh when work_schedules change via Supabase Realtime
+  // Auto-refresh when work_schedules change
   useTableRealtime('work_schedules', fetchData);
 
-  // ── Maps ──
+  // ── Maps — DayShiftSlice approach ──
 
   const scheduleMap = useMemo(() => {
-    const m = new Map<string, WorkSchedule>();
-    for (const s of schedules) m.set(`${s.employee_id}:${s.date}`, s);
-    return m;
-  }, [schedules]);
+    const m = new Map<string, DayShiftSlice>();
+    for (const shift of schedules) {
+      // For each day in the view, check if this shift covers it
+      for (const day of days) {
+        const dateStr = toDateStr(day);
+        const times = getShiftTimesForDate(shift.start_at, shift.duration_minutes, dateStr);
+        if (!times) continue;
 
-  const vehicleScheduleMap = useMemo(() => {
-    const m = new Map<string, WorkSchedule>();
-    for (const s of schedules) {
-      if (s.vehicle_id) m.set(`${s.vehicle_id}:${s.date}`, s);
+        const shiftStart = new Date(shift.start_at);
+        const shiftStartDate = toDateStr(shiftStart);
+        const shiftEnd = new Date(new Date(shift.start_at).getTime() + shift.duration_minutes * 60_000);
+        const shiftEndDate = toDateStr(shiftEnd);
+
+        m.set(`${shift.employee_id}:${dateStr}`, {
+          shift,
+          dayStart: times.start,
+          dayEnd: times.end,
+          isFirstDay: dateStr === shiftStartDate,
+          isLastDay: dateStr === shiftEndDate || (dateStr === toDateStr(addDaysTo(shiftEnd, -1)) && shiftEnd.getHours() === 0 && shiftEnd.getMinutes() === 0),
+        });
+      }
     }
     return m;
-  }, [schedules]);
+  }, [schedules, days]);
 
-  const employeeNameMap = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const e of employees) m.set(e.id, e.name);
+  const vehicleScheduleMap = useMemo(() => {
+    const m = new Map<string, DayShiftSlice>();
+    for (const shift of schedules) {
+      if (!shift.vehicle_id) continue;
+      for (const day of days) {
+        const dateStr = toDateStr(day);
+        const times = getShiftTimesForDate(shift.start_at, shift.duration_minutes, dateStr);
+        if (!times) continue;
+
+        const shiftStart = new Date(shift.start_at);
+        const shiftStartDate = toDateStr(shiftStart);
+        const shiftEnd = new Date(new Date(shift.start_at).getTime() + shift.duration_minutes * 60_000);
+        const shiftEndDate = toDateStr(shiftEnd);
+
+        m.set(`${shift.vehicle_id}:${dateStr}`, {
+          shift,
+          dayStart: times.start,
+          dayEnd: times.end,
+          isFirstDay: dateStr === shiftStartDate,
+          isLastDay: dateStr === shiftEndDate,
+        });
+      }
+    }
     return m;
-  }, [employees]);
+  }, [schedules, days]);
 
   const vehiclePlateMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -219,35 +247,36 @@ export function useScheduleData() {
 
   function handleCellClick(resourceId: string, dateStr: string, forWorker = true) {
     if (!forWorker) return;
-    const existing = scheduleMap.get(`${resourceId}:${dateStr}`);
+    const slice = scheduleMap.get(`${resourceId}:${dateStr}`);
     const emp = employees.find(e => e.id === resourceId);
     setConflictError(null);
 
-    if (existing) {
+    if (slice) {
+      // Edit existing shift
+      const s = slice.shift;
+      const startAt = new Date(s.start_at);
       setEditForm({
-        employee_id: existing.employee_id,
-        start_date: existing.date,
-        start_time: timeStr(existing.start_time),
-        end_date: existing.date,
-        end_time: timeStr(existing.end_time),
-        vehicle_id: existing.vehicle_id || emp?.default_vehicle_id || '',
-        region_id: existing.region_id || emp?.region_id || '',
-        notes: existing.notes || '',
+        id: s.id,
+        employee_id: s.employee_id,
+        start_at: toLocalDateTimeStr(startAt),
+        duration_hours: Math.round(s.duration_minutes / 60 * 10) / 10,
+        vehicle_id: s.vehicle_id || emp?.default_vehicle_id || '',
+        region_id: s.region_id || emp?.region_id || '',
+        notes: s.notes || '',
         isNew: false,
-        originalDate: existing.date,
       });
     } else {
+      // New shift
+      const startAt = new Date(dateStr + 'T07:00:00');
       setEditForm({
+        id: '',
         employee_id: resourceId,
-        start_date: dateStr,
-        start_time: '07:00',
-        end_date: toDateStr(addDaysTo(new Date(dateStr + 'T00:00:00'), 1)),
-        end_time: '07:00',
+        start_at: toLocalDateTimeStr(startAt),
+        duration_hours: 24,
         vehicle_id: emp?.default_vehicle_id || '',
         region_id: emp?.region_id || '',
         notes: '',
         isNew: true,
-        originalDate: '',
       });
     }
     setEditDialogOpen(true);
@@ -259,36 +288,27 @@ export function useScheduleData() {
     setSavingSchedule(true);
     setConflictError(null);
 
-    const start = new Date(editForm.start_date + 'T00:00:00');
-    const end = new Date(editForm.end_date + 'T00:00:00');
-    const dayCount = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+    const startAtISO = new Date(editForm.start_at).toISOString();
+    const durationMinutes = Math.round(editForm.duration_hours * 60);
 
-    for (let i = 0; i < dayCount; i++) {
-      const d = addDaysTo(start, i);
-      const dateStr = toDateStr(d);
-      const dayStart = dayCount > 1 ? (i === 0 ? editForm.start_time : '00:00') : editForm.start_time;
-      const dayEnd = dayCount > 1 ? (i === dayCount - 1 ? editForm.end_time : '23:59') : editForm.end_time;
+    const res = await fetch('/api/work-schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employee_id: editForm.employee_id,
+        start_at: startAtISO,
+        duration_minutes: durationMinutes,
+        vehicle_id: editForm.vehicle_id || null,
+        region_id: editForm.region_id || null,
+        notes: editForm.notes || null,
+      }),
+    });
 
-      const res = await fetch('/api/work-schedules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employee_id: editForm.employee_id,
-          date: dateStr,
-          start_time: dayStart,
-          end_time: dayEnd,
-          vehicle_id: editForm.vehicle_id || null,
-          region_id: editForm.region_id || null,
-          notes: editForm.notes || null,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        setConflictError(err.error || 'Wystąpił błąd');
-        setSavingSchedule(false);
-        return;
-      }
+    if (!res.ok) {
+      const err = await res.json();
+      setConflictError(err.error || 'Wystąpił błąd');
+      setSavingSchedule(false);
+      return;
     }
 
     setSavingSchedule(false);
@@ -297,10 +317,11 @@ export function useScheduleData() {
   }
 
   async function handleDeleteSchedule() {
+    if (!editForm.id) return;
     await fetch('/api/work-schedules', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employee_id: editForm.employee_id, date: editForm.originalDate || editForm.start_date }),
+      body: JSON.stringify({ id: editForm.id }),
     });
     setEditDialogOpen(false);
     fetchData();
@@ -316,14 +337,13 @@ export function useScheduleData() {
     }));
   }
 
-  // ── 48/48 ──
+  // ── Duty generation ──
 
   function openDutyDialog() {
     const todayStr = toDateStr(new Date());
     setDutyForm({
       employee_groups: {},
       from_date: todayStr,
-      to_date: '',
       start_time: '07:00',
       end_time: '23:00',
       duration_hours: '48',
@@ -338,26 +358,8 @@ export function useScheduleData() {
 
     const durationH = Number(dutyForm.duration_hours) || 48;
     const shiftCount = Number(dutyForm.shift_count) || 1;
-    const onDays = Math.ceil(durationH / 24); // e.g. 48h = 2 days ON
-    // Total cycle: ON + OFF (off = same as on), repeated shiftCount times
-    const totalCycleDays = onDays * 2 * shiftCount;
-    const toDate = toDateStr(addDaysTo(new Date(dutyForm.from_date + 'T00:00:00'), totalCycleDays));
-
-    // Group B starts after 1 full ON period
+    const onDays = Math.ceil(durationH / 24);
     const groupBStart = toDateStr(addDaysTo(new Date(dutyForm.from_date + 'T00:00:00'), onDays));
-
-    // end_time = start_time for next-day wrap (e.g. 07:00→07:00 = 24h per day)
-    // Or if duration < 24h, calculate actual end time per day
-    let endTimeStr = dutyForm.end_time || dutyForm.start_time;
-    if (durationH >= 24) {
-      // Full-day shifts: each day runs start→end (same time = 24h wrap)
-      endTimeStr = dutyForm.end_time || '23:00';
-    } else {
-      // Partial day: calculate end from duration
-      const [sh, sm] = dutyForm.start_time.split(':').map(Number);
-      const endMin = (sh * 60 + (sm || 0) + durationH * 60) % 1440;
-      endTimeStr = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
-    }
 
     await fetch('/api/work-schedules', {
       method: 'POST',
@@ -370,9 +372,10 @@ export function useScheduleData() {
           first_on_date: group === 'A' ? dutyForm.from_date : groupBStart,
         })),
         from_date: dutyForm.from_date,
-        to_date: toDate,
         start_time: dutyForm.start_time,
-        end_time: endTimeStr,
+        end_time: dutyForm.end_time,
+        duration_hours: durationH,
+        shift_count: shiftCount,
       }),
     });
     setDutyDialogOpen(false);
@@ -381,188 +384,42 @@ export function useScheduleData() {
 
   function openNewShift() {
     setConflictError(null);
-    const todayStr = toDateStr(new Date());
+    const now = new Date();
+    now.setMinutes(0, 0, 0);
+    now.setHours(7);
     setEditForm({
+      id: '',
       employee_id: '',
-      start_date: todayStr,
-      start_time: '07:00',
-      end_date: toDateStr(addDaysTo(new Date(), 1)),
-      end_time: '07:00',
+      start_at: toLocalDateTimeStr(now),
+      duration_hours: 24,
       vehicle_id: '',
       region_id: '',
       notes: '',
       isNew: true,
-      originalDate: '',
     });
     setEditDialogOpen(true);
   }
 
   const compact = viewMode === 'month';
 
-  // ── Shift drag-to-resize / drag-to-move ──
-
-  const [shiftDrag, setShiftDrag] = useState<ShiftDragState | null>(null);
-  const [shiftDragPreview, setShiftDragPreview] = useState<{
-    scheduleId: string; start_time: string; end_time: string;
-  } | null>(null);
-
-  const handleShiftDragStart = useCallback((
-    schedule: WorkSchedule,
-    mode: ShiftDragMode,
-    startX: number,
-    cellWidth: number,
-  ) => {
-    setShiftDrag({
-      scheduleId: schedule.id,
-      mode,
-      startX,
-      origStartTime: timeStr(schedule.start_time),
-      origEndTime: timeStr(schedule.end_time),
-      cellWidth,
-    });
-    setShiftDragPreview(null);
-  }, []);
-
-  // Global mousemove / mouseup for shift dragging
-  useEffect(() => {
-    if (!shiftDrag) return;
-
-    const TOTAL_DAY_MINUTES = 24 * 60;
-    let latestPreview: { scheduleId: string; start_time: string; end_time: string } | null = null;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const dx = e.clientX - shiftDrag.startX;
-      const minutesDelta = snap15(Math.round((dx / shiftDrag.cellWidth) * TOTAL_DAY_MINUTES));
-
-      const origStart = timeToMinutes(shiftDrag.origStartTime);
-      const origEnd = timeToMinutes(shiftDrag.origEndTime);
-
-      let newStart: number;
-      let newEnd: number;
-
-      if (shiftDrag.mode === 'resize-end') {
-        newStart = origStart;
-        newEnd = Math.max(origStart + 15, origEnd + minutesDelta);
-      } else {
-        const duration = origEnd - origStart;
-        newStart = origStart + minutesDelta;
-        newEnd = newStart + duration;
-        if (newStart < 0) { newStart = 0; newEnd = duration; }
-        if (newEnd > 1439) { newEnd = 1439; newStart = newEnd - duration; }
-      }
-
-      newStart = Math.max(0, Math.min(1439, newStart));
-      newEnd = Math.max(0, Math.min(1439, newEnd));
-
-      const preview = {
-        scheduleId: shiftDrag.scheduleId,
-        start_time: minutesToTime(newStart),
-        end_time: minutesToTime(newEnd),
-      };
-      latestPreview = preview;
-      setShiftDragPreview(preview);
-    };
-
-    const handleMouseUp = async () => {
-      const preview = latestPreview;
-      setShiftDrag(null);
-
-      if (!preview) {
-        setShiftDragPreview(null);
-        return;
-      }
-
-      const origStart = shiftDrag.origStartTime;
-      const origEnd = shiftDrag.origEndTime;
-      if (preview.start_time === origStart && preview.end_time === origEnd) {
-        setShiftDragPreview(null);
-        return;
-      }
-
-      const sched = schedules.find(s => s.id === preview.scheduleId);
-      if (!sched) { setShiftDragPreview(null); return; }
-
-      try {
-        await fetch('/api/work-schedules', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            employee_id: sched.employee_id,
-            date: sched.date,
-            start_time: preview.start_time,
-            end_time: preview.end_time,
-            vehicle_id: sched.vehicle_id || null,
-            region_id: sched.region_id || null,
-            notes: sched.notes || null,
-          }),
-        });
-        fetchData();
-      } catch (err) {
-        console.error('[schedule] shift drag save error', err);
-      }
-      setShiftDragPreview(null);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [shiftDrag, schedules, fetchData]);
-
   return {
-    // Data
-    employees,
-    vehicles,
-    regions,
-    schedules,
-    loading,
-
-    // View state
-    viewMode,
-    activeTab,
-    setActiveTab,
-    days,
-    navDir,
-    compact,
-    periodLabel,
-
-    // Maps
-    scheduleMap,
-    vehicleScheduleMap,
-    vehiclePlateMap,
-    vehiclesForGantt,
-
-    // Navigation
-    navigate,
-    goToday,
-    switchView,
-
-    // Edit dialog
-    editDialogOpen,
-    setEditDialogOpen,
-    editForm,
-    setEditForm,
-    conflictError,
-    setConflictError,
-    savingSchedule,
-    handleCellClick,
-    handleSaveSchedule,
-    handleDeleteSchedule,
-    handleEmployeeChange,
-    openNewShift,
-
-    // Duty dialog
-    dutyDialogOpen,
-    setDutyDialogOpen,
-    dutyForm,
-    setDutyForm,
-    openDutyDialog,
-    handleDutyGenerate,
-
-    // Shift drag-to-resize/move
-    handleShiftDragStart,
-    shiftDragPreview,
+    employees, vehicles, regions, schedules, loading,
+    viewMode, activeTab, setActiveTab, days, navDir, compact, periodLabel,
+    scheduleMap, vehicleScheduleMap, vehiclePlateMap, vehiclesForGantt,
+    navigate, goToday, switchView,
+    editDialogOpen, setEditDialogOpen, editForm, setEditForm,
+    conflictError, setConflictError, savingSchedule,
+    handleCellClick, handleSaveSchedule, handleDeleteSchedule, handleEmployeeChange, openNewShift,
+    dutyDialogOpen, setDutyDialogOpen, dutyForm, setDutyForm, openDutyDialog, handleDutyGenerate,
   };
+}
+
+/** Format Date to datetime-local input value (YYYY-MM-DDTHH:MM) */
+function toLocalDateTimeStr(d: Date): string {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${mo}-${da}T${h}:${mi}`;
 }

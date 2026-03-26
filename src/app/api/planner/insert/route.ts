@@ -88,15 +88,25 @@ export async function POST(request: NextRequest) {
       .order('scheduled_time_start', { ascending: true });
 
     // ── Fetch work schedule for end time ────────────────────────────────────
+    const targetDayStart = `${targetDate}T00:00:00`;
+    const targetDayEnd = `${targetDate}T23:59:59`;
     const { data: workSchedule } = await supabase
       .from('work_schedules')
-      .select('start_time, end_time')
-      .eq('date', targetDate)
+      .select('start_at, duration_minutes, end_at')
+      .lt('start_at', targetDayEnd)
+      .gt('end_at', targetDayStart)
       .eq('employee_id', employee_id)
       .maybeSingle();
 
-    const workStartMin = parseTime((workSchedule as any)?.start_time ?? DEFAULT_START_TIME);
-    const workEndMin = parseTime((workSchedule as any)?.end_time ?? DEFAULT_WORK_END);
+    // Derive HH:MM from timestamps for planner math
+    const wsStartTime = workSchedule?.start_at
+      ? new Date(workSchedule.start_at).toTimeString().slice(0, 5)
+      : DEFAULT_START_TIME;
+    const wsEndTime = workSchedule?.end_at
+      ? new Date(workSchedule.end_at).toTimeString().slice(0, 5)
+      : DEFAULT_WORK_END;
+    const workStartMin = parseTime(wsStartTime);
+    const workEndMin = parseTime(wsEndTime);
 
     const sortedOrders = (existingOrders || []).filter((o) => {
       const c = (o as any).client;

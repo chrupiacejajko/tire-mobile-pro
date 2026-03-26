@@ -20,7 +20,9 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
 
-    const { error } = await signIn(email, password);
+    // Auto-append @routetire.pl if user typed just a login (no @ sign)
+    const loginEmail = email.includes('@') ? email : `${email}@routetire.pl`;
+    const { error } = await signIn(loginEmail, password);
     if (error) {
       setError(error);
       setLoading(false);
@@ -62,23 +64,24 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Email */}
+            {/* Login */}
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
-                Email
+                Login
               </label>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500">
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                   </svg>
                 </span>
                 <input
-                  type="email"
-                  placeholder="jan@firma.pl"
+                  type="text"
+                  placeholder="blazej.s"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  autoComplete="username"
                   className="w-full rounded-xl border border-gray-700 bg-gray-800/50 py-3 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none transition-all focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
                 />
               </div>
@@ -90,7 +93,9 @@ export default function LoginPage() {
                 <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
                   Hasło
                 </label>
-                <button type="button" className="text-xs text-orange-400 hover:text-orange-300 font-medium transition-colors">
+                <button type="button"
+                  onClick={() => setError('Skontaktuj się z administratorem w celu resetu hasła.')}
+                  className="text-xs text-orange-400 hover:text-orange-300 font-medium transition-colors">
                   Zapomniałeś?
                 </button>
               </div>

@@ -246,20 +246,24 @@ export async function POST(request: NextRequest) {
       (unavailabilityData ?? []).map((u: { employee_id: string }) => u.employee_id),
     );
 
-    // Check work_schedules — only include employees who have a schedule for this day
+    // Check work_schedules — only include employees who have a schedule overlapping this day
+    const targetDayStart = `${targetDate}T00:00:00`;
+    const targetDayEnd = `${targetDate}T23:59:59`;
     const { data: workScheduleData } = await supabase
       .from('work_schedules')
-      .select('employee_id, start_time, end_time')
-      .eq('date', targetDate);
+      .select('employee_id, start_at, duration_minutes, end_at')
+      .lt('start_at', targetDayEnd)
+      .gt('end_at', targetDayStart);
 
     const scheduledEmployeeIds = new Set(
       (workScheduleData ?? []).map((ws: { employee_id: string }) => ws.employee_id),
     );
+    // Derive HH:MM start_time/end_time from timestamps for planner math
     const workScheduleMap = new Map<string, { start_time: string; end_time: string }>();
     for (const ws of workScheduleData ?? []) {
       workScheduleMap.set(ws.employee_id, {
-        start_time: ws.start_time,
-        end_time: ws.end_time,
+        start_time: new Date(ws.start_at).toTimeString().slice(0, 5),
+        end_time: new Date(ws.end_at).toTimeString().slice(0, 5),
       });
     }
 

@@ -119,6 +119,7 @@ interface EmployeeForm {
   email: string;
   phone: string;
   phone_secondary: string;
+  login_username: string;
   default_location: string;
   default_lat: number | null;
   default_lng: number | null;
@@ -131,6 +132,7 @@ interface EmployeeForm {
 
 const emptyForm: EmployeeForm = {
   first_name: '', last_name: '', email: '', phone: '', phone_secondary: '',
+  login_username: '',
   default_location: '', default_lat: null, default_lng: null,
   region_id: '', default_vehicle_id: '', shift_rate: '',
   role: 'worker', skill_ids: [],
@@ -300,9 +302,10 @@ export default function EmployeesPage() {
     e.preventDefault();
     setSaving(true);
 
-    // For workers, use auto-generated internal email; otherwise use the provided email
+    // For workers, use login_username@routetire.pl or auto-generated
+    const loginUsername = form.login_username || sanitizeForEmail(form.first_name) + (form.first_name && form.last_name ? '.' : '') + sanitizeForEmail(form.last_name);
     const effectiveEmail = form.role === 'worker'
-      ? generateWorkerEmail(form.first_name, form.last_name)
+      ? `${loginUsername}@routetire.pl`
       : form.email;
 
     await fetch('/api/employees', {
@@ -314,6 +317,7 @@ export default function EmployeesPage() {
         email: effectiveEmail,
         phone: form.phone,
         phone_secondary: form.phone_secondary,
+        login_username: form.role === 'worker' ? loginUsername : null,
         default_location: form.default_location || null,
         default_lat: form.default_lat,
         default_lng: form.default_lng,
@@ -343,6 +347,7 @@ export default function EmployeesPage() {
       email: emp.user?.email || '',
       phone: emp.user?.phone || '',
       phone_secondary: emp.phone_secondary || '',
+      login_username: (emp as any).login_username || emp.user?.email?.replace('@routetire.pl', '') || '',
       default_location: emp.default_location || '',
       default_lat: emp.default_lat ?? null,
       default_lng: emp.default_lng ?? null,
@@ -369,6 +374,7 @@ export default function EmployeesPage() {
         last_name: editForm.last_name,
         phone: editForm.phone,
         phone_secondary: editForm.phone_secondary,
+        login_username: editForm.login_username || null,
         default_location: editForm.default_location || null,
         default_lat: editForm.default_lat,
         default_lng: editForm.default_lng,
@@ -571,37 +577,36 @@ export default function EmployeesPage() {
         )}
       </div>
 
-      {!isEdit && (
-        <div className="space-y-2">
-          <Label className="flex items-center gap-1.5">
-            <Mail className="h-3.5 w-3.5 text-orange-500" />
-            {formData.role === 'worker' ? 'Login' : 'Email *'}
-          </Label>
-          {formData.role === 'worker' ? (
-            <>
-              <div className="flex items-center gap-0">
-                <Input
-                  readOnly
-                  value={
-                    formData.first_name || formData.last_name
-                      ? sanitizeForEmail(formData.first_name) + (formData.first_name && formData.last_name ? '.' : '') + sanitizeForEmail(formData.last_name)
-                      : ''
-                  }
-                  className="bg-gray-50 text-gray-600 cursor-default rounded-r-none border-r-0"
-                />
-                <span className="inline-flex h-9 items-center px-2 border border-l-0 border-gray-200 rounded-r-md bg-gray-100 text-xs text-gray-400 whitespace-nowrap">
-                  @routetire.pl
-                </span>
-              </div>
-              <p className="text-xs text-gray-400">
-                Pracownik loguje się tym loginem i hasłem do aplikacji
-              </p>
-            </>
-          ) : (
-            <Input type="email" required value={formData.email} onChange={e => setFormData(f => ({ ...f, email: e.target.value }))} />
-          )}
-        </div>
-      )}
+      <div className="space-y-2">
+        <Label className="flex items-center gap-1.5">
+          <Mail className="h-3.5 w-3.5 text-orange-500" />
+          {formData.role === 'worker' ? 'Login' : 'Email *'}
+        </Label>
+        {formData.role === 'worker' ? (
+          <>
+            <div className="flex items-center gap-0">
+              <Input
+                value={formData.login_username || (
+                  formData.first_name || formData.last_name
+                    ? sanitizeForEmail(formData.first_name) + (formData.first_name && formData.last_name ? '.' : '') + sanitizeForEmail(formData.last_name)
+                    : ''
+                )}
+                onChange={e => setFormData(f => ({ ...f, login_username: e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '') }))}
+                placeholder="np. blazej.s"
+                className="rounded-r-none border-r-0"
+              />
+              <span className="inline-flex h-9 items-center px-2 border border-l-0 border-gray-200 rounded-r-md bg-gray-100 text-xs text-gray-400 whitespace-nowrap">
+                @routetire.pl
+              </span>
+            </div>
+            <p className="text-xs text-gray-400">
+              Pracownik loguje się tym loginem i hasłem do aplikacji
+            </p>
+          </>
+        ) : (
+          <Input type="email" required value={formData.email} onChange={e => setFormData(f => ({ ...f, email: e.target.value }))} />
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">

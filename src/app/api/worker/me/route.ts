@@ -32,7 +32,10 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = getAdminClient();
-  const today = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+  const startOfDay = `${today}T00:00:00`;
+  const endOfDay = `${today}T23:59:59`;
 
   // Fetch employee data + profile
   const { data: employee } = await supabase
@@ -58,11 +61,13 @@ export async function GET(request: NextRequest) {
     .maybeSingle();
 
   // Today's work schedule (for shift_plan_status computation)
+  // New model: start_at (timestamptz), duration_minutes (int), end_at (timestamptz)
   const { data: schedule } = await supabase
     .from('work_schedules')
-    .select('start_time, end_time, vehicle_id, vehicle:vehicles(plate_number)')
+    .select('start_at, duration_minutes, end_at, vehicle_id, vehicle:vehicles(plate_number)')
     .eq('employee_id', auth.employeeId)
-    .eq('date', today)
+    .lt('start_at', endOfDay)
+    .gt('end_at', startOfDay)
     .maybeSingle();
 
   // Today's clock-in/out from shifts table
@@ -100,13 +105,20 @@ export async function GET(request: NextRequest) {
     planner_status: opState?.planner_status ?? 'available',
 
     // Shift plan (computed dynamically — avoids drift)
+    // Derive HH:MM start/end from start_at and duration_minutes
     shift_today: schedule
-      ? {
-          scheduled: true,
-          start_time: schedule.start_time,
-          end_time: schedule.end_time,
-          vehicle_plate: (schedule as any).vehicle?.plate_number ?? null,
-        }
+      ? (() => {
+          const startAt = new Date(schedule.start_at);
+          const startHHMM = startAt.toTimeString().slice(0, 5);
+          const endAt = new Date(schedule.end_at);
+          const endHHMM = endAt.toTimeString().slice(0, 5);
+          return {
+            scheduled: true,
+            start_time: startHHMM,
+            end_time: endHHMM,
+            vehicle_plate: (schedule as any).vehicle?.plate_number ?? null,
+          };
+        })()
       : { scheduled: false, start_time: null, end_time: null, vehicle_plate: null },
 
     // Current clock-in session

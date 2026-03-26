@@ -21,11 +21,14 @@ export async function GET(request: NextRequest) {
   const supabase = getAdminClient();
 
   try {
-    // 1. Get employees with work_schedules for the given date
+    // 1. Get employees with work_schedules overlapping the given date
+    const dayStart = `${date}T00:00:00`;
+    const dayEnd = `${date}T23:59:59`;
     const { data: schedules, error: schedErr } = await supabase
       .from('work_schedules')
       .select('employee_id, employee:employees(first_name)')
-      .eq('date', date);
+      .lt('start_at', dayEnd)
+      .gt('end_at', dayStart);
 
     if (schedErr) throw schedErr;
     if (!schedules || schedules.length === 0) {

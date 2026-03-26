@@ -96,14 +96,14 @@ export async function DELETE(req: NextRequest) {
   const id = searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const today = new Date().toISOString().split('T')[0];
+  const nowISO = new Date().toISOString();
 
   // Check future work schedules in this region
   const { count: scheduleCount } = await supabase
     .from('work_schedules')
     .select('id', { count: 'exact', head: true })
     .eq('region_id', id)
-    .gte('date', today);
+    .gte('start_at', nowISO);
 
   // Check active (non-completed/cancelled) orders in this region
   const { count: orderCount } = await supabase

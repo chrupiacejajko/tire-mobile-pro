@@ -83,11 +83,14 @@ export async function autoAssignWorker(params: AutoAssignParams): Promise<AutoAs
 
   const empIds = employees.map(e => e.id);
 
-  // Work schedules — if any exist for this date, only include scheduled employees
+  // Work schedules — if any exist overlapping this date, only include scheduled employees
+  const dayStart = `${scheduled_date}T00:00:00`;
+  const dayEnd = `${scheduled_date}T23:59:59`;
   const { data: workScheduleData } = await supabase
     .from('work_schedules')
-    .select('employee_id, start_time, end_time')
-    .eq('date', scheduled_date);
+    .select('employee_id, start_at, duration_minutes, end_at')
+    .lt('start_at', dayEnd)
+    .gt('end_at', dayStart);
 
   const scheduledEmployeeIds = new Set(
     (workScheduleData ?? []).map((ws: { employee_id: string }) => ws.employee_id),

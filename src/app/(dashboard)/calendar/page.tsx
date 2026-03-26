@@ -151,9 +151,9 @@ export default function CalendarPage() {
 
       supabase
         .from('work_schedules')
-        .select('employee_id, date, start_time, end_time, is_night_shift')
-        .gte('date', rangeStart)
-        .lte('date', rangeEnd),
+        .select('employee_id, start_at, duration_minutes, end_at, is_night_shift')
+        .lt('start_at', `${rangeEnd}T23:59:59`)
+        .gt('end_at', `${rangeStart}T00:00:00`),
     ]);
 
     if (ordersRes.data) {
@@ -201,7 +201,25 @@ export default function CalendarPage() {
 
     if (clientsRes.data) setClients(clientsRes.data as ClientOption[]);
     if (servicesRes.data) setServices(servicesRes.data as ServiceOption[]);
-    if (schedulesRes.data) setWorkSchedules(schedulesRes.data as WorkScheduleBlock[]);
+    if (schedulesRes.data) {
+      setWorkSchedules(
+        schedulesRes.data.map((ws: any) => {
+          const startAt = new Date(ws.start_at);
+          const endAt = new Date(ws.end_at);
+          return {
+            employee_id: ws.employee_id,
+            start_at: ws.start_at,
+            duration_minutes: ws.duration_minutes,
+            end_at: ws.end_at,
+            is_night_shift: ws.is_night_shift ?? false,
+            // Derived fields for downstream components
+            date: startAt.toISOString().split('T')[0],
+            start_time: startAt.toTimeString().slice(0, 5),
+            end_time: endAt.toTimeString().slice(0, 5),
+          } satisfies WorkScheduleBlock;
+        })
+      );
+    }
 
     setLoading(false);
   }, [currentDate, view, dateStr, supabase, getWeekRange, getMonthRange]);

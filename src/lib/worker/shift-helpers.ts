@@ -140,11 +140,14 @@ export async function getShiftPlanStatus(
   date: string
 ): Promise<'scheduled' | 'unscheduled'> {
   const supabase = getAdminClient();
+  const dayStart = `${date}T00:00:00`;
+  const dayEnd = `${date}T23:59:59`;
   const { count } = await supabase
     .from('work_schedules')
     .select('id', { count: 'exact', head: true })
     .eq('employee_id', employeeId)
-    .eq('date', date);
+    .lt('start_at', dayEnd)
+    .gt('end_at', dayStart);
 
   return (count ?? 0) > 0 ? 'scheduled' : 'unscheduled';
 }

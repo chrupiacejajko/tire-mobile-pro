@@ -39,10 +39,16 @@ export interface EmployeeCol {
 
 export interface WorkScheduleBlock {
   employee_id: string;
-  date: string;
-  start_time: string;
-  end_time: string;
+  start_at: string;       // ISO timestamptz
+  duration_minutes: number;
+  end_at: string;         // ISO timestamptz
   is_night_shift: boolean;
+  /** Derived date (YYYY-MM-DD) from start_at — computed at fetch time */
+  date: string;
+  /** Derived HH:MM from start_at — computed at fetch time */
+  start_time: string;
+  /** Derived HH:MM from end_at — computed at fetch time */
+  end_time: string;
 }
 
 export interface ClientOption {

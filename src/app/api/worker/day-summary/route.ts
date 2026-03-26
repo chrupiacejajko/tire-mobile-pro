@@ -45,23 +45,28 @@ export async function GET(request: NextRequest) {
 
   try {
     // ── 1. Work schedule for the day ──────────────────────────────────────
+    const dayStart = `${date}T00:00:00`;
+    const dayEnd = `${date}T23:59:59`;
     const { data: schedule } = await supabase
       .from('work_schedules')
-      .select('start_time, end_time')
+      .select('start_at, duration_minutes, end_at')
       .eq('employee_id', employeeId)
-      .eq('date', date)
+      .lt('start_at', dayEnd)
+      .gt('end_at', dayStart)
       .maybeSingle();
 
-    const shiftStart = schedule?.start_time ?? null;
-    const shiftEnd = schedule?.end_time ?? null;
+    // Derive HH:MM from timestamps
+    const shiftStart = schedule?.start_at
+      ? new Date(schedule.start_at).toTimeString().slice(0, 5)
+      : null;
+    const shiftEnd = schedule?.end_at
+      ? new Date(schedule.end_at).toTimeString().slice(0, 5)
+      : null;
 
-    // Compute total scheduled hours
+    // Compute total scheduled hours from duration_minutes
     let totalHours: number | null = null;
-    if (shiftStart && shiftEnd) {
-      const [sh, sm] = shiftStart.split(':').map(Number);
-      const [eh, em] = shiftEnd.split(':').map(Number);
-      totalHours = eh + em / 60 - (sh + sm / 60);
-      if (totalHours < 0) totalHours += 24; // overnight shift
+    if (schedule?.duration_minutes) {
+      totalHours = schedule.duration_minutes / 60;
     }
 
     // ── 2. Actual shift (clock in/out) ────────────────────────────────────
@@ -126,7 +131,8 @@ export async function GET(request: NextRequest) {
       .from('work_schedules')
       .select('vehicle_id')
       .eq('employee_id', employeeId)
-      .eq('date', date)
+      .lt('start_at', dayEnd)
+      .gt('end_at', dayStart)
       .maybeSingle();
 
     const vehicleId = wsWithVehicle?.vehicle_id;

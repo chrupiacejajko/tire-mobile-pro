@@ -125,14 +125,14 @@ export async function DELETE(request: NextRequest) {
   const id = searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const today = new Date().toISOString().split('T')[0];
+  const nowISO = new Date().toISOString();
 
   // Check for future work schedules referencing this vehicle
   const { count: scheduleCount } = await supabase
     .from('work_schedules')
     .select('id', { count: 'exact', head: true })
     .eq('vehicle_id', id)
-    .gte('date', today);
+    .gte('start_at', nowISO);
 
   if (scheduleCount && scheduleCount > 0) {
     return NextResponse.json(

@@ -16,10 +16,8 @@ import type { EmployeeInfo } from './ShiftDialog';
 export interface DutyForm {
   employee_groups: Record<string, 'A' | 'B'>;
   from_date: string;
-  to_date: string;
   start_time: string;
   end_time: string;
-  // New fields for flexible generation
   duration_hours: string;
   shift_count: string;
 }

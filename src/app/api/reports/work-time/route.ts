@@ -30,12 +30,14 @@ export async function GET(request: NextRequest) {
 
   const safeEmployees = employees || [];
 
-  // 2. Work schedules in date range
+  // 2. Work schedules in date range (new model: start_at, duration_minutes, end_at)
+  const rangeStart = `${from}T00:00:00`;
+  const rangeEnd = `${to}T23:59:59`;
   const { data: schedules } = await supabase
     .from('work_schedules')
-    .select('employee_id, date, start_time, end_time')
-    .gte('date', from)
-    .lte('date', to);
+    .select('employee_id, start_at, duration_minutes, end_at')
+    .lt('start_at', rangeEnd)
+    .gt('end_at', rangeStart);
 
   const safeSchedules = schedules || [];
 
@@ -44,13 +46,12 @@ export async function GET(request: NextRequest) {
   for (const s of safeSchedules) {
     if (!s.employee_id) continue;
     const entry = schedulesByEmp.get(s.employee_id) || { dates: new Set(), totalHours: 0 };
-    entry.dates.add(s.date);
-    // Calculate hours from start_time/end_time (HH:MM or HH:MM:SS format)
-    if (s.start_time && s.end_time) {
-      const [sh, sm] = s.start_time.split(':').map(Number);
-      const [eh, em] = s.end_time.split(':').map(Number);
-      const hours = (eh * 60 + em - sh * 60 - sm) / 60;
-      if (hours > 0) entry.totalHours += hours;
+    // Extract date from start_at for day counting
+    const schedDate = new Date(s.start_at).toISOString().split('T')[0];
+    entry.dates.add(schedDate);
+    // Calculate hours from duration_minutes
+    if (s.duration_minutes && s.duration_minutes > 0) {
+      entry.totalHours += s.duration_minutes / 60;
     }
     schedulesByEmp.set(s.employee_id, entry);
   }

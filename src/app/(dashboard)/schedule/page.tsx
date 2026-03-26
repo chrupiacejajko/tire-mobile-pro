@@ -11,10 +11,12 @@ import { Button } from '@/components/ui/button';
 import { Topbar } from '@/components/layout/topbar';
 import { cn } from '@/lib/utils';
 
-import type { WorkSchedule } from './_components/ShiftBlock';
+import type { DayShiftSlice } from './_components/ShiftBlock';
+import { hexAlpha, FALLBACK_COLOR, parseTimeToMinutes } from './_components/ShiftBlock';
 import { ShiftDialog } from './_components/ShiftDialog';
 import { BulkGenerateDialog } from './_components/BulkGenerateDialog';
 import { useScheduleData, toDateStr, type ViewMode } from './_components/useScheduleData';
+import { formatShiftRange } from '@/lib/schedule-utils';
 
 // ─── Day Column Header ────────────────────────────────────────────────────────
 
@@ -31,7 +33,7 @@ function DayHeader({ date, compact }: { date: Date; compact: boolean }) {
     <th
       className={cn(
         'px-0.5 py-2 text-center border-r border-gray-100 transition-colors',
-        compact ? 'min-w-[30px]' : 'min-w-[100px]',
+        compact ? 'min-w-[30px]' : 'min-w-[120px]',
         isWeekend && !isNow && 'bg-gray-50/60',
         isNow && 'bg-blue-50/40',
       )}
@@ -57,24 +59,68 @@ function DayHeader({ date, compact }: { date: Date; compact: boolean }) {
   );
 }
 
-// ─── Time helpers ────────────────────────────────────────────────────────────
+// ─── Time-positioned bar within a day cell (multi-day connected) ─────────────
 
-function timeToMinutes(t: string): number {
-  const [h, m] = (t || '00:00').split(':').map(Number);
-  return h * 60 + (m || 0);
+const HOUR_TICKS = [0, 6, 12, 18];
+
+function TimeBar({ slice, compact, onClick }: {
+  slice: DayShiftSlice;
+  compact: boolean;
+  onClick: () => void;
+}) {
+  const color = slice.shift.region_color || FALLBACK_COLOR;
+  const startMin = parseTimeToMinutes(slice.dayStart);
+  const endMin = parseTimeToMinutes(slice.dayEnd);
+  const duration = endMin > startMin ? endMin - startMin : (endMin === 0 ? 1440 - startMin : 1440 - startMin + endMin);
+  const leftPct = (startMin / 1440) * 100;
+  const widthPct = Math.max((duration / 1440) * 100, 3);
+
+  // Connected bar styling: no rounding on sides that connect to next/prev day
+  const roundedLeft = slice.isFirstDay ? 'rounded-l-md' : '';
+  const roundedRight = slice.isLastDay ? 'rounded-r-md' : '';
+
+  return (
+    <div
+      className={cn('absolute cursor-pointer group/bar', compact ? 'top-[3px] bottom-[3px]' : 'top-[6px] bottom-[6px]')}
+      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+      onClick={onClick}
+      title={formatShiftRange(slice.shift.start_at, slice.shift.duration_minutes)}
+    >
+      <div className={cn('absolute inset-0 overflow-hidden', roundedLeft, roundedRight)}>
+        <div className="absolute inset-0" style={{ backgroundColor: hexAlpha(color, 0.18) }} />
+        {slice.isFirstDay && (
+          <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ backgroundColor: color }} />
+        )}
+        <div className="absolute inset-0 opacity-0 group-hover/bar:opacity-100 transition-opacity" style={{ backgroundColor: hexAlpha(color, 0.10) }} />
+      </div>
+
+      {!compact && slice.isFirstDay ? (
+        <div className="relative h-full flex items-center pl-2 pr-1 min-w-0">
+          <span className="text-[10px] font-bold truncate whitespace-nowrap" style={{ color }}>
+            {slice.dayStart}–{slice.dayEnd === '23:59' ? '→' : slice.dayEnd}
+          </span>
+          {slice.shift.vehicle_plate && (
+            <span className="text-[9px] text-gray-400 ml-1 truncate hidden xl:inline">
+              {slice.shift.vehicle_plate}
+            </span>
+          )}
+        </div>
+      ) : !compact ? (
+        <div className="relative h-full flex items-center pl-2 min-w-0">
+          <span className="text-[9px] text-gray-400 truncate">
+            {!slice.isLastDay ? '→' : `→ ${slice.dayEnd}`}
+          </span>
+        </div>
+      ) : (
+        <div className="relative h-full">
+          <div className={cn('w-full h-full', roundedLeft, roundedRight)} style={{ backgroundColor: hexAlpha(color, 0.25) }} />
+        </div>
+      )}
+    </div>
+  );
 }
 
-function hexAlpha(hex: string, alpha: number): string {
-  const c = hex.replace('#', '');
-  const r = parseInt(c.slice(0, 2), 16);
-  const g = parseInt(c.slice(2, 4), 16);
-  const b = parseInt(c.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-// ─── Gantt Grid (time-based bars) ────────────────────────────────────────────
-
-const HOUR_TICKS = [0, 6, 12, 18]; // Hour markers shown
+// ─── Gantt Grid ──────────────────────────────────────────────────────────────
 
 function GanttGrid({
   rows,
@@ -87,7 +133,7 @@ function GanttGrid({
 }: {
   rows: { id: string }[];
   days: Date[];
-  scheduleMap: Map<string, WorkSchedule>;
+  scheduleMap: Map<string, DayShiftSlice>;
   compact: boolean;
   resourceLabel: string;
   renderResourceCell: (id: string) => React.ReactNode;
@@ -131,7 +177,7 @@ function GanttGrid({
                 const dateStr = toDateStr(d);
                 const isNow = dateFnsIsToday(d);
                 const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-                const schedule = scheduleMap.get(`${row.id}:${dateStr}`);
+                const slice = scheduleMap.get(`${row.id}:${dateStr}`);
 
                 return (
                   <td key={dateStr}
@@ -142,14 +188,13 @@ function GanttGrid({
                     )}
                     style={{ minWidth: CELL_W, height: ROW_H }}
                   >
-                    {/* Timeline grid marks */}
                     {!compact && HOUR_TICKS.map(h => (
                       <div key={h} className="absolute top-0 bottom-0 border-l border-gray-100/50"
                         style={{ left: `${(h / 24) * 100}%` }} />
                     ))}
 
-                    {schedule ? (
-                      <TimeBar schedule={schedule} compact={compact} rowH={ROW_H}
+                    {slice ? (
+                      <TimeBar slice={slice} compact={compact}
                         onClick={() => onCellClick(row.id, dateStr)} />
                     ) : (
                       <div className="absolute inset-0 cursor-pointer group/empty flex items-center justify-center hover:bg-gray-100/40 transition-colors"
@@ -165,68 +210,6 @@ function GanttGrid({
         </tbody>
       </table>
     </div>
-  );
-}
-
-// ─── TimeBar (positioned bar within 24h cell) ────────────────────────────────
-
-function TimeBar({ schedule, compact, rowH, onClick }: {
-  schedule: WorkSchedule;
-  compact: boolean;
-  rowH: number;
-  onClick: () => void;
-}) {
-  const color = schedule.region_color || '#3b82f6';
-  const startMin = timeToMinutes(schedule.start_time);
-  const endMin = timeToMinutes(schedule.end_time);
-  const duration = endMin > startMin ? endMin - startMin : (1440 - startMin + endMin);
-  const leftPct = (startMin / 1440) * 100;
-  const widthPct = Math.max((duration / 1440) * 100, 3); // min 3% width for visibility
-  const st = schedule.start_time?.slice(0, 5) || '';
-  const et = schedule.end_time?.slice(0, 5) || '';
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, scaleX: 0.3 }}
-      animate={{ opacity: 1, scaleX: 1 }}
-      exit={{ opacity: 0, scaleX: 0.3 }}
-      transition={{ duration: 0.2, ease: 'easeOut' }}
-      className="absolute cursor-pointer group/bar"
-      style={{
-        left: `${leftPct}%`,
-        width: `${widthPct}%`,
-        top: compact ? 3 : 6,
-        bottom: compact ? 3 : 6,
-        transformOrigin: 'left center',
-      }}
-      onClick={onClick}
-      title={`${st}–${et}${schedule.vehicle_plate ? ' · ' + schedule.vehicle_plate : ''}${schedule.region_name ? ' · ' + schedule.region_name : ''}`}
-    >
-      {/* Bar background */}
-      <div className="absolute inset-0 rounded-md overflow-hidden">
-        <div className="absolute inset-0" style={{ backgroundColor: hexAlpha(color, 0.18) }} />
-        <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ backgroundColor: color }} />
-        <div className="absolute inset-0 opacity-0 group-hover/bar:opacity-100 transition-opacity" style={{ backgroundColor: hexAlpha(color, 0.10) }} />
-      </div>
-
-      {/* Label */}
-      {!compact ? (
-        <div className="relative h-full flex items-center pl-2 pr-1 min-w-0">
-          <span className="text-[10px] font-bold truncate whitespace-nowrap" style={{ color }}>
-            {st}–{et}
-          </span>
-          {schedule.vehicle_plate && (
-            <span className="text-[9px] text-gray-400 ml-1 truncate hidden xl:inline">
-              {schedule.vehicle_plate}
-            </span>
-          )}
-        </div>
-      ) : (
-        <div className="relative h-full flex items-center justify-center">
-          <div className="w-full h-full rounded-sm" style={{ backgroundColor: hexAlpha(color, 0.25) }} />
-        </div>
-      )}
-    </motion.div>
   );
 }
 
@@ -257,7 +240,7 @@ export default function SchedulePage() {
             className="h-9 rounded-xl text-sm gap-2 bg-emerald-600 hover:bg-emerald-700"
             onClick={data.openDutyDialog}
           >
-            <Shield className="h-4 w-4" /> Generuj 48/48
+            <Shield className="h-4 w-4" /> Generuj dyżury
           </Button>
 
           <div className="h-5 w-px bg-gray-200" />
@@ -321,11 +304,6 @@ export default function SchedulePage() {
               >
                 <Icon className="h-3.5 w-3.5" />
                 {label}
-                {key === 'vehicles' && data.vehiclesForGantt.length > 0 && (
-                  <span className="text-[10px] bg-gray-100 text-gray-500 rounded-full px-1.5 py-0.5 font-semibold">
-                    {data.vehiclesForGantt.length}
-                  </span>
-                )}
                 {data.activeTab === key && (
                   <motion.div
                     layoutId="tab-underline"
@@ -389,7 +367,6 @@ export default function SchedulePage() {
                       <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-2">
                         <Car className="h-8 w-8 text-gray-200" />
                         <p className="text-sm font-medium">Brak aktywnych pojazdów w tym okresie</p>
-                        <p className="text-xs text-gray-300">Przypisz pojazd do dyżuru pracownika</p>
                       </div>
                     ) : (
                       <GanttGrid
