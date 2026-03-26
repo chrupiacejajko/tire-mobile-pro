@@ -8,10 +8,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   ClipboardList, CheckCircle2, Users, DollarSign, Clock, MapPin,
-  TrendingUp, Calendar, LayoutDashboard, Download, ChevronRight,
-  Truck, AlertCircle,
+  Calendar, LayoutDashboard, Download, RefreshCw,
+  GanttChartSquare,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { GanttView } from '../planner/_components/GanttView';
+import type { EmployeeRoute, UnassignedOrder } from '../planner/_components/types';
 
 const ANIM = {
   container: { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.08 } } },
@@ -58,6 +60,13 @@ export default function DashboardPage() {
   const [recentActivity, setRecentActivity] = useState<{ text: string; time: string; dot: string }[]>([]);
   const [weeklyData, setWeeklyData] = useState<{ day: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // ── Gantt state ──
+  const [ganttRoutes, setGanttRoutes] = useState<EmployeeRoute[]>([]);
+  const [ganttUnassigned, setGanttUnassigned] = useState<UnassignedOrder[]>([]);
+  const [ganttLoading, setGanttLoading] = useState(true);
+  const today = new Date().toISOString().split('T')[0];
+
   const supabase = createClient();
 
   const fetchDashboard = useCallback(async () => {
@@ -144,19 +153,35 @@ export default function DashboardPage() {
     setLoading(false);
   }, []);
 
+  const fetchGantt = useCallback(async () => {
+    setGanttLoading(true);
+    try {
+      const res = await fetch(`/api/planner?date=${today}`);
+      if (res.ok) {
+        const data = await res.json();
+        setGanttRoutes(data.routes ?? []);
+        setGanttUnassigned(data.unassigned ?? []);
+      }
+    } finally {
+      setGanttLoading(false);
+    }
+  }, [today]);
+
   useEffect(() => {
     fetchDashboard();
+    fetchGantt();
 
     // Realtime — auto-update when any order changes
     const channel = supabase
       .channel('dashboard-orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         fetchDashboard();
+        fetchGantt();
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [fetchDashboard]);
+  }, [fetchDashboard, fetchGantt]);
 
   const maxWeekly = Math.max(...weeklyData.map(d => d.count), 1);
 
@@ -248,9 +273,55 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
 
-        {/* Row 3: Today's Orders + Activity */}
+        {/* Row 3: Gantt timeline */}
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.4 }}>
+          <Card className="rounded-2xl border-gray-100 shadow-sm overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between py-3 px-5 border-b border-gray-100">
+              <CardTitle className="text-base font-bold flex items-center gap-2">
+                <GanttChartSquare className="h-4 w-4 text-blue-500" />
+                Harmonogram dziś
+                <Badge variant="outline" className="rounded-lg text-xs font-normal">
+                  {new Date().toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })}
+                </Badge>
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-xl text-gray-400 hover:text-gray-700"
+                onClick={fetchGantt}
+                disabled={ganttLoading}
+              >
+                <RefreshCw className={`h-4 w-4 ${ganttLoading ? 'animate-spin' : ''}`} />
+              </Button>
+            </CardHeader>
+            <CardContent className="p-0">
+              {ganttLoading ? (
+                <div className="flex items-center justify-center h-32 text-gray-400 gap-2 text-sm">
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Ładowanie harmonogramu…
+                </div>
+              ) : ganttRoutes.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-1">
+                  <GanttChartSquare className="h-8 w-8 opacity-30" />
+                  <p className="text-sm">Brak tras na dziś</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <GanttView
+                    routes={ganttRoutes}
+                    unassigned={ganttUnassigned}
+                    date={today}
+                    onRefresh={fetchGantt}
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Row 4: Today's Orders + Activity */}
         <motion.div className="grid grid-cols-1 gap-6 lg:grid-cols-3"
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.45 }}>
+          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.55 }}>
           <Card className="lg:col-span-2 rounded-2xl border-gray-100 shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-base font-bold flex items-center gap-2"><Calendar className="h-4 w-4" /> Dzisiejsze zlecenia</CardTitle>
