@@ -119,6 +119,8 @@ interface WorkerDaySidebarProps {
   onOrderRefresh?: () => void;
   /** When true, render as a plain div that fills parent (no motion, no absolute positioning) */
   embedded?: boolean;
+  /** Address prefill from map search — passed to inline order creation form */
+  initialAddress?: string;
 }
 
 /* ─── Constants ──────────────────────────────────────────────────────── */
@@ -748,6 +750,7 @@ function InlineCreateOrder({
   employeeName,
   date,
   time,
+  initialAddress,
   onBack,
   onCreated,
 }: {
@@ -755,12 +758,13 @@ function InlineCreateOrder({
   employeeName: string;
   date: string;
   time: string;
+  initialAddress?: string;
   onBack: () => void;
   onCreated: () => void;
 }) {
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
-  const [address, setAddress] = useState('');
+  const [address, setAddress] = useState(initialAddress ?? '');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [services, setServices] = useState<{ id: string; name: string; price: number; duration: number }[]>([]);
@@ -896,6 +900,7 @@ export function WorkerDaySidebar({
   onOrderClose,
   onOrderRefresh,
   embedded,
+  initialAddress,
 }: WorkerDaySidebarProps) {
   const hasVehicle = !!vehicle;
   const [activeTab, setActiveTab] = useState<LeftTab>('calendar');
@@ -1004,6 +1009,7 @@ export function WorkerDaySidebar({
         employeeName={employeeName}
         date={currentDate}
         time={createOrderTime}
+        initialAddress={initialAddress}
         onBack={() => setCreateOrderTime(null)}
         onCreated={() => {
           setCreateOrderTime(null);

@@ -2496,6 +2496,7 @@ export default function MapPage() {
                     selectedOrder={selectedOrder}
                     onOrderClose={() => { setSelectedOrder(null); setWorkerSidebarHighlightOrderId(null); }}
                     onOrderRefresh={() => { fetchAll(); resetCountdown(); }}
+                    initialAddress={addressPin?.label}
                     embedded
                   />
                 )}
