@@ -543,11 +543,11 @@ export function GanttView({
           onMouseEnter={(e) => { if (!dragging) setTooltip({ x: e.clientX, y: e.clientY - 10, stop, employeeName }); }}
           onMouseLeave={() => setTooltip(null)}
         >
-          {/* Two-line layout for wider blocks, single-line for narrow */}
-          {serviceWidth >= 100 ? (
+          {/* Two-line layout for blocks ≥50px, single-line for very narrow */}
+          {serviceWidth >= 50 ? (
             <div className="flex flex-col justify-center h-full px-1.5 min-w-0">
               {/* Top line: sequence + client name */}
-              <div className="flex items-center gap-1 min-w-0">
+              <div className="flex items-center gap-0.5 min-w-0">
                 {isLocked && <span className="text-[9px]">🔒</span>}
                 {stop.time_window_status === 'late' && !isCompletedOrInProgress && <AlertTriangle className="h-2.5 w-2.5 text-red-500 flex-shrink-0" />}
                 <span className={`text-[10px] font-semibold truncate ${blockColor.textClass}`}>
@@ -556,15 +556,15 @@ export function GanttView({
               </div>
               {/* Bottom line: time range + services */}
               <div className="flex items-center gap-1 min-w-0 mt-px">
-                <span className={`text-[9px] tabular-nums opacity-70 ${blockColor.textClass}`}>
+                <span className={`text-[9px] tabular-nums opacity-70 flex-shrink-0 ${blockColor.textClass}`}>
                   {stop.service_start}–{stop.departure_time}
                 </span>
-                {serviceWidth > 140 && stop.services.length > 0 && (
+                {serviceWidth > 120 && stop.services.length > 0 && (
                   <span className={`text-[8px] opacity-50 truncate ${blockColor.textClass}`}>
                     · {stop.services.map((s: any) => typeof s === 'string' ? s : s?.name).filter(Boolean).join(', ')}
                   </span>
                 )}
-                {serviceWidth > 140 && stop.services.length === 0 && stop.service_duration_minutes > 0 && (
+                {serviceWidth > 120 && stop.services.length === 0 && stop.service_duration_minutes > 0 && (
                   <span className={`text-[8px] opacity-50 ${blockColor.textClass}`}>
                     ({stop.service_duration_minutes}min)
                   </span>
@@ -572,18 +572,18 @@ export function GanttView({
               </div>
             </div>
           ) : (
-            <div className="flex items-center h-full px-1.5 gap-1 min-w-0">
+            <div className="flex items-center h-full px-1 gap-0.5 min-w-0">
               {isLocked && <span className="text-[9px]">🔒</span>}
               {stop.time_window_status === 'late' && !isCompletedOrInProgress && <AlertTriangle className="h-2.5 w-2.5 text-red-500 flex-shrink-0" />}
-              <span className={`text-[10px] font-semibold truncate ${blockColor.textClass}`}>
-                {stop.sequence}. {stop.client_name}
+              <span className={`text-[9px] font-semibold truncate ${blockColor.textClass}`}>
+                {stop.sequence}.
               </span>
             </div>
           )}
           {/* Buffer countdown overlay */}
           {(() => {
             const buf = getBufferDisplay(stop);
-            if (!buf || serviceWidth < 100) return null;
+            if (!buf || serviceWidth < 80) return null;
             return (
               <span
                 className={cn(
