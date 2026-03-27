@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
 
@@ -102,6 +103,10 @@ interface WorkerDaySidebarProps {
   employeeName: string;
   date: string; // YYYY-MM-DD
   highlightOrderId?: string | null;
+  /** Currently hovered order (from map pin hover) */
+  hoveredOrderId?: string | null;
+  /** Callback when hovering over a calendar order block */
+  onOrderHover?: (orderId: string | null) => void;
   onClose: () => void;
   onOrderClick?: (orderId: string) => void;
   /* Vehicle tab data (optional — shows tabs when provided) */
@@ -737,11 +742,151 @@ function OrderDetailContent({ order, onBack, onRefresh }: { order: MapOrder; onB
 
 type LeftTab = 'calendar' | 'vehicle';
 
+/* ─── Inline order creation form ─────────────────────────────────────── */
+function InlineCreateOrder({
+  employeeId,
+  employeeName,
+  date,
+  time,
+  onBack,
+  onCreated,
+}: {
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  time: string;
+  onBack: () => void;
+  onCreated: () => void;
+}) {
+  const [clientName, setClientName] = useState('');
+  const [clientPhone, setClientPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [services, setServices] = useState<{ id: string; name: string; price: number; duration: number }[]>([]);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.from('services').select('id, name, base_price, duration_minutes').eq('is_active', true).order('name');
+        if (data) setServices(data.map(s => ({ id: s.id, name: s.name, price: s.base_price ?? 0, duration: s.duration_minutes ?? 60 })));
+      } catch {}
+    };
+    load();
+  }, []);
+
+  const totalPrice = services.filter(s => selectedServiceIds.includes(s.id)).reduce((sum, s) => sum + s.price, 0);
+  const totalDuration = services.filter(s => selectedServiceIds.includes(s.id)).reduce((sum, s) => sum + s.duration, 0);
+
+  const handleSubmit = async () => {
+    if (!clientName.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: clientName,
+          client_phone: clientPhone || null,
+          address: address || null,
+          scheduled_date: date,
+          scheduled_time_start: time,
+          employee_id: employeeId,
+          notes: notes || null,
+          service_ids: selectedServiceIds.length > 0 ? selectedServiceIds : undefined,
+        }),
+      });
+      if (res.ok) {
+        onCreated();
+      }
+    } catch {}
+    setSubmitting(false);
+  };
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <div className="p-3 border-b border-gray-100 flex-shrink-0">
+        <button onClick={onBack} className="flex items-center gap-1 text-xs text-blue-600 font-medium hover:text-blue-700 transition-colors mb-2">
+          <ArrowLeft className="h-3.5 w-3.5" />Powrot do kalendarza
+        </button>
+        <h3 className="text-sm font-bold text-gray-900">Nowe zlecenie</h3>
+        <p className="text-[11px] text-gray-400">{employeeName} · {date} · {time}</p>
+      </div>
+
+      {/* Form */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div>
+          <label className="text-[10px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Klient *</label>
+          <Input placeholder="Imie i nazwisko" value={clientName} onChange={e => setClientName(e.target.value)} className="h-8 text-xs rounded-lg" />
+        </div>
+        <div>
+          <label className="text-[10px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Telefon</label>
+          <Input placeholder="+48 ..." value={clientPhone} onChange={e => setClientPhone(e.target.value)} className="h-8 text-xs rounded-lg" />
+        </div>
+        <div>
+          <label className="text-[10px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Adres</label>
+          <Input placeholder="ul. Przykladowa 1, Miasto" value={address} onChange={e => setAddress(e.target.value)} className="h-8 text-xs rounded-lg" />
+        </div>
+
+        {/* Services */}
+        {services.length > 0 && (
+          <div>
+            <label className="text-[10px] font-medium uppercase tracking-wider text-gray-400 mb-1.5 block">Uslugi</label>
+            <div className="space-y-1">
+              {services.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => setSelectedServiceIds(prev => prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id])}
+                  className={cn(
+                    'w-full text-left px-2.5 py-1.5 rounded-lg border text-xs transition-all flex items-center justify-between',
+                    selectedServiceIds.includes(s.id) ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-gray-100 bg-white hover:bg-gray-50 text-gray-600',
+                  )}
+                >
+                  <span className="font-medium">{s.name}</span>
+                  <span className="text-gray-400">{s.duration} min · {s.price} zl</span>
+                </button>
+              ))}
+            </div>
+            {selectedServiceIds.length > 0 && (
+              <div className="flex items-center justify-between mt-1.5 px-1 text-xs">
+                <span className="text-gray-500">{totalDuration} min</span>
+                <span className="font-bold text-gray-900">{totalPrice.toFixed(0)} zl</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div>
+          <label className="text-[10px] font-medium uppercase tracking-wider text-gray-400 mb-1 block">Notatki</label>
+          <Input placeholder="Dodatkowe informacje..." value={notes} onChange={e => setNotes(e.target.value)} className="h-8 text-xs rounded-lg" />
+        </div>
+      </div>
+
+      {/* Submit */}
+      <div className="p-3 border-t border-gray-100 flex-shrink-0">
+        <Button
+          className="w-full rounded-lg text-xs h-9 bg-orange-500 hover:bg-orange-600"
+          disabled={!clientName.trim() || submitting}
+          onClick={handleSubmit}
+        >
+          {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Calendar className="h-3.5 w-3.5 mr-1.5" />}
+          Utworz zlecenie na {time}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function WorkerDaySidebar({
   employeeId,
   employeeName,
   date,
   highlightOrderId,
+  hoveredOrderId,
+  onOrderHover,
   onClose,
   onOrderClick,
   vehicle,
@@ -757,6 +902,8 @@ export function WorkerDaySidebar({
   const [orders, setOrders] = useState<SidebarOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(date);
+  /* Inline order creation */
+  const [createOrderTime, setCreateOrderTime] = useState<string | null>(null);
 
   // Fetch orders for the employee on the given date
   useEffect(() => {
@@ -848,6 +995,45 @@ export function WorkerDaySidebar({
 
   const completedCount = orders.filter(o => o.status === 'completed').length;
   const totalCount = orders.length;
+
+  // Show inline create order form?
+  if (createOrderTime && employeeId !== '__order_only__') {
+    const createContent = (
+      <InlineCreateOrder
+        employeeId={employeeId}
+        employeeName={employeeName}
+        date={currentDate}
+        time={createOrderTime}
+        onBack={() => setCreateOrderTime(null)}
+        onCreated={() => {
+          setCreateOrderTime(null);
+          // Refresh orders
+          const refetch = async () => {
+            try {
+              const supabase = createClient();
+              const { data } = await supabase
+                .from('orders')
+                .select('id, status, priority, scheduled_date, scheduled_time_start, scheduled_time_end, planned_start_time, planned_end_time, service_duration_minutes, min_arrival_time, max_arrival_time, time_window, services, notes, total_price, client:clients(id, name, phone, address, city)')
+                .eq('employee_id', employeeId)
+                .eq('scheduled_date', currentDate)
+                .order('scheduled_time_start');
+              if (data) setOrders(data as any);
+            } catch {}
+          };
+          refetch();
+        }}
+      />
+    );
+    if (embedded) {
+      return <div className="flex flex-col h-full overflow-hidden bg-white relative">{createContent}</div>;
+    }
+    return (
+      <motion.div initial={{ x: -340, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -340, opacity: 0 }}
+        transition={{ type: 'spring', damping: 26, stiffness: 300 }}
+        className="absolute left-0 top-0 bottom-0 w-[320px] bg-white shadow-2xl z-40 flex flex-col overflow-hidden"
+      >{createContent}</motion.div>
+    );
+  }
 
   // Show order detail overlay?
   const showOrderDetail = !!selectedOrder;
@@ -990,20 +1176,38 @@ export function WorkerDaySidebar({
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
             </div>
-          ) : orders.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-              <Calendar className="h-8 w-8 mb-2" />
-              <p className="text-sm font-medium">Brak zlecen</p>
-              <p className="text-[11px] mt-0.5">Ten pracownik nie ma zlecen na ten dzien</p>
-            </div>
           ) : (
             <div className="relative" style={{ minHeight: TOTAL_HOURS * HOUR_HEIGHT + 20 }}>
+              {/* Clickable hour slots — click empty area to create order at that time */}
+              {Array.from({ length: TOTAL_HOURS * 2 }, (_, i) => {
+                const slotMinutes = START_HOUR * 60 + i * 30;
+                const slotTop = (i * 30 / 60) * HOUR_HEIGHT;
+                const slotHeight = HOUR_HEIGHT / 2;
+                const slotTime = minutesToTimeStr(slotMinutes);
+                // Check if any order overlaps this 30-min slot
+                const isOccupied = orderBlocks.some(b => b.startMin < slotMinutes + 30 && b.endMin > slotMinutes);
+                if (isOccupied) return null;
+                return (
+                  <button
+                    key={`slot-${i}`}
+                    className="absolute right-2 rounded-md transition-all group z-0 hover:bg-orange-50 hover:border hover:border-dashed hover:border-orange-300"
+                    style={{ top: slotTop, height: slotHeight, left: 44 }}
+                    onClick={() => setCreateOrderTime(slotTime)}
+                    title={`Dodaj zlecenie na ${slotTime}`}
+                  >
+                    <span className="hidden group-hover:flex items-center justify-center h-full text-[10px] text-orange-500 font-medium gap-1">
+                      + {slotTime}
+                    </span>
+                  </button>
+                );
+              })}
+
               {/* Hour grid lines */}
               {Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => {
                 const hour = START_HOUR + i;
                 const top = i * HOUR_HEIGHT;
                 return (
-                  <div key={hour} className="absolute left-0 right-0" style={{ top }}>
+                  <div key={hour} className="absolute left-0 right-0 pointer-events-none" style={{ top }}>
                     <div className="flex items-start">
                       <span className="text-[10px] text-gray-300 font-mono w-10 text-right pr-2 -mt-1.5 select-none">
                         {hour.toString().padStart(2, '0')}:00
@@ -1018,7 +1222,7 @@ export function WorkerDaySidebar({
               {Array.from({ length: TOTAL_HOURS }, (_, i) => {
                 const top = i * HOUR_HEIGHT + HOUR_HEIGHT / 2;
                 return (
-                  <div key={`half-${i}`} className="absolute right-0" style={{ top, left: 42 }}>
+                  <div key={`half-${i}`} className="absolute right-0 pointer-events-none" style={{ top, left: 42 }}>
                     <div className="border-t border-dashed border-gray-50 w-full" />
                   </div>
                 );
@@ -1042,6 +1246,8 @@ export function WorkerDaySidebar({
               {/* Order blocks */}
               {orderBlocks.map(({ order, startMin, endMin, top, height }) => {
                 const isHighlighted = highlightOrderId === order.id;
+                const isHovered = hoveredOrderId === order.id;
+                const isActive = isHighlighted || isHovered;
                 const statusColor = STATUS_COLORS[order.status] || '#9CA3AF';
                 const isCompleted = order.status === 'completed';
                 const clientName = order.client?.name ?? 'Brak klienta';
@@ -1054,19 +1260,23 @@ export function WorkerDaySidebar({
                   <button
                     key={order.id}
                     onClick={() => onOrderClick?.(order.id)}
+                    onMouseEnter={() => onOrderHover?.(order.id)}
+                    onMouseLeave={() => onOrderHover?.(null)}
                     className={cn(
-                      'absolute right-2 rounded-lg border-l-[3px] text-left transition-all hover:shadow-md overflow-hidden',
+                      'absolute right-2 rounded-lg border-l-[3px] text-left transition-all overflow-hidden',
                       isHighlighted
                         ? 'ring-2 ring-blue-500 ring-offset-1 shadow-md z-10'
-                        : 'shadow-sm',
+                        : isHovered
+                          ? 'ring-2 ring-orange-400 ring-offset-1 shadow-md z-10'
+                          : 'shadow-sm hover:shadow-md hover:ring-1 hover:ring-orange-300',
                       isCompleted ? 'opacity-60' : '',
                     )}
                     style={{
                       top: top + 2,
                       height: Math.max(height - 4, 24),
                       left: 44,
-                      borderLeftColor: statusColor,
-                      backgroundColor: isHighlighted ? '#EFF6FF' : '#FAFAFA',
+                      borderLeftColor: isActive ? '#F97316' : statusColor,
+                      backgroundColor: isHighlighted ? '#EFF6FF' : isHovered ? '#FFF7ED' : '#F9FAFB',
                     }}
                   >
                     <div className="px-2 py-1 h-full flex flex-col justify-center overflow-hidden">
@@ -1174,6 +1384,19 @@ export function WorkerDaySidebar({
               </div>
             </div>
           )}
+
+          {/* Add order button */}
+          <div className="p-3 border-t border-gray-100 flex-shrink-0">
+            <Button
+              className="w-full rounded-lg text-xs h-8 bg-orange-500 hover:bg-orange-600"
+              onClick={() => {
+                setCreateOrderTime('09:00');
+              }}
+            >
+              <Clock className="h-3.5 w-3.5 mr-1.5" />
+              Dodaj zlecenie
+            </Button>
+          </div>
         </div>
       ) : (
         /* Vehicle tab */

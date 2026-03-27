@@ -618,6 +618,40 @@ function IntegrationsTab() {
   );
 }
 
+// ─── Display Tab ────────────────────────────────────────────────────
+function DisplayTab() {
+  const [showServiceColors, setShowServiceColors] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('show_service_colors') === 'true';
+  });
+
+  const toggleServiceColors = (val: boolean) => {
+    setShowServiceColors(val);
+    localStorage.setItem('show_service_colors', String(val));
+    toast.success(val ? 'Kolory usług włączone' : 'Kolory usług wyłączone');
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Wyświetlanie</CardTitle>
+          <CardDescription>Opcje wizualne kalendarza i planera</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium text-sm">Kolory usług w kalendarzach i Gancie</p>
+              <p className="text-xs text-gray-500">Wyświetlaj kolorowe paski przy zleceniach w zależności od rodzaju usługi</p>
+            </div>
+            <Switch checked={showServiceColors} onCheckedChange={toggleServiceColors} />
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Main Settings Page ──────────────────────────────────────────────
 export default function SettingsPage() {
   return (
@@ -645,6 +679,10 @@ export default function SettingsPage() {
               <Plug className="h-4 w-4" />
               Integracje
             </TabsTrigger>
+            <TabsTrigger value="display" className="gap-2 data-[state=active]:bg-white data-[state=active]:shadow-sm">
+              <Palette className="h-4 w-4" />
+              Wyświetlanie
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="profile">
@@ -661,6 +699,10 @@ export default function SettingsPage() {
 
           <TabsContent value="integrations">
             <IntegrationsTab />
+          </TabsContent>
+
+          <TabsContent value="display">
+            <DisplayTab />
           </TabsContent>
         </Tabs>
       </div>

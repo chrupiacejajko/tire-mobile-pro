@@ -128,3 +128,24 @@
     @apply font-sans;
   }
 }
+
+/* Leaflet tooltip styles for map pins */
+.leaflet-tooltip-address {
+  background: white !important;
+  border: 2px solid #DC2626 !important;
+  border-radius: 8px !important;
+  padding: 4px 8px !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+  font-family: inherit !important;
+}
+.leaflet-tooltip-address::before {
+  border-top-color: #DC2626 !important;
+}
+.leaflet-tooltip-order {
+  background: white !important;
+  border: 1px solid #E5E7EB !important;
+  border-radius: 6px !important;
+  padding: 3px 6px !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1) !important;
+  font-family: inherit !important;
+}

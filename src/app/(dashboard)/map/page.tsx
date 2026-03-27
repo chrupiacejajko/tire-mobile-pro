@@ -242,7 +242,7 @@ function CompassRose({ direction }: { direction: string | null }) {
 }
 
 /* ─── Sidebar tabs ───────────────────────────────────────────────────── */
-type SidebarTab = 'vehicles' | 'routes' | 'orders';
+type SidebarTab = 'fleet' | 'routes' | 'orders';
 
 /* ─── Vehicle card ───────────────────────────────────────────────────── */
 function VehicleCard({ vehicle, selected, onClick }: { vehicle: VehicleData; selected: boolean; onClick: () => void }) {
@@ -1887,7 +1887,7 @@ export default function MapPage() {
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleData | null>(null);
   const [selectedRoute, setSelectedRoute] = useState<EmployeeRoute | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<MapOrder | null>(null);
-  const [tab, setTab] = useState<SidebarTab>('vehicles');
+  const [tab, setTab] = useState<SidebarTab>('fleet');
   const [showRouteLines, setShowRouteLines] = useState(true);
   const [showOrders, setShowOrders] = useState(true);
   const [showRegions, setShowRegions] = useState(false);
@@ -1918,6 +1918,8 @@ export default function MapPage() {
   const [workerSidebarEmployeeId, setWorkerSidebarEmployeeId] = useState<string | null>(null);
   const [workerSidebarEmployeeName, setWorkerSidebarEmployeeName] = useState<string>('');
   const [workerSidebarHighlightOrderId, setWorkerSidebarHighlightOrderId] = useState<string | null>(null);
+  /* Bidirectional hover between calendar and map pins */
+  const [hoveredOrderId, setHoveredOrderId] = useState<string | null>(null);
   /* Left sidebar drill-down view */
   const [leftSidebarView, setLeftSidebarView] = useState<'vehicles' | 'worker-detail'>('vehicles');
   // countdownRef no longer needed — SSE handles live updates
@@ -2289,29 +2291,31 @@ export default function MapPage() {
   };
 
   const handleSelectOrder = (o: MapOrder) => {
-    const isDeselecting = selectedOrder?.id === o.id;
-    setSelectedOrder(isDeselecting ? null : o);
+    const isDeselecting = workerSidebarHighlightOrderId === o.id;
+    // Don't open order details — open calendar with highlighted order instead
+    setSelectedOrder(null);
     setSelectedVehicle(null);
-    setSelectedRoute(null);
     if (!isDeselecting) {
       if (o.employee_id && o.employee_name) {
-        // Assigned order: open worker detail with calendar + order detail
+        // Assigned order: open worker calendar with this order highlighted
         setWorkerSidebarEmployeeId(o.employee_id);
         setWorkerSidebarEmployeeName(o.employee_name);
         setWorkerSidebarHighlightOrderId(o.id);
         const matchRoute = routes.find(r => r.employee_id === o.employee_id);
-        if (matchRoute) setSelectedRoute(matchRoute);
+        setSelectedRoute(matchRoute ?? null);
       } else {
-        // Unassigned order: open worker detail in order-only mode
+        // Unassigned order: open order-only mode (no calendar to show)
         setWorkerSidebarEmployeeId('__order_only__');
         setWorkerSidebarEmployeeName(o.client_name ?? 'Zlecenie');
         setWorkerSidebarHighlightOrderId(o.id);
+        setSelectedRoute(null);
       }
       setLeftSidebarView('worker-detail');
     } else {
       setWorkerSidebarEmployeeId(null);
       setWorkerSidebarEmployeeName('');
       setWorkerSidebarHighlightOrderId(null);
+      setSelectedRoute(null);
       setLeftSidebarView('vehicles');
     }
     // Fly to order location
@@ -2387,18 +2391,7 @@ export default function MapPage() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                     <Input placeholder="Szukaj..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8 h-8 text-xs rounded-xl bg-gray-50 border-gray-200" />
                   </div>
-                  {/* Tabs */}
-                  <div className="flex rounded-xl bg-gray-100 p-0.5">
-                    <button onClick={() => setTab('vehicles')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'vehicles' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
-                      <Truck className="h-3.5 w-3.5 inline mr-1" />Pojazdy
-                    </button>
-                    <button onClick={() => setTab('routes')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'routes' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
-                      <Route className="h-3.5 w-3.5 inline mr-1" />Trasy
-                    </button>
-                    <button onClick={() => setTab('orders')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'orders' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
-                      <Package className="h-3.5 w-3.5 inline mr-1" />Zlecenia
-                    </button>
-                  </div>
+                  {/* Single "Fleet" heading — vehicles + routes merged, no tab switching needed */}
                 </div>
 
                 {/* List */}
@@ -2407,46 +2400,29 @@ export default function MapPage() {
                     <div className="flex items-center justify-center py-12 text-gray-400">
                       <RefreshCw className="h-6 w-6 animate-spin mx-auto" />
                     </div>
-                  ) : tab === 'vehicles' ? (
-                    filteredVehicles.length === 0 ? (
-                      <div className="text-center py-12 text-gray-400"><Truck className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak pojazdów</p></div>
-                    ) : filteredVehicles.map(v => (
-                      <VehicleCard key={v.id} vehicle={v} selected={selectedVehicle?.id === v.id} onClick={() => handleSelectVehicle(v)} />
-                    ))
-                  ) : tab === 'routes' ? (
-                    filteredRoutes.length === 0 ? (
-                      <div className="text-center py-12 text-gray-400"><Route className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak tras na dziś</p></div>
-                    ) : filteredRoutes.map(r => (
-                      <RouteCard key={r.employee_id} route={r} selected={selectedRoute?.employee_id === r.employee_id} onClick={() => handleSelectRoute(r)} />
-                    ))
                   ) : (
-                    /* Orders tab */
                     <>
-                      {/* Order count badges */}
-                      <div className="flex flex-wrap items-center gap-1 pb-2">
-                        {[
-                          { key: 'all', label: 'Wszystkie', count: orderCountAll },
-                          { key: 'new', label: 'Nowe', count: orderCountNew },
-                          { key: 'assigned', label: 'Przypisane', count: orderCountAssigned },
-                          { key: 'in_progress', label: 'W trakcie', count: orderCountInProgress },
-                        ].map(f => (
-                          <button
-                            key={f.key}
-                            onClick={() => setOrderFilter(f.key)}
-                            className={cn(
-                              'text-[11px] font-medium px-2 py-1 rounded-lg transition-all',
-                              orderFilter === f.key ? 'bg-orange-100 text-orange-700' : 'bg-gray-50 text-gray-500 hover:bg-gray-100',
-                            )}
-                          >
-                            {f.label} ({f.count})
-                          </button>
-                        ))}
-                      </div>
-                      {filteredOrders.length === 0 ? (
-                        <div className="text-center py-12 text-gray-400"><Package className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak zleceń</p></div>
-                      ) : filteredOrders.map(o => (
-                        <OrderCard key={o.id} order={o} selected={selectedOrder?.id === o.id} onClick={() => handleSelectOrder(o)} />
-                      ))}
+                      {/* Routes (workers with orders today) */}
+                      {filteredRoutes.length > 0 && (
+                        <>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 px-1">Pracownicy · {filteredRoutes.length}</p>
+                          {filteredRoutes.map(r => (
+                            <RouteCard key={r.employee_id} route={r} selected={selectedRoute?.employee_id === r.employee_id} onClick={() => handleSelectRoute(r)} />
+                          ))}
+                        </>
+                      )}
+                      {/* Vehicles (GPS tracked) */}
+                      {filteredVehicles.length > 0 && (
+                        <>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 px-1 mt-2">Pojazdy GPS · {filteredVehicles.length}</p>
+                          {filteredVehicles.map(v => (
+                            <VehicleCard key={v.id} vehicle={v} selected={selectedVehicle?.id === v.id} onClick={() => handleSelectVehicle(v)} />
+                          ))}
+                        </>
+                      )}
+                      {filteredRoutes.length === 0 && filteredVehicles.length === 0 && (
+                        <div className="text-center py-12 text-gray-400"><Truck className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak pojazdów</p></div>
+                      )}
                     </>
                   )}
                 </div>
@@ -2501,6 +2477,8 @@ export default function MapPage() {
                     employeeName={workerSidebarEmployeeName}
                     date={today}
                     highlightOrderId={workerSidebarHighlightOrderId}
+                    hoveredOrderId={hoveredOrderId}
+                    onOrderHover={setHoveredOrderId}
                     onClose={handleCloseWorkerSidebar}
                     onOrderClick={(orderId) => {
                       const order = allOrders.find(o => o.id === orderId);
@@ -2591,20 +2569,23 @@ export default function MapPage() {
             ))}
 
             {/* Route polylines */}
-            {showRouteLines && routes.map(route => (
-              route.waypoints.length >= 2 && (
+            {showRouteLines && routes.map(route => {
+              const isActiveRoute = selectedRoute?.employee_id === route.employee_id ||
+                (workerSidebarEmployeeId && workerSidebarEmployeeId !== '__order_only__' && route.employee_id === workerSidebarEmployeeId);
+              const hasActiveRoute = !!selectedRoute || (!!workerSidebarEmployeeId && workerSidebarEmployeeId !== '__order_only__');
+              return route.waypoints.length >= 2 && (
                 <Polyline
                   key={route.employee_id}
                   positions={route.waypoints.map(w => [w.lat, w.lng] as [number, number])}
                   pathOptions={{
                     color: route.color,
-                    weight: selectedRoute?.employee_id === route.employee_id ? 5 : 3,
-                    opacity: selectedRoute?.employee_id === route.employee_id ? 0.9 : 0.5,
-                    dashArray: '8, 6',
+                    weight: isActiveRoute ? 5 : hasActiveRoute ? 2 : 3,
+                    opacity: isActiveRoute ? 0.9 : hasActiveRoute ? 0.2 : 0.5,
+                    dashArray: isActiveRoute ? '8, 6' : '4, 6',
                   }}
                 />
-              )
-            ))}
+              );
+            })}
 
             {/* Order markers on routes */}
             {showRouteLines && routes.map(route =>
@@ -2641,8 +2622,12 @@ export default function MapPage() {
                 const isUrgent = order.priority === 'urgent';
                 const isSelected = selectedOrder?.id === order.id;
                 const isSidebarHighlighted = workerSidebarHighlightOrderId === order.id;
-                const isEmphasized = isSelected || isSidebarHighlighted;
-                const color = isUrgent ? '#EF4444' : ORDER_STATUS_COLORS[order.status] || '#9CA3AF';
+                const isHovered = hoveredOrderId === order.id;
+                const isEmphasized = isSelected || isSidebarHighlighted || isHovered;
+                // Use driver color when assigned, fall back to status color
+                const driverRoute = order.employee_id ? routes.find(r => r.employee_id === order.employee_id) : null;
+                const driverColor = driverRoute?.color ?? null;
+                const color = isUrgent ? '#EF4444' : (driverColor ?? ORDER_STATUS_COLORS[order.status] ?? '#9CA3AF');
                 // Level 2: dim pins for workers without available slots during insert mode
                 const isInsertMode = insertAvailableWorkerIds.size > 0;
                 const isWorkerAvailable = !isInsertMode || (order.employee_id && insertAvailableWorkerIds.has(order.employee_id));
@@ -2652,30 +2637,30 @@ export default function MapPage() {
                     center={[order.lat!, order.lng!]}
                     radius={isEmphasized ? 10 : isUrgent ? 8 : 7}
                     pathOptions={{
-                      color: isEmphasized ? '#1D4ED8' : 'white',
-                      fillColor: isSidebarHighlighted && !isSelected ? '#3B82F6' : color,
+                      color: isEmphasized ? '#F97316' : 'white',
+                      fillColor: isHovered ? '#F97316' : (isSidebarHighlighted && !isSelected ? '#3B82F6' : color),
                       fillOpacity: isInsertMode ? (isWorkerAvailable ? 1 : 0.2) : (isEmphasized ? 1 : 0.85),
                       weight: isEmphasized ? 3 : 2,
                       dashArray: order.status === 'new' ? '4, 3' : undefined,
                       opacity: isInsertMode && !isWorkerAvailable ? 0.3 : 1,
                     }}
-                    eventHandlers={{ click: () => handleSelectOrder(order) }}
+                    eventHandlers={{
+                      click: () => handleSelectOrder(order),
+                      mouseover: () => setHoveredOrderId(order.id),
+                      mouseout: () => setHoveredOrderId(null),
+                    }}
                   >
-                    <Popup>
-                      <div className="text-sm min-w-[180px]">
-                        <p className="font-bold">{order.client_name ?? 'Brak klienta'}</p>
-                        <p className="text-xs text-gray-500">{order.client_address}</p>
-                        {order.services?.length > 0 && (
-                          <p className="text-xs text-gray-400 mt-0.5">{order.services.map(s => s.name).join(', ')}</p>
-                        )}
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ backgroundColor: color + '20', color }}>
-                            {ORDER_STATUS_LABELS[order.status]}
-                          </span>
-                          {order.employee_name && <span className="text-xs text-blue-500">{order.employee_name}</span>}
-                        </div>
-                      </div>
-                    </Popup>
+                    {/* Persistent tooltip label with client name + time */}
+                    <LeafletTooltip permanent={false} direction="top" offset={[0, -8]} className="leaflet-tooltip-order">
+                      <span style={{ fontWeight: 600, fontSize: 11 }}>
+                        {order.scheduled_time_start?.slice(0, 5) ?? ''} {order.client_name ?? ''}
+                      </span>
+                      {order.employee_name && (
+                        <span style={{ display: 'block', fontSize: 10, color: driverColor ?? '#6B7280' }}>
+                          {order.employee_name}
+                        </span>
+                      )}
+                    </LeafletTooltip>
                   </CircleMarker>
                 );
               })}
@@ -2716,16 +2701,13 @@ export default function MapPage() {
                 />
                 <CircleMarker
                   center={[addressPin.lat, addressPin.lng]}
-                  radius={10}
+                  radius={12}
                   pathOptions={{ color: '#DC2626', fillColor: '#EF4444', fillOpacity: 1, weight: 3 }}
                 >
-                  <Popup>
-                    <div className="text-sm min-w-[180px]">
-                      <p className="font-bold text-red-600">Szukany adres</p>
-                      <p className="text-xs text-gray-600 mt-0.5">{addressPin.label}</p>
-                      <p className="text-[11px] text-gray-400 font-mono mt-0.5">{addressPin.lat.toFixed(5)}, {addressPin.lng.toFixed(5)}</p>
-                    </div>
-                  </Popup>
+                  <LeafletTooltip permanent direction="top" offset={[0, -14]} className="leaflet-tooltip-address">
+                    <span style={{ fontWeight: 700, fontSize: 12, color: '#DC2626' }}>Adres zlecenia</span>
+                    <span style={{ display: 'block', fontSize: 10, color: '#4B5563', maxWidth: 220 }}>{addressPin.label}</span>
+                  </LeafletTooltip>
                 </CircleMarker>
                 {/* Highlight nearby workers with pulse */}
                 {nearbyWorkers.map(w => (

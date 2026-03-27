@@ -414,7 +414,7 @@ export default function PlannerPage() {
                       )}
                     </div>
                   )}
-                  <GanttView routes={liveScoring.routes} unassigned={data?.unassigned ?? []} date={date} onRefresh={() => silentLoad(date, selectedRegionId)} />
+                  <GanttView routes={liveScoring.routes} unassigned={data?.unassigned ?? []} date={date} onRefresh={() => silentLoad(date, selectedRegionId)} onOrderClick={(orderId) => router.push(`/orders?highlight=${orderId}`)} />
                 </div>
                 {/* Overlays for loading / empty states */}
                 {loading && liveScoring.routes.length === 0 && (

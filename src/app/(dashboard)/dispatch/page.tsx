@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Check, Loader2, Truck } from 'lucide-react';
 
 import { ClientSearchSection, type ClientResult } from './_components/ClientSearchSection';
@@ -23,6 +24,11 @@ function todayStr() {
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function DispatchPage() {
+  const searchParams = useSearchParams();
+  const prefillEmployeeId = searchParams.get('employee_id');
+  const prefillDate = searchParams.get('date');
+  const prefillTime = searchParams.get('time');
+
   // ── Client ──────────────────────────────────────────────────────────────
   const [phoneInput, setPhoneInput] = useState('');
   const [clientResults, setClientResults] = useState<ClientResult[]>([]);
@@ -38,9 +44,9 @@ export default function DispatchPage() {
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
 
   // ── Scheduling ──────────────────────────────────────────────────────────
-  const [schedulingType, setSchedulingType] = useState<SchedulingType>('time_window');
-  const [selectedDate, setSelectedDate] = useState(todayStr());
-  const [selectedTime, setSelectedTime] = useState('10:00');
+  const [schedulingType, setSchedulingType] = useState<SchedulingType>(prefillTime ? 'fixed_time' : 'time_window');
+  const [selectedDate, setSelectedDate] = useState(prefillDate ?? todayStr());
+  const [selectedTime, setSelectedTime] = useState(prefillTime ?? '10:00');
   const [flexibility, setFlexibility] = useState(0);
   const [windowPreset, setWindowPreset] = useState<TimeWindowPreset>('morning');
   const [customWindowStart, setCustomWindowStart] = useState('08:00');
@@ -54,7 +60,7 @@ export default function DispatchPage() {
   // ── Worker suggestions ──────────────────────────────────────────────────
   const [workerSuggestions, setWorkerSuggestions] = useState<WorkerSuggestion[]>([]);
   const [loadingWorkers, setLoadingWorkers] = useState(false);
-  const [selectedWorker, setSelectedWorker] = useState<string | null>(null);
+  const [selectedWorker, setSelectedWorker] = useState<string | null>(prefillEmployeeId);
   const [autoAssign, setAutoAssign] = useState(false);
 
   // ── Submission ──────────────────────────────────────────────────────────

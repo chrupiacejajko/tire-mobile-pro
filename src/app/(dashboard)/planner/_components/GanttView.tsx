@@ -37,6 +37,7 @@ interface GanttViewProps {
   unassigned: UnassignedOrder[];
   date: string;
   onRefresh: () => void;
+  onOrderClick?: (orderId: string) => void;
 }
 
 // ── Delay tolerance color system (9 levels + 2 statuses) ─────────────────────
@@ -144,6 +145,7 @@ export function GanttView({
   unassigned,
   date,
   onRefresh,
+  onOrderClick,
 }: GanttViewProps) {
   const START_HOUR = 0;
   const END_HOUR = 24;
@@ -332,12 +334,25 @@ export function GanttView({
     return () => { document.removeEventListener('mousemove', handleMouseMove); document.removeEventListener('mouseup', handleMouseUp); };
   }, [dragging, dragTargetRow, date, onRefresh]);
 
+  const lastMouseDown = useRef<{ x: number; y: number; orderId: string } | null>(null);
+
   const handleBlockMouseDown = (e: React.MouseEvent, orderId: string, employeeId: string, left: number, isUnassigned?: boolean, blockWidth?: number) => {
     if (e.button !== 0) return; e.preventDefault(); setTooltip(null);
+    lastMouseDown.current = { x: e.clientX, y: e.clientY, orderId };
     const snapped = snapToMinutes(left);
     setDragSnapX(snapped);
     dragSnapXRef.current = snapped;
     setDragging({ orderId, employeeId, startX: e.clientX, startY: e.clientY, origLeft: left, origRow: employeeId, isUnassigned, blockWidth });
+  };
+
+  const handleBlockClick = (e: React.MouseEvent, orderId: string) => {
+    // Only fire if mouse barely moved (was a click, not a drag)
+    if (!lastMouseDown.current || lastMouseDown.current.orderId !== orderId) return;
+    const dx = Math.abs(e.clientX - lastMouseDown.current.x);
+    const dy = Math.abs(e.clientY - lastMouseDown.current.y);
+    if (dx < 5 && dy < 5 && onOrderClick) {
+      onOrderClick(orderId);
+    }
   };
 
   const handleContextMenu = (e: React.MouseEvent, orderId: string, employeeId: string) => {
@@ -523,6 +538,7 @@ export function GanttView({
             } : {}),
           }}
           onMouseDown={(e) => handleBlockMouseDown(e, stop.order_id, employeeId, serviceStartX, false, serviceWidth)}
+          onMouseUp={(e) => handleBlockClick(e, stop.order_id)}
           onContextMenu={(e) => handleContextMenu(e, stop.order_id, employeeId)}
           onMouseEnter={(e) => { if (!dragging) setTooltip({ x: e.clientX, y: e.clientY - 10, stop, employeeName }); }}
           onMouseLeave={() => setTooltip(null)}
@@ -538,12 +554,17 @@ export function GanttView({
                   {stop.sequence}. {stop.client_name}
                 </span>
               </div>
-              {/* Bottom line: time range + duration */}
+              {/* Bottom line: time range + services */}
               <div className="flex items-center gap-1 min-w-0 mt-px">
                 <span className={`text-[9px] tabular-nums opacity-70 ${blockColor.textClass}`}>
                   {stop.service_start}–{stop.departure_time}
                 </span>
-                {serviceWidth > 140 && stop.service_duration_minutes > 0 && (
+                {serviceWidth > 140 && stop.services.length > 0 && (
+                  <span className={`text-[8px] opacity-50 truncate ${blockColor.textClass}`}>
+                    · {stop.services.map((s: any) => typeof s === 'string' ? s : s?.name).filter(Boolean).join(', ')}
+                  </span>
+                )}
+                {serviceWidth > 140 && stop.services.length === 0 && stop.service_duration_minutes > 0 && (
                   <span className={`text-[8px] opacity-50 ${blockColor.textClass}`}>
                     ({stop.service_duration_minutes}min)
                   </span>
@@ -907,6 +928,11 @@ export function GanttView({
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
+          {onOrderClick && (
+            <button className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors" onClick={() => { setContextMenu(null); onOrderClick(contextMenu.orderId); }}>
+              <Clock className="h-3.5 w-3.5 text-blue-500" /> Otwórz zlecenie
+            </button>
+          )}
           <button className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors" onClick={() => toggleLock(contextMenu.orderId)}>
             {lockedOrders.has(contextMenu.orderId) ? <><Unlock className="h-3.5 w-3.5 text-gray-500" /> Odblokuj</> : <><Lock className="h-3.5 w-3.5 text-orange-500" /> Zablokuj</>}
           </button>
