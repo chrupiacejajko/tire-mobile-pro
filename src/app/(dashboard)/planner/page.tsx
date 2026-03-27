@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Route, CheckCircle, Loader2,
@@ -103,21 +103,21 @@ export default function PlannerPage() {
   }, [load, silentLoad, date, viewMode, selectedRegionId]);
   useOrdersRealtime(handleRealtimeChange);
 
-  // Sync date and region to URL search params
+  // Sync date and region to URL search params (use ref to avoid infinite loop)
+  const lastSyncedRef = useRef({ date: '', region: '' as string | null });
   useEffect(() => {
-    const currentDate = searchParams.get('date');
-    const currentRegion = searchParams.get('region') || null;
-    if (currentDate !== date || currentRegion !== selectedRegionId) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set('date', date);
-      if (selectedRegionId) {
-        params.set('region', selectedRegionId);
-      } else {
-        params.delete('region');
-      }
-      router.replace(`?${params.toString()}`, { scroll: false });
+    if (lastSyncedRef.current.date === date && lastSyncedRef.current.region === selectedRegionId) return;
+    lastSyncedRef.current = { date, region: selectedRegionId };
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('date', date);
+    if (selectedRegionId) {
+      params.set('region', selectedRegionId);
+    } else {
+      params.delete('region');
     }
-  }, [date, selectedRegionId, searchParams, router]);
+    router.replace(`?${params.toString()}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, selectedRegionId]);
 
   // ── Undo handler ──────────────────────────────────────────────────────────
 
@@ -290,8 +290,9 @@ export default function PlannerPage() {
 
   // ── Live GPS scoring (only active in Gantt view) ─────────────────────────
 
+  const plannerRoutes = useMemo(() => data?.routes ?? [], [data?.routes]);
   const liveScoring = useLiveScoring(
-    data?.routes ?? [],
+    plannerRoutes,
     viewMode === 'gantt',
     60_000, // refresh every 60 seconds
   );
