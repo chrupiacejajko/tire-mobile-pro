@@ -49,6 +49,7 @@ export interface AutoAssignParams {
   priority: string;
   service_duration_minutes: number;
   exclude_order_id?: string; // exclude this order from day-order counts
+  required_skills?: string[]; // skill names required for this order
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ export async function autoAssignWorker(params: AutoAssignParams): Promise<AutoAs
     order_lat, order_lng, scheduled_date,
     scheduling_type, time_window_start, time_window_end, scheduled_time,
     priority, service_duration_minutes, exclude_order_id,
+    required_skills: requiredSkills = [],
   } = params;
 
   const isUrgent = priority === 'urgent' || priority === 'high';
@@ -76,10 +78,19 @@ export async function autoAssignWorker(params: AutoAssignParams): Promise<AutoAs
 
   const { data: employees } = await supabase
     .from('employees')
-    .select('id, skills, user:profiles(full_name)')
+    .select('id, user:profiles(full_name), employee_skills(skill:skills(name))')
     .eq('is_active', true);
 
   if (!employees?.length) return [];
+
+  // Build skill name arrays from junction table
+  const empSkillsMap = new Map<string, string[]>();
+  for (const emp of employees) {
+    const names = ((emp as any).employee_skills ?? [])
+      .map((es: any) => es.skill?.name)
+      .filter(Boolean) as string[];
+    empSkillsMap.set(emp.id, names);
+  }
 
   const empIds = employees.map(e => e.id);
 
@@ -275,11 +286,17 @@ export async function autoAssignWorker(params: AutoAssignParams): Promise<AutoAs
 
     const insertion_score = extraKm * 1.5;
 
-    // ── e. Bonus for driving workers ──────────────────────────────────
+    // ── e. Skills matching ────────────────────────────────────────────
+    const empSkills = empSkillsMap.get(emp.id) ?? [];
+    const hasSkills = requiredSkills.length === 0 ||
+      requiredSkills.every(s => empSkills.includes(s));
+    const skills_score = hasSkills ? 0 : 200; // heavy penalty for missing skills
+
+    // ── f. Bonus for driving workers ──────────────────────────────────
     const drivingBonus = gpsData?.status === 'driving' ? -10 : 0;
 
-    // ── f. Final score ────────────────────────────────────────────────
-    const score = travel_score + tw_score + workload_score + insertion_score + drivingBonus;
+    // ── g. Final score ────────────────────────────────────────────────
+    const score = travel_score + tw_score + workload_score + insertion_score + drivingBonus + skills_score;
 
     const isDriving = gpsData?.status === 'driving' || (gpsData?.speed ?? 0) > 5;
     const isNearby = gpsDistanceKm !== null && gpsDistanceKm < 20;
@@ -298,7 +315,7 @@ export async function autoAssignWorker(params: AutoAssignParams): Promise<AutoAs
       gps_distance_km: gpsDistanceKm,
       gps_status: gpsData?.status ?? null,
       gps_speed: gpsData?.speed ?? null,
-      has_skills: true,
+      has_skills: hasSkills,
       is_driving: isDriving,
       is_nearby: isNearby,
       _tw_score: tw_score,

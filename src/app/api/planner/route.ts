@@ -29,12 +29,19 @@ export async function GET(request: NextRequest) {
   const supabase = getAdminClient();
   const { searchParams } = new URL(request.url);
   const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+  const regionId = searchParams.get('region_id') || null;
 
   // ── Employees ─────────────────────────────────────────────────────────────
-  const { data: employees } = await supabase
+  let employeesQuery = supabase
     .from('employees')
     .select('id, region_id, default_lat, default_lng, default_location, user:profiles(full_name)')
     .eq('is_active', true);
+
+  if (regionId) {
+    employeesQuery = employeesQuery.eq('region_id', regionId);
+  }
+
+  const { data: employees } = await employeesQuery;
 
   if (!employees?.length) return NextResponse.json({ routes: [], unassigned: [], date });
 

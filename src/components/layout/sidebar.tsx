@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Calendar, ClipboardList, MapPin, Users, UserCog,
   BarChart3, Settings, Wrench, LogOut, Bell, Truck, Menu, X, Route,
-  FileText, CalendarDays, Upload, PhoneCall, Repeat, Package, Award,
+  FileText, CalendarDays, Upload, PhoneCall, Repeat, Package,
+  ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
@@ -37,7 +38,6 @@ const resourcesMenu = [
 
 const configMenu = [
   { name: 'Usługi', href: '/services', icon: Wrench },
-  { name: 'Umiejętności', href: '/skills', icon: Award },
   { name: 'Magazyn', href: '/warehouse', icon: Package },
   { name: 'Formularze', href: '/forms', icon: FileText },
 ];
@@ -54,50 +54,129 @@ const toolsMenu = [
   { name: 'Ustawienia', href: '/settings', icon: Settings },
 ];
 
-function NavSection({ label, items, pathname, onNavigate }: {
+// ── localStorage key for collapsed state ────────────────────────────
+const STORAGE_KEY = 'sidebar-collapsed-sections';
+
+const DEFAULT_COLLAPSED: Record<string, boolean> = {
+  Operacje: false,
+  Zasoby: false,
+  Konfiguracja: true,
+  Raporty: true,
+  'Narzędzia': true,
+};
+
+function loadCollapsedState(): Record<string, boolean> {
+  if (typeof window === 'undefined') return DEFAULT_COLLAPSED;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) return { ...DEFAULT_COLLAPSED, ...JSON.parse(stored) };
+  } catch {}
+  return DEFAULT_COLLAPSED;
+}
+
+function saveCollapsedState(state: Record<string, boolean>) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {}
+}
+
+// ── Collapsible NavSection ──────────────────────────────────────────
+
+function NavSection({ label, items, pathname, onNavigate, collapsed, onToggle }: {
   label: string;
   items: { name: string; href: string; icon: any }[];
   pathname: string;
   onNavigate?: () => void;
+  collapsed: boolean;
+  onToggle: () => void;
 }) {
   return (
     <div className="px-3 pt-3">
-      <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">{label}</p>
-      <nav className="space-y-0.5">
-        {items.map((item) => {
-          const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
-          return (
-            <Link key={item.href} href={item.href} className="relative block" onClick={onNavigate}>
-              <motion.div
-                className={cn(
-                  'flex items-center gap-3 rounded-xl px-3 py-1.5 text-[13px] font-medium transition-colors relative',
-                  isActive ? 'text-orange-700' : 'text-gray-600 hover:text-gray-900'
-                )}
-                whileHover={{ x: 2 }}
-                transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-              >
-                {isActive && (
-                  <motion.div className="absolute inset-0 rounded-xl bg-orange-50" layoutId="activeNav"
-                    transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
-                )}
-                <item.icon className={cn('h-[17px] w-[17px] relative z-10', isActive ? 'text-orange-600' : 'text-gray-400')} />
-                <span className="relative z-10">{item.name}</span>
-              </motion.div>
-            </Link>
-          );
-        })}
-      </nav>
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-3 pb-1.5 group cursor-pointer"
+      >
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 group-hover:text-gray-600 transition-colors">
+          {label}
+        </span>
+        <motion.div
+          animate={{ rotate: collapsed ? -90 : 0 }}
+          transition={{ duration: 0.2, ease: 'easeInOut' }}
+        >
+          <ChevronDown className="h-3.5 w-3.5 text-gray-400 group-hover:text-gray-600 transition-colors" />
+        </motion.div>
+      </button>
+      <AnimatePresence initial={false}>
+        {!collapsed && (
+          <motion.div
+            key={`section-${label}`}
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
+            <nav className="space-y-0.5">
+              {items.map((item) => {
+                const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+                return (
+                  <Link key={item.href} href={item.href} className="relative block" onClick={onNavigate}>
+                    <motion.div
+                      className={cn(
+                        'flex items-center gap-3 rounded-xl px-3 py-1.5 text-[13px] font-medium transition-colors relative',
+                        isActive ? 'text-orange-700' : 'text-gray-600 hover:text-gray-900'
+                      )}
+                      whileHover={{ x: 2 }}
+                      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                    >
+                      {isActive && (
+                        <motion.div className="absolute inset-0 rounded-xl bg-orange-50" layoutId="activeNav"
+                          transition={{ type: 'spring', stiffness: 350, damping: 30 }} />
+                      )}
+                      <item.icon className={cn('h-[17px] w-[17px] relative z-10', isActive ? 'text-orange-600' : 'text-gray-400')} />
+                      <span className="relative z-10">{item.name}</span>
+                    </motion.div>
+                  </Link>
+                );
+              })}
+            </nav>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
+// ── Section definitions for iteration ───────────────────────────────
+
+const sections = [
+  { label: 'Operacje', key: 'Operacje', items: operationsMenu },
+  { label: 'Zasoby', key: 'Zasoby', items: resourcesMenu },
+  { label: 'Konfiguracja', key: 'Konfiguracja', items: configMenu },
+  { label: 'Raporty', key: 'Raporty', items: reportsMenu },
+  { label: 'Narzędzia', key: 'Narzędzia', items: toolsMenu },
+];
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { user, signOut } = useAuth();
   const [company, setCompany] = useState<{ company_name: string; company_short: string; logo_url: string | null; primary_color: string } | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>(DEFAULT_COLLAPSED);
+
+  useEffect(() => {
+    setCollapsedSections(loadCollapsedState());
+  }, []);
 
   useEffect(() => {
     fetch('/api/company-settings').then(r => r.ok ? r.json() : null).then(d => { if (d) setCompany(d); });
+  }, []);
+
+  const toggleSection = useCallback((key: string) => {
+    setCollapsedSections(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      saveCollapsedState(next);
+      return next;
+    });
   }, []);
 
   const cName = company?.company_name || 'Wulkanizacja Mobilna';
@@ -106,9 +185,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const cColor = company?.primary_color || '#f97316';
 
   return (
-    <>
+    <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className="px-5 py-4 border-b border-gray-100">
+      <div className="px-5 py-4 border-b border-gray-100 shrink-0">
         <div className="flex items-center gap-2.5">
           <img src={cLogo} alt={cName} className="h-9 w-9 object-contain rounded-lg" />
           <span className="text-[15px] font-bold tracking-tight text-gray-800">
@@ -118,7 +197,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       {/* Company */}
-      <div className="px-3 py-3">
+      <div className="px-3 py-3 shrink-0">
         <div className="flex items-center gap-3 rounded-xl bg-gray-50 px-3 py-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg text-white text-sm font-bold" style={{ background: `linear-gradient(135deg, ${cColor}, ${cColor}dd)` }}>{cShort}</div>
           <div className="flex-1 text-left">
@@ -129,7 +208,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       {/* Quick Action */}
-      <div className="px-3 pt-2 pb-1">
+      <div className="px-3 pt-2 pb-1 shrink-0">
         <Link href={quickAction.href} className="block" onClick={onNavigate}>
           <motion.div
             className={cn(
@@ -147,25 +226,23 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </Link>
       </div>
 
-      {/* Operacje */}
-      <NavSection label="Operacje" items={operationsMenu} pathname={pathname} onNavigate={onNavigate} />
-
-      {/* Zasoby */}
-      <NavSection label="Zasoby" items={resourcesMenu} pathname={pathname} onNavigate={onNavigate} />
-
-      {/* Konfiguracja */}
-      <NavSection label="Konfiguracja" items={configMenu} pathname={pathname} onNavigate={onNavigate} />
-
-      {/* Raporty */}
-      <NavSection label="Raporty" items={reportsMenu} pathname={pathname} onNavigate={onNavigate} />
-
-      <div className="flex-1" />
-
-      {/* Narzędzia (bottom) */}
-      <NavSection label="Narzędzia" items={toolsMenu} pathname={pathname} onNavigate={onNavigate} />
+      {/* Scrollable nav sections */}
+      <div className="flex-1 overflow-y-auto min-h-0 pb-2">
+        {sections.map((section) => (
+          <NavSection
+            key={section.key}
+            label={section.label}
+            items={section.items}
+            pathname={pathname}
+            onNavigate={onNavigate}
+            collapsed={!!collapsedSections[section.key]}
+            onToggle={() => toggleSection(section.key)}
+          />
+        ))}
+      </div>
 
       {/* User */}
-      <div className="border-t border-gray-100 px-3 py-3">
+      <div className="border-t border-gray-100 px-3 py-3 shrink-0">
         <div className="flex items-center gap-3 rounded-xl px-3 py-2">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white text-sm font-bold shadow-sm">
             {user?.full_name?.charAt(0)?.toUpperCase() || 'A'}
@@ -179,7 +256,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </button>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

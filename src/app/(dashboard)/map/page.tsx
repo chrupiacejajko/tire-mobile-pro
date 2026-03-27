@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import {
   MapPin, Navigation, RefreshCw, X, Gauge, Compass,
   Clock, Truck, User, Search, ExternalLink, History,
-  Activity, Route, ChevronRight, AlertCircle,
+  Activity, Route, ChevronRight, AlertCircle, Calendar,
   Plus, Phone, Briefcase, Target, Zap, ArrowRight, Package, CheckCircle2, Loader2, ChevronDown, Unlink, Fuel, TrendingUp,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
@@ -28,6 +28,8 @@ const LeafletPolygon = dynamic(() => import('react-leaflet').then(m => m.Polygon
 const LeafletTooltip = dynamic(() => import('react-leaflet').then(m => m.Tooltip), { ssr: false });
 const MapEventsHandler = dynamic(() => import('./_components/MapEventsHandler').then(m => m.default), { ssr: false });
 
+import { WorkerDaySidebar } from './_components/WorkerDaySidebar';
+import { OrderInsertSidebar } from './_components/OrderInsertSidebar';
 import 'leaflet/dist/leaflet.css';
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
@@ -882,7 +884,7 @@ function QuickAddOrderPanel({ onClose, onRefresh }: { onClose: () => void; onRef
     if (!clientName.trim()) return;
     setSubmitting(true);
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`; })();
       const res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1196,18 +1198,21 @@ function groupServicesByCategory(services: ServiceOption[]) {
 }
 
 function todayStr() {
-  return new Date().toISOString().split('T')[0];
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
 }
 
 /* ─── Create Order Panel (inline on map) ─────────────────────────────── */
 function CreateOrderPanel({
   pin,
   prefilledWorker,
+  prefilledSlot,
   onClose,
   onSuccess,
 }: {
   pin: AddressPin;
   prefilledWorker: { id: string; name: string; plate: string | null } | null;
+  prefilledSlot?: { service_id: string; planned_start_time: string; date?: string } | null;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -1230,14 +1235,16 @@ function CreateOrderPanel({
   const [workerName, setWorkerName] = useState(prefilledWorker?.name ?? '');
   const [workerId] = useState(prefilledWorker?.id ?? '');
 
-  // Services
+  // Services — prefill from slot if available
   const [services, setServices] = useState<ServiceOption[]>([]);
-  const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
+  const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(
+    prefilledSlot?.service_id ? new Set([prefilledSlot.service_id]) : new Set()
+  );
 
-  // Scheduling
-  const [schedulingType, setSchedulingType] = useState<SchedulingType>('time_window');
-  const [selectedDate, setSelectedDate] = useState(todayStr());
-  const [selectedTime, setSelectedTime] = useState('10:00');
+  // Scheduling — prefill from slot if available
+  const [schedulingType, setSchedulingType] = useState<SchedulingType>(prefilledSlot?.planned_start_time ? 'fixed_time' : 'time_window');
+  const [selectedDate, setSelectedDate] = useState(prefilledSlot?.date ?? todayStr());
+  const [selectedTime, setSelectedTime] = useState(prefilledSlot?.planned_start_time ?? '10:00');
   const [windowPreset, setWindowPreset] = useState<TimeWindowPreset>('morning');
   const [customWindowStart, setCustomWindowStart] = useState('08:00');
   const [customWindowEnd, setCustomWindowEnd] = useState('12:00');
@@ -1690,9 +1697,13 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/* ─── Nearby workers panel ──────────────────────────────────────────── */
-function NearbyWorkersPanel({
+/* ─── Right sidebar with tabs (Pracownicy / Znajdz termin) ─────────── */
+type RightSidebarTab = 'workers' | 'findSlot';
+
+function RightSidebar({
   pin, workers, radiusKm, onRadiusChange, onClose, onCreateOrder,
+  // OrderInsertSidebar props
+  date, livePositions, onSelectSlot, onAvailableWorkersChange,
 }: {
   pin: AddressPin;
   workers: NearbyWorker[];
@@ -1700,19 +1711,41 @@ function NearbyWorkersPanel({
   onRadiusChange: (km: number) => void;
   onClose: () => void;
   onCreateOrder: (worker: NearbyWorker) => void;
+  // OrderInsertSidebar props
+  date: string;
+  livePositions: Map<string, { lat: number; lng: number }>;
+  onSelectSlot: (slot: {
+    employee_id: string;
+    employee_name: string;
+    planned_start_time: string;
+    service_id: string;
+    service_name: string;
+    service_duration: number;
+    pin: AddressPin;
+  }) => void;
+  onAvailableWorkersChange: (workerIds: Set<string>) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<RightSidebarTab>('workers');
+
+  // Clear insert filtering when switching away from findSlot tab
+  const handleTabChange = (tab: RightSidebarTab) => {
+    if (tab !== 'findSlot') {
+      onAvailableWorkersChange(new Set());
+    }
+    setActiveTab(tab);
+  };
+
   return (
     <motion.div
       initial={{ x: 380, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 380, opacity: 0 }}
       transition={{ type: 'spring', damping: 26, stiffness: 280 }}
-      className="w-[380px] flex-shrink-0 bg-white border-l border-gray-100 flex flex-col overflow-y-auto"
+      className="w-[380px] flex-shrink-0 bg-white border-l border-gray-100 flex flex-col overflow-hidden"
     >
       {/* Header */}
-      <div className="p-5 border-b border-gray-100">
-        <div className="flex items-start justify-between">
+      <div className="p-4 pb-3 border-b border-gray-100">
+        <div className="flex items-start justify-between mb-3">
           <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-bold text-gray-900">Pracownicy w pobliżu</h2>
-            <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-1 truncate">
+            <p className="text-sm text-gray-500 flex items-center gap-1 truncate">
               <MapPin className="h-3.5 w-3.5 flex-shrink-0 text-red-500" />{pin.label}
             </p>
           </div>
@@ -1720,75 +1753,117 @@ function NearbyWorkersPanel({
             <X className="h-4 w-4" />
           </button>
         </div>
+        {/* Tab pills */}
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+          <button
+            onClick={() => handleTabChange('workers')}
+            className={cn(
+              'flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-md text-xs font-semibold transition-all',
+              activeTab === 'workers'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            )}
+          >
+            <User className="h-3.5 w-3.5" />
+            Pracownicy
+          </button>
+          <button
+            onClick={() => handleTabChange('findSlot')}
+            className={cn(
+              'flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-md text-xs font-semibold transition-all',
+              activeTab === 'findSlot'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            )}
+          >
+            <Calendar className="h-3.5 w-3.5" />
+            Znajdz termin
+          </button>
+        </div>
       </div>
 
-      {/* Radius slider */}
-      <div className="px-5 pt-4 pb-2">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Promień wyszukiwania</span>
-          <span className="text-sm font-bold text-gray-700">{radiusKm} km</span>
-        </div>
-        <input
-          type="range"
-          min={5}
-          max={50}
-          step={5}
-          value={radiusKm}
-          onChange={e => onRadiusChange(Number(e.target.value))}
-          className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-500"
-        />
-        <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
-          <span>5 km</span><span>50 km</span>
-        </div>
-      </div>
-
-      {/* Workers list */}
-      <div className="flex-1 overflow-y-auto p-5 space-y-2">
-        {workers.length === 0 ? (
-          <div className="text-center py-12 text-gray-400">
-            <User className="h-6 w-6 mx-auto mb-2" />
-            <p className="text-sm">Brak pracowników w promieniu {radiusKm} km</p>
+      {/* Tab content */}
+      {activeTab === 'workers' ? (
+        <>
+          {/* Radius slider */}
+          <div className="px-5 pt-4 pb-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Promien wyszukiwania</span>
+              <span className="text-sm font-bold text-gray-700">{radiusKm} km</span>
+            </div>
+            <input
+              type="range"
+              min={5}
+              max={100}
+              step={5}
+              value={radiusKm}
+              onChange={e => onRadiusChange(Number(e.target.value))}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-500"
+            />
+            <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+              <span>5 km</span><span>100 km</span>
+            </div>
           </div>
-        ) : (
-          <>
-            <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-2">
-              {workers.length} pracownik{workers.length === 1 ? '' : workers.length < 5 ? 'ów' : 'ów'} w zasięgu
-            </p>
-            {workers.map(w => {
-              const statusColor = STATUS_COLORS[w.status] || STATUS_COLORS.offline;
-              return (
-                <div key={w.employee_id} className="border border-gray-100 rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: statusColor }} />
-                        <span className="text-sm font-bold text-gray-900">{w.employee_name}</span>
+
+          {/* Workers list */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-2">
+            {workers.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <User className="h-6 w-6 mx-auto mb-2" />
+                <p className="text-sm">Brak pracownikow w promieniu {radiusKm} km</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-2">
+                  {workers.length} pracownik{workers.length === 1 ? '' : workers.length < 5 ? 'ow' : 'ow'} w zasiegu
+                </p>
+                {workers.map(w => {
+                  const statusColor = STATUS_COLORS[w.status] || STATUS_COLORS.offline;
+                  return (
+                    <div key={w.employee_id} className="border border-gray-100 rounded-xl p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: statusColor }} />
+                            <span className="text-sm font-bold text-gray-900">{w.employee_name}</span>
+                          </div>
+                          {w.plate && <p className="text-xs text-gray-400 font-mono mt-0.5 ml-[18px]">{w.plate}</p>}
+                          <div className="flex items-center gap-3 mt-1 ml-[18px]">
+                            <span className="text-[11px] font-semibold text-blue-600">{w.distance_km.toFixed(1)} km</span>
+                            <span className="text-[11px] text-gray-500">~{Math.round(w.travel_minutes)} min</span>
+                            <span className="text-[11px] text-gray-500">{w.orders_today} zlecen</span>
+                            <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: statusColor + '20', color: statusColor }}>
+                              {STATUS_LABELS[w.status] ?? w.status}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      {w.plate && <p className="text-xs text-gray-400 font-mono mt-0.5 ml-[18px]">{w.plate}</p>}
-                      <div className="flex items-center gap-3 mt-1 ml-[18px]">
-                        <span className="text-[11px] font-semibold text-blue-600">{w.distance_km.toFixed(1)} km</span>
-                        <span className="text-[11px] text-gray-500">~{Math.round(w.travel_minutes)} min</span>
-                        <span className="text-[11px] text-gray-500">{w.orders_today} zleceń</span>
-                        <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: statusColor + '20', color: statusColor }}>
-                          {STATUS_LABELS[w.status] ?? w.status}
-                        </span>
+                      <div className="mt-2 ml-[18px]">
+                        <button
+                          onClick={() => onCreateOrder(w)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white rounded-lg text-xs font-medium hover:bg-orange-600 transition-colors"
+                        >
+                          <Plus className="h-3 w-3" />Utworz zlecenie
+                        </button>
                       </div>
                     </div>
-                  </div>
-                  <div className="mt-2 ml-[18px]">
-                    <button
-                      onClick={() => onCreateOrder(w)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white rounded-lg text-xs font-medium hover:bg-orange-600 transition-colors"
-                    >
-                      <Plus className="h-3 w-3" />Utwórz zlecenie
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </>
-        )}
-      </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        </>
+      ) : (
+        <OrderInsertSidebar
+          embedded
+          pin={pin}
+          date={date}
+          livePositions={livePositions}
+          onClose={onClose}
+          onSelectSlot={onSelectSlot}
+          onAvailableWorkersChange={onAvailableWorkersChange}
+        />
+      )}
     </motion.div>
   );
 }
@@ -1820,6 +1895,7 @@ export default function MapPage() {
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [createOrderOpen, setCreateOrderOpen] = useState(false);
   const [prefilledWorker, setPrefilledWorker] = useState<{ id: string; name: string; plate: string | null } | null>(null);
+  const [prefilledSlot, setPrefilledSlot] = useState<{ service_id: string; planned_start_time: string; date?: string } | null>(null);
   const [orderFilter, setOrderFilter] = useState<string>('all');
   const [countdown, setCountdown] = useState(5);
   /* Address search state */
@@ -1828,20 +1904,52 @@ export default function MapPage() {
   const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
   const [addressPin, setAddressPin] = useState<AddressPin | null>(null);
   const [nearbyWorkers, setNearbyWorkers] = useState<NearbyWorker[]>([]);
-  const [searchRadiusKm, setSearchRadiusKm] = useState(15);
+  const [searchRadiusKm, setSearchRadiusKm] = useState(50);
+  const [activeShiftEmployeeIds, setActiveShiftEmployeeIds] = useState<Set<string>>(new Set());
   const [addressSearching, setAddressSearching] = useState(false);
   const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
+  /* Insert mode: set of worker IDs with available slots (used to filter map pins) */
+  const [insertAvailableWorkerIds, setInsertAvailableWorkerIds] = useState<Set<string>>(new Set());
   /* Context menu state */
   const [contextMenuPos, setContextMenuPos] = useState<{ lat: number; lng: number } | null>(null);
   const [contextRadius, setContextRadius] = useState(5);
+  /* Worker day sidebar state */
+  const [workerSidebarEmployeeId, setWorkerSidebarEmployeeId] = useState<string | null>(null);
+  const [workerSidebarEmployeeName, setWorkerSidebarEmployeeName] = useState<string>('');
+  const [workerSidebarHighlightOrderId, setWorkerSidebarHighlightOrderId] = useState<string | null>(null);
+  /* Left sidebar drill-down view */
+  const [leftSidebarView, setLeftSidebarView] = useState<'vehicles' | 'worker-detail'>('vehicles');
   // countdownRef no longer needed — SSE handles live updates
 
   const urlDate = searchParams.get('date');
   const today = useMemo(() => {
     if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) return urlDate;
-    return new Date().toISOString().split('T')[0];
+    // Use local date, not UTC (avoids off-by-one after midnight in CET/CEST)
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   }, [urlDate]);
+
+  // Compute live GPS positions for OrderInsertSidebar (used in RightSidebar findSlot tab)
+  const livePositions = useMemo(() => {
+    const m = new Map<string, { lat: number; lng: number }>();
+    // First: GPS positions from SatisGPS vehicles (real-time, highest priority)
+    for (const v of vehicles) {
+      if (!v.lat || !v.lng) continue;
+      const matchRoute = routes.find(r => r.plate === v.plate_number || r.employee_name === v.driver_name);
+      if (matchRoute) {
+        m.set(matchRoute.employee_id, { lat: v.lat, lng: v.lng });
+      }
+    }
+    // Fallback: planner positions (only if no GPS available)
+    for (const r of routes) {
+      if (m.has(r.employee_id)) continue;
+      if (r.current_position?.lat && r.current_position?.lng) {
+        m.set(r.employee_id, { lat: r.current_position.lat, lng: r.current_position.lng });
+      }
+    }
+    return m;
+  }, [vehicles, routes]);
 
   // Fetch routes, orders, regions (these change infrequently)
   const fetchContext = useCallback(async () => {
@@ -1857,6 +1965,19 @@ export default function MapPage() {
         const data = await regRes.json();
         if (Array.isArray(data)) setMapRegions(data.filter((r: MapRegion) => r.polygon && r.polygon.length >= 3));
       }
+      // Fetch active shifts to filter nearby workers
+      try {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data: shifts } = await supabase
+          .from('work_schedules')
+          .select('employee_id')
+          .lte('start_at', `${today}T23:59:59`)
+          .gte('end_at', `${today}T00:00:00`);
+        if (shifts) {
+          setActiveShiftEmployeeIds(new Set(shifts.map((s: { employee_id: string }) => s.employee_id)));
+        }
+      } catch {}
     } catch (err) { console.error('[MapPage] context fetch:', err); }
   }, [today]);
 
@@ -2041,6 +2162,7 @@ export default function MapPage() {
     setNearbyWorkers([]);
     setAddressSuggestions([]);
     setShowAddressSuggestions(false);
+    setInsertAvailableWorkerIds(new Set());
   }, []);
 
   /* ── Compute nearby workers when pin or radius or data changes ── */
@@ -2048,6 +2170,8 @@ export default function MapPage() {
     if (!addressPin) { setNearbyWorkers([]); return; }
     const workers: NearbyWorker[] = [];
     for (const route of routes) {
+      // Only show workers who have an active shift
+      if (!activeShiftEmployeeIds.has(route.employee_id)) continue;
       const pos = route.current_position;
       if (!pos) continue;
       const dist = haversineKm(addressPin.lat, addressPin.lng, pos.lat, pos.lng);
@@ -2067,17 +2191,19 @@ export default function MapPage() {
         });
       }
     }
-    // Also check vehicles that may not have routes
+    // Also check vehicles that may not have routes (only if their driver has a shift)
     for (const v of vehicles) {
       if (!v.lat || !v.lng) continue;
-      // Skip if already added from routes
       if (workers.some(w => w.plate === v.plate_number)) continue;
       const dist = haversineKm(addressPin.lat, addressPin.lng, v.lat, v.lng);
       if (dist <= searchRadiusKm) {
         const travelMin = (dist * 1.4) / 50 * 60;
         const matchRoute = routes.find(r => r.plate === v.plate_number || r.employee_name === v.driver_name);
+        const empId = matchRoute?.employee_id ?? v.id;
+        // Only show if worker has an active shift
+        if (!activeShiftEmployeeIds.has(empId)) continue;
         workers.push({
-          employee_id: matchRoute?.employee_id ?? v.id,
+          employee_id: empId,
           employee_name: v.driver_name ?? v.plate_number,
           plate: v.plate_number,
           status: v.status,
@@ -2091,7 +2217,7 @@ export default function MapPage() {
     }
     workers.sort((a, b) => a.distance_km - b.distance_km);
     setNearbyWorkers(workers);
-  }, [addressPin, searchRadiusKm, routes, vehicles]);
+  }, [addressPin, searchRadiusKm, routes, vehicles, activeShiftEmployeeIds]);
 
   const filteredVehicles = [...vehicles]
     .filter(v => {
@@ -2119,17 +2245,43 @@ export default function MapPage() {
   });
 
   const handleSelectVehicle = (v: VehicleData) => {
-    setSelectedVehicle(prev => prev?.id === v.id ? null : v);
+    const isDeselecting = selectedVehicle?.id === v.id;
+    setSelectedVehicle(isDeselecting ? null : v);
     setSelectedOrder(null);
     // Find matching route for this vehicle's driver
     const matchRoute = routes.find(r => r.plate === v.plate_number || r.employee_name === v.driver_name);
     setSelectedRoute(matchRoute ?? null);
+    // Open worker detail in left sidebar if we can identify the employee
+    if (!isDeselecting && matchRoute) {
+      setWorkerSidebarEmployeeId(matchRoute.employee_id);
+      setWorkerSidebarEmployeeName(matchRoute.employee_name);
+      setWorkerSidebarHighlightOrderId(null);
+      setLeftSidebarView('worker-detail');
+    } else if (isDeselecting) {
+      setWorkerSidebarEmployeeId(null);
+      setWorkerSidebarEmployeeName('');
+      setWorkerSidebarHighlightOrderId(null);
+      setLeftSidebarView('vehicles');
+    }
   };
 
   const handleSelectRoute = (r: EmployeeRoute) => {
-    setSelectedRoute(prev => prev?.employee_id === r.employee_id ? null : r);
+    const isDeselecting = selectedRoute?.employee_id === r.employee_id;
+    setSelectedRoute(isDeselecting ? null : r);
     setSelectedVehicle(null);
     setSelectedOrder(null);
+    // Open worker detail in left sidebar
+    if (!isDeselecting) {
+      setWorkerSidebarEmployeeId(r.employee_id);
+      setWorkerSidebarEmployeeName(r.employee_name);
+      setWorkerSidebarHighlightOrderId(null);
+      setLeftSidebarView('worker-detail');
+    } else {
+      setWorkerSidebarEmployeeId(null);
+      setWorkerSidebarEmployeeName('');
+      setWorkerSidebarHighlightOrderId(null);
+      setLeftSidebarView('vehicles');
+    }
     // Fly to first waypoint
     if (r.waypoints.length > 0 && mapRef.current) {
       mapRef.current.flyTo([r.waypoints[0].lat, r.waypoints[0].lng], 12, { animate: true, duration: 1 });
@@ -2137,13 +2289,52 @@ export default function MapPage() {
   };
 
   const handleSelectOrder = (o: MapOrder) => {
-    setSelectedOrder(prev => prev?.id === o.id ? null : o);
+    const isDeselecting = selectedOrder?.id === o.id;
+    setSelectedOrder(isDeselecting ? null : o);
     setSelectedVehicle(null);
     setSelectedRoute(null);
+    if (!isDeselecting) {
+      if (o.employee_id && o.employee_name) {
+        // Assigned order: open worker detail with calendar + order detail
+        setWorkerSidebarEmployeeId(o.employee_id);
+        setWorkerSidebarEmployeeName(o.employee_name);
+        setWorkerSidebarHighlightOrderId(o.id);
+        const matchRoute = routes.find(r => r.employee_id === o.employee_id);
+        if (matchRoute) setSelectedRoute(matchRoute);
+      } else {
+        // Unassigned order: open worker detail in order-only mode
+        setWorkerSidebarEmployeeId('__order_only__');
+        setWorkerSidebarEmployeeName(o.client_name ?? 'Zlecenie');
+        setWorkerSidebarHighlightOrderId(o.id);
+      }
+      setLeftSidebarView('worker-detail');
+    } else {
+      setWorkerSidebarEmployeeId(null);
+      setWorkerSidebarEmployeeName('');
+      setWorkerSidebarHighlightOrderId(null);
+      setLeftSidebarView('vehicles');
+    }
     // Fly to order location
     if (o.lat && o.lng && mapRef.current) {
       mapRef.current.flyTo([o.lat, o.lng], 14, { animate: true, duration: 1 });
     }
+  };
+
+  const handleOpenWorkerSidebar = (employeeId: string, employeeName: string) => {
+    setWorkerSidebarEmployeeId(employeeId);
+    setWorkerSidebarEmployeeName(employeeName);
+    setWorkerSidebarHighlightOrderId(null);
+    setLeftSidebarView('worker-detail');
+  };
+
+  const handleCloseWorkerSidebar = () => {
+    setWorkerSidebarEmployeeId(null);
+    setWorkerSidebarEmployeeName('');
+    setWorkerSidebarHighlightOrderId(null);
+    setSelectedVehicle(null);
+    setSelectedOrder(null);
+    setSelectedRoute(null);
+    setLeftSidebarView('vehicles');
   };
 
   const drivingCount = vehicles.filter(v => v.status === 'driving').length;
@@ -2165,132 +2356,182 @@ export default function MapPage() {
       />
 
       <div className="flex flex-1 overflow-hidden" style={{ height: 'calc(100vh - 64px)' }}>
-        {/* ── Sidebar ── */}
-        <div className="w-80 flex-shrink-0 bg-white border-r border-gray-100 flex flex-col">
-          {/* Header */}
-          <div className="p-4 border-b border-gray-100 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1.5 text-xs"><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /><span className="font-semibold text-emerald-600">Live</span><span className="text-gray-400">· {countdown}s</span></span>
-                {drivingCount > 0 && (
-                  <span className="flex items-center gap-1 text-xs font-semibold text-blue-600">
-                    <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />{drivingCount} w trasie
-                  </span>
-                )}
-              </div>
-              <button onClick={handleRefresh} disabled={loading} className="flex items-center gap-1 text-xs text-blue-600 font-medium disabled:opacity-50">
-                <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />Odśwież
-              </button>
-            </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-              <Input placeholder="Szukaj..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8 h-8 text-xs rounded-xl bg-gray-50 border-gray-200" />
-            </div>
-            {/* Tabs */}
-            <div className="flex rounded-xl bg-gray-100 p-0.5">
-              <button onClick={() => setTab('vehicles')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'vehicles' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
-                <Truck className="h-3.5 w-3.5 inline mr-1" />Pojazdy
-              </button>
-              <button onClick={() => setTab('routes')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'routes' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
-                <Route className="h-3.5 w-3.5 inline mr-1" />Trasy
-              </button>
-              <button onClick={() => setTab('orders')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'orders' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
-                <Package className="h-3.5 w-3.5 inline mr-1" />Zlecenia
-              </button>
-            </div>
-          </div>
-
-          {/* List */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {loading && vehicles.length === 0 ? (
-              <div className="flex items-center justify-center py-12 text-gray-400">
-                <RefreshCw className="h-6 w-6 animate-spin mx-auto" />
-              </div>
-            ) : tab === 'vehicles' ? (
-              filteredVehicles.length === 0 ? (
-                <div className="text-center py-12 text-gray-400"><Truck className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak pojazdów</p></div>
-              ) : filteredVehicles.map(v => (
-                <VehicleCard key={v.id} vehicle={v} selected={selectedVehicle?.id === v.id} onClick={() => handleSelectVehicle(v)} />
-              ))
-            ) : tab === 'routes' ? (
-              filteredRoutes.length === 0 ? (
-                <div className="text-center py-12 text-gray-400"><Route className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak tras na dziś</p></div>
-              ) : filteredRoutes.map(r => (
-                <RouteCard key={r.employee_id} route={r} selected={selectedRoute?.employee_id === r.employee_id} onClick={() => handleSelectRoute(r)} />
-              ))
-            ) : (
-              /* Orders tab */
-              <>
-                {/* Order count badges */}
-                <div className="flex flex-wrap items-center gap-1 pb-2">
-                  {[
-                    { key: 'all', label: 'Wszystkie', count: orderCountAll },
-                    { key: 'new', label: 'Nowe', count: orderCountNew },
-                    { key: 'assigned', label: 'Przypisane', count: orderCountAssigned },
-                    { key: 'in_progress', label: 'W trakcie', count: orderCountInProgress },
-                  ].map(f => (
-                    <button
-                      key={f.key}
-                      onClick={() => setOrderFilter(f.key)}
-                      className={cn(
-                        'text-[11px] font-medium px-2 py-1 rounded-lg transition-all',
-                        orderFilter === f.key ? 'bg-orange-100 text-orange-700' : 'bg-gray-50 text-gray-500 hover:bg-gray-100',
+        {/* ── Left Sidebar ── */}
+        <div className="w-80 flex-shrink-0 bg-white border-r border-gray-100 flex flex-col overflow-hidden relative">
+          <AnimatePresence mode="wait" initial={false}>
+            {leftSidebarView === 'vehicles' ? (
+              <motion.div
+                key="vehicles-list"
+                initial={{ x: -320, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: -320, opacity: 0 }}
+                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                className="flex flex-col h-full"
+              >
+                {/* Header */}
+                <div className="p-4 border-b border-gray-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="flex items-center gap-1.5 text-xs"><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /><span className="font-semibold text-emerald-600">Live</span><span className="text-gray-400">· {countdown}s</span></span>
+                      {drivingCount > 0 && (
+                        <span className="flex items-center gap-1 text-xs font-semibold text-blue-600">
+                          <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />{drivingCount} w trasie
+                        </span>
                       )}
-                    >
-                      {f.label} ({f.count})
+                    </div>
+                    <button onClick={handleRefresh} disabled={loading} className="flex items-center gap-1 text-xs text-blue-600 font-medium disabled:opacity-50">
+                      <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />Odśwież
                     </button>
-                  ))}
+                  </div>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                    <Input placeholder="Szukaj..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8 h-8 text-xs rounded-xl bg-gray-50 border-gray-200" />
+                  </div>
+                  {/* Tabs */}
+                  <div className="flex rounded-xl bg-gray-100 p-0.5">
+                    <button onClick={() => setTab('vehicles')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'vehicles' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
+                      <Truck className="h-3.5 w-3.5 inline mr-1" />Pojazdy
+                    </button>
+                    <button onClick={() => setTab('routes')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'routes' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
+                      <Route className="h-3.5 w-3.5 inline mr-1" />Trasy
+                    </button>
+                    <button onClick={() => setTab('orders')} className={cn('flex-1 text-xs font-medium py-1.5 rounded-lg transition-all', tab === 'orders' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500')}>
+                      <Package className="h-3.5 w-3.5 inline mr-1" />Zlecenia
+                    </button>
+                  </div>
                 </div>
-                {filteredOrders.length === 0 ? (
-                  <div className="text-center py-12 text-gray-400"><Package className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak zleceń</p></div>
-                ) : filteredOrders.map(o => (
-                  <OrderCard key={o.id} order={o} selected={selectedOrder?.id === o.id} onClick={() => handleSelectOrder(o)} />
-                ))}
-              </>
-            )}
-          </div>
 
-          {/* Legend */}
-          <div className="p-4 border-t border-gray-100">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">Legenda</span>
-              <div className="flex items-center gap-2">
-                <button onClick={() => setShowOrders(!showOrders)} className="text-[11px] text-orange-500 font-medium">
-                  {showOrders ? 'Ukryj zlecenia' : 'Pokaż zlecenia'}
-                </button>
-                <button onClick={() => setShowRouteLines(!showRouteLines)} className="text-[11px] text-blue-500 font-medium">
-                  {showRouteLines ? 'Ukryj trasy' : 'Pokaż trasy'}
-                </button>
-                <button onClick={() => setShowRegions(!showRegions)} className="text-[11px] text-purple-500 font-medium">
-                  {showRegions ? 'Ukryj regiony' : 'Pokaż regiony'}
-                </button>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {Object.entries(STATUS_COLORS).map(([s, c]) => (
-                <div key={s} className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c }} />
-                  <span className="text-[11px] text-gray-500">{STATUS_LABELS[s]}</span>
+                {/* List */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {loading && vehicles.length === 0 ? (
+                    <div className="flex items-center justify-center py-12 text-gray-400">
+                      <RefreshCw className="h-6 w-6 animate-spin mx-auto" />
+                    </div>
+                  ) : tab === 'vehicles' ? (
+                    filteredVehicles.length === 0 ? (
+                      <div className="text-center py-12 text-gray-400"><Truck className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak pojazdów</p></div>
+                    ) : filteredVehicles.map(v => (
+                      <VehicleCard key={v.id} vehicle={v} selected={selectedVehicle?.id === v.id} onClick={() => handleSelectVehicle(v)} />
+                    ))
+                  ) : tab === 'routes' ? (
+                    filteredRoutes.length === 0 ? (
+                      <div className="text-center py-12 text-gray-400"><Route className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak tras na dziś</p></div>
+                    ) : filteredRoutes.map(r => (
+                      <RouteCard key={r.employee_id} route={r} selected={selectedRoute?.employee_id === r.employee_id} onClick={() => handleSelectRoute(r)} />
+                    ))
+                  ) : (
+                    /* Orders tab */
+                    <>
+                      {/* Order count badges */}
+                      <div className="flex flex-wrap items-center gap-1 pb-2">
+                        {[
+                          { key: 'all', label: 'Wszystkie', count: orderCountAll },
+                          { key: 'new', label: 'Nowe', count: orderCountNew },
+                          { key: 'assigned', label: 'Przypisane', count: orderCountAssigned },
+                          { key: 'in_progress', label: 'W trakcie', count: orderCountInProgress },
+                        ].map(f => (
+                          <button
+                            key={f.key}
+                            onClick={() => setOrderFilter(f.key)}
+                            className={cn(
+                              'text-[11px] font-medium px-2 py-1 rounded-lg transition-all',
+                              orderFilter === f.key ? 'bg-orange-100 text-orange-700' : 'bg-gray-50 text-gray-500 hover:bg-gray-100',
+                            )}
+                          >
+                            {f.label} ({f.count})
+                          </button>
+                        ))}
+                      </div>
+                      {filteredOrders.length === 0 ? (
+                        <div className="text-center py-12 text-gray-400"><Package className="h-6 w-6 mx-auto mb-2" /><p className="text-sm">Brak zleceń</p></div>
+                      ) : filteredOrders.map(o => (
+                        <OrderCard key={o.id} order={o} selected={selectedOrder?.id === o.id} onClick={() => handleSelectOrder(o)} />
+                      ))}
+                    </>
+                  )}
                 </div>
-              ))}
-            </div>
-            <div className="grid grid-cols-2 gap-1.5 mt-2 pt-2 border-t border-gray-50">
-              {Object.entries(ORDER_STATUS_COLORS).filter(([s]) => s !== 'cancelled').map(([s, c]) => (
-                <div key={s} className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c, border: s === 'new' ? '1px dashed #9CA3AF' : undefined }} />
-                  <span className="text-[11px] text-gray-500">{ORDER_STATUS_LABELS[s]}</span>
+
+                {/* Legend */}
+                <div className="p-4 border-t border-gray-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">Legenda</span>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => setShowOrders(!showOrders)} className="text-[11px] text-orange-500 font-medium">
+                        {showOrders ? 'Ukryj zlecenia' : 'Pokaż zlecenia'}
+                      </button>
+                      <button onClick={() => setShowRouteLines(!showRouteLines)} className="text-[11px] text-blue-500 font-medium">
+                        {showRouteLines ? 'Ukryj trasy' : 'Pokaż trasy'}
+                      </button>
+                      <button onClick={() => setShowRegions(!showRegions)} className="text-[11px] text-purple-500 font-medium">
+                        {showRegions ? 'Ukryj regiony' : 'Pokaż regiony'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {Object.entries(STATUS_COLORS).map(([s, c]) => (
+                      <div key={s} className="flex items-center gap-1.5">
+                        <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c }} />
+                        <span className="text-[11px] text-gray-500">{STATUS_LABELS[s]}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5 mt-2 pt-2 border-t border-gray-50">
+                    {Object.entries(ORDER_STATUS_COLORS).filter(([s]) => s !== 'cancelled').map(([s, c]) => (
+                      <div key={s} className="flex items-center gap-1.5">
+                        <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c, border: s === 'new' ? '1px dashed #9CA3AF' : undefined }} />
+                        <span className="text-[11px] text-gray-500">{ORDER_STATUS_LABELS[s]}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="worker-detail"
+                initial={{ x: 320, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: 320, opacity: 0 }}
+                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                className="flex flex-col h-full"
+              >
+                {workerSidebarEmployeeId && (
+                  <WorkerDaySidebar
+                    key={workerSidebarEmployeeId}
+                    employeeId={workerSidebarEmployeeId}
+                    employeeName={workerSidebarEmployeeName}
+                    date={today}
+                    highlightOrderId={workerSidebarHighlightOrderId}
+                    onClose={handleCloseWorkerSidebar}
+                    onOrderClick={(orderId) => {
+                      const order = allOrders.find(o => o.id === orderId);
+                      if (order) {
+                        setSelectedOrder(order);
+                        setWorkerSidebarHighlightOrderId(orderId);
+                        if (order.lat && order.lng && mapRef.current) {
+                          mapRef.current.flyTo([order.lat, order.lng], 14, { animate: true, duration: 1 });
+                        }
+                      }
+                    }}
+                    vehicle={selectedVehicle}
+                    route={selectedRoute}
+                    onRefreshRoutes={fetchAll}
+                    selectedOrder={selectedOrder}
+                    onOrderClose={() => { setSelectedOrder(null); setWorkerSidebarHighlightOrderId(null); }}
+                    onOrderRefresh={() => { fetchAll(); resetCountdown(); }}
+                    embedded
+                  />
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* ── Map ── */}
         <div className="flex-1 relative overflow-hidden">
           {/* Address search bar overlay */}
           <div className="absolute top-4 left-4 right-4 z-[1000] flex justify-center pointer-events-none">
-            <div className="relative w-full max-w-md pointer-events-auto">
-              <div className="relative">
+            <div className="relative w-full max-w-md pointer-events-auto flex items-center gap-2">
+              <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <input
                   type="text"
@@ -2307,22 +2548,22 @@ export default function MapPage() {
                     <X className="h-3.5 w-3.5" />
                   </button>
                 )}
+                {/* Autocomplete dropdown */}
+                {showAddressSuggestions && addressSuggestions.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10">
+                    {addressSuggestions.map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => handleAddressSuggestionClick(s)}
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-orange-50 transition-colors flex items-center gap-2 border-b border-gray-50 last:border-b-0"
+                      >
+                        <MapPin className="h-3.5 w-3.5 text-orange-400 flex-shrink-0" />
+                        <span className="truncate">{s.address?.label ?? s.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-              {/* Autocomplete dropdown */}
-              {showAddressSuggestions && addressSuggestions.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
-                  {addressSuggestions.map(s => (
-                    <button
-                      key={s.id}
-                      onClick={() => handleAddressSuggestionClick(s)}
-                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-orange-50 transition-colors flex items-center gap-2 border-b border-gray-50 last:border-b-0"
-                    >
-                      <MapPin className="h-3.5 w-3.5 text-orange-400 flex-shrink-0" />
-                      <span className="truncate">{s.address?.label ?? s.title}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
 
@@ -2399,20 +2640,26 @@ export default function MapPage() {
               .map(order => {
                 const isUrgent = order.priority === 'urgent';
                 const isSelected = selectedOrder?.id === order.id;
+                const isSidebarHighlighted = workerSidebarHighlightOrderId === order.id;
+                const isEmphasized = isSelected || isSidebarHighlighted;
                 const color = isUrgent ? '#EF4444' : ORDER_STATUS_COLORS[order.status] || '#9CA3AF';
+                // Level 2: dim pins for workers without available slots during insert mode
+                const isInsertMode = insertAvailableWorkerIds.size > 0;
+                const isWorkerAvailable = !isInsertMode || (order.employee_id && insertAvailableWorkerIds.has(order.employee_id));
                 return (
                   <CircleMarker
                     key={`order-${order.id}`}
                     center={[order.lat!, order.lng!]}
-                    radius={isSelected ? 10 : isUrgent ? 8 : 7}
+                    radius={isEmphasized ? 10 : isUrgent ? 8 : 7}
                     pathOptions={{
-                      color: isSelected ? '#1D4ED8' : 'white',
-                      fillColor: color,
-                      fillOpacity: 0.85,
-                      weight: isSelected ? 3 : 2,
+                      color: isEmphasized ? '#1D4ED8' : 'white',
+                      fillColor: isSidebarHighlighted && !isSelected ? '#3B82F6' : color,
+                      fillOpacity: isInsertMode ? (isWorkerAvailable ? 1 : 0.2) : (isEmphasized ? 1 : 0.85),
+                      weight: isEmphasized ? 3 : 2,
                       dashArray: order.status === 'new' ? '4, 3' : undefined,
+                      opacity: isInsertMode && !isWorkerAvailable ? 0.3 : 1,
                     }}
-                    eventHandlers={{ click: () => { setSelectedOrder(order); setSelectedVehicle(null); } }}
+                    eventHandlers={{ click: () => handleSelectOrder(order) }}
                   >
                     <Popup>
                       <div className="text-sm min-w-[180px]">
@@ -2555,6 +2802,7 @@ export default function MapPage() {
             )}
           </MapContainer>
 
+
           {selectedVehicle?.lat && selectedVehicle?.lng && (
             <FlyToEffect lat={selectedVehicle.lat} lng={selectedVehicle.lng} mapRef={mapRef} key={selectedVehicle.id} />
           )}
@@ -2568,31 +2816,16 @@ export default function MapPage() {
           </button>
         </div>
 
-        {/* ── Detail panels ── */}
+        {/* ── Detail panels (right side: only address search, quick add, create order) ── */}
         <AnimatePresence>
-          {selectedVehicle && (
-            <VehicleDetailPanel
-              vehicle={selectedVehicle}
-              route={selectedRoute}
-              onClose={() => { setSelectedVehicle(null); setSelectedRoute(null); }}
-              onRefreshRoutes={fetchAll}
-            />
-          )}
-          {selectedOrder && !selectedVehicle && (
-            <OrderDetailPanel
-              order={selectedOrder}
-              onClose={() => setSelectedOrder(null)}
-              onRefresh={() => { fetchAll(); resetCountdown(); }}
-            />
-          )}
           {showQuickAdd && !selectedVehicle && !selectedOrder && !addressPin && (
             <QuickAddOrderPanel
               onClose={() => setShowQuickAdd(false)}
               onRefresh={() => { fetchAll(); resetCountdown(); }}
             />
           )}
-          {addressPin && !selectedVehicle && !selectedOrder && !createOrderOpen && (
-            <NearbyWorkersPanel
+          {addressPin && !createOrderOpen && (
+            <RightSidebar
               pin={addressPin}
               workers={nearbyWorkers}
               radiusKm={searchRadiusKm}
@@ -2602,16 +2835,35 @@ export default function MapPage() {
                 setPrefilledWorker({ id: w.employee_id, name: w.employee_name, plate: w.plate });
                 setCreateOrderOpen(true);
               }}
+              date={today}
+              livePositions={livePositions}
+              onAvailableWorkersChange={setInsertAvailableWorkerIds}
+              onSelectSlot={(slot) => {
+                setPrefilledWorker({
+                  id: slot.employee_id,
+                  name: slot.employee_name,
+                  plate: null,
+                });
+                setPrefilledSlot({
+                  service_id: slot.service_id,
+                  planned_start_time: slot.planned_start_time,
+                  date: today,
+                });
+                setCreateOrderOpen(true);
+                setInsertAvailableWorkerIds(new Set());
+              }}
             />
           )}
-          {addressPin && createOrderOpen && !selectedVehicle && !selectedOrder && (
+          {addressPin && createOrderOpen && (
             <CreateOrderPanel
               pin={addressPin}
               prefilledWorker={prefilledWorker}
-              onClose={() => { setCreateOrderOpen(false); setPrefilledWorker(null); }}
+              prefilledSlot={prefilledSlot}
+              onClose={() => { setCreateOrderOpen(false); setPrefilledWorker(null); setPrefilledSlot(null); }}
               onSuccess={() => {
                 setCreateOrderOpen(false);
                 setPrefilledWorker(null);
+                setPrefilledSlot(null);
                 fetchAll();
                 resetCountdown();
               }}

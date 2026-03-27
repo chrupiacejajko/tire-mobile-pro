@@ -1,15 +1,20 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Play, Coffee, Square, MapPin,
   ChevronRight, Clock, CheckCircle, Loader2,
   AlertCircle, AlertTriangle, Wrench,
-  Car, Navigation, ArrowRight,
+  Car, Navigation, ArrowRight, Home, Flag,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
+import { haversineKm, etaMinutes } from '@/lib/geo';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -31,6 +36,9 @@ interface WorkerMe {
   };
   vehicle: { plate_number: string | null; brand: string | null; model: string | null } | null;
   region?: { name: string } | null;
+  default_location?: string | null;
+  default_lat?: number | null;
+  default_lng?: number | null;
 }
 
 interface Task {
@@ -43,6 +51,11 @@ interface Task {
   services: { name: string }[];
   distance_km: number | null;
   navigate_url: string | null;
+  actual_departure_time: string | null;
+  actual_start_time: string | null;
+  actual_end_time: string | null;
+  lat: number | null;
+  lng: number | null;
 }
 
 interface TaskStats {
@@ -50,6 +63,128 @@ interface TaskStats {
   completed: number;
   remaining: number;
   progress_pct: number;
+}
+
+// ── Return-to-base analysis ─────────────────────────────────────────────────
+
+interface ReturnToBaseAnalysis {
+  hasNextOrder: boolean;
+  nextOrderTime: string | null;         // HH:MM
+  travelToHomeMins: number;
+  travelFromHomeToNextMins: number;
+  timeAtHomeMins: number;               // how long they'd have at home
+  shouldReturn: boolean;                 // timeAtHomeMins >= 30
+  departureFromHome: string | null;      // HH:MM when they must leave home
+  wontMakeIt: boolean;                   // travel_home + travel_to_next > time_until_next
+}
+
+function analyzeReturnToBase(
+  workerLat: number, workerLng: number,
+  homeLat: number, homeLng: number,
+  tasks: Task[],
+): ReturnToBaseAnalysis {
+  const pendingTasks = tasks.filter(
+    t => t.status !== 'completed' && t.status !== 'cancelled' && t.scheduled_time_start && t.lat && t.lng
+  );
+
+  if (pendingTasks.length === 0) {
+    return {
+      hasNextOrder: false, nextOrderTime: null,
+      travelToHomeMins: 0, travelFromHomeToNextMins: 0,
+      timeAtHomeMins: 999, shouldReturn: true,
+      departureFromHome: null, wontMakeIt: false,
+    };
+  }
+
+  // Sort by scheduled_time_start to get the next one
+  const sorted = [...pendingTasks].sort((a, b) =>
+    (a.scheduled_time_start ?? '').localeCompare(b.scheduled_time_start ?? '')
+  );
+  const next = sorted[0];
+  const nextLat = next.lat!;
+  const nextLng = next.lng!;
+  const nextTimeStr = next.scheduled_time_start!; // "HH:MM" or "HH:MM:SS"
+
+  // Travel times
+  const distToHome = haversineKm(workerLat, workerLng, homeLat, homeLng);
+  const distHomeToNext = haversineKm(homeLat, homeLng, nextLat, nextLng);
+  const travelToHomeMins = etaMinutes(distToHome);
+  const travelFromHomeToNextMins = etaMinutes(distHomeToNext);
+
+  // Parse next order time
+  const [hh, mm] = nextTimeStr.split(':').map(Number);
+  const now = new Date();
+  const nextOrderDate = new Date(now);
+  nextOrderDate.setHours(hh, mm, 0, 0);
+
+  const minsUntilNextOrder = Math.max(0, (nextOrderDate.getTime() - now.getTime()) / 60000);
+
+  // Time at home = time_until_next - travel_to_home - travel_from_home_to_next
+  const timeAtHomeMins = Math.max(0, Math.round(minsUntilNextOrder - travelToHomeMins - travelFromHomeToNextMins));
+
+  // Departure from home = next_order_time - travel_from_home_to_next
+  const departureMs = nextOrderDate.getTime() - travelFromHomeToNextMins * 60000;
+  const departureDate = new Date(departureMs);
+  const departureFromHome = `${String(departureDate.getHours()).padStart(2, '0')}:${String(departureDate.getMinutes()).padStart(2, '0')}`;
+
+  // Direct travel time (not going home)
+  const distDirect = haversineKm(workerLat, workerLng, nextLat, nextLng);
+  const directMins = etaMinutes(distDirect);
+
+  // Won't make it: total round-trip via home > time until next order
+  const wontMakeIt = (travelToHomeMins + travelFromHomeToNextMins) > minsUntilNextOrder;
+
+  return {
+    hasNextOrder: true,
+    nextOrderTime: nextTimeStr.slice(0, 5),
+    travelToHomeMins,
+    travelFromHomeToNextMins,
+    timeAtHomeMins,
+    shouldReturn: timeAtHomeMins >= 30,
+    departureFromHome,
+    wontMakeIt,
+  };
+}
+
+// ── First order departure info ──────────────────────────────────────────────
+
+interface FirstOrderInfo {
+  departureTime: string;   // HH:MM
+  travelMins: number;
+  orderTime: string;       // HH:MM
+  clientName: string;
+  address: string;
+}
+
+function calcFirstOrderDeparture(
+  homeLat: number, homeLng: number,
+  tasks: Task[],
+): FirstOrderInfo | null {
+  const pending = tasks.filter(
+    t => t.status !== 'completed' && t.status !== 'cancelled' && t.scheduled_time_start && t.lat && t.lng
+  );
+  if (pending.length === 0) return null;
+
+  const sorted = [...pending].sort((a, b) =>
+    (a.scheduled_time_start ?? '').localeCompare(b.scheduled_time_start ?? '')
+  );
+  const first = sorted[0];
+  const dist = haversineKm(homeLat, homeLng, first.lat!, first.lng!);
+  const travelMins = etaMinutes(dist);
+
+  const [hh, mm] = first.scheduled_time_start!.split(':').map(Number);
+  const orderDate = new Date();
+  orderDate.setHours(hh, mm, 0, 0);
+  const departureMs = orderDate.getTime() - travelMins * 60000;
+  const dep = new Date(departureMs);
+
+  return {
+    departureTime: `${String(dep.getHours()).padStart(2, '0')}:${String(dep.getMinutes()).padStart(2, '0')}`,
+    travelMins,
+    orderTime: first.scheduled_time_start!.slice(0, 5),
+    clientName: first.client_name,
+    address: first.address,
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -91,6 +226,9 @@ export default function WorkerTodayPage() {
   const [error, setError]       = useState<string | null>(null);
   const [planChanged, setPlanChanged] = useState(false);
   const [elapsed, setElapsed]   = useState({ h: '0', m: '00' });
+  const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [returnDialogOpen, setReturnDialogOpen] = useState(false);
+  const [returnAnalysis, setReturnAnalysis] = useState<ReturnToBaseAnalysis | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -107,6 +245,7 @@ export default function WorkerTodayPage() {
         setTasks(d.tasks ?? []);
         setStats(d.stats ?? null);
         setPlanChanged(d.plan_changed ?? false);
+        if (d.current_location) setCurrentLocation(d.current_location);
         const nextId = d.next_task_id;
         setNextTask(nextId ? (d.tasks ?? []).find((t: Task) => t.id === nextId) ?? null : null);
       }
@@ -131,7 +270,7 @@ export default function WorkerTodayPage() {
     return () => clearInterval(t);
   }, [me?.current_shift.clock_in]);
 
-  async function performAction(endpoint: string, label: string) {
+  async function performAction(endpoint: string, label: string, extraBody?: Record<string, unknown>) {
     setActionLoading(label);
     setError(null);
     try {
@@ -142,7 +281,11 @@ export default function WorkerTodayPage() {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat: pos?.coords.latitude ?? null, lng: pos?.coords.longitude ?? null }),
+        body: JSON.stringify({
+          lat: pos?.coords.latitude ?? null,
+          lng: pos?.coords.longitude ?? null,
+          ...extraBody,
+        }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? 'Błąd'); return; }
@@ -152,6 +295,44 @@ export default function WorkerTodayPage() {
     } finally {
       setActionLoading(null);
     }
+  }
+
+  // ── First order departure info ──────────────────────────────────────────
+  const firstOrderInfo = useMemo(() => {
+    if (!me?.default_lat || !me?.default_lng) return null;
+    return calcFirstOrderDeparture(me.default_lat, me.default_lng, tasks);
+  }, [me?.default_lat, me?.default_lng, tasks]);
+
+  // ── Return-to-base handler ────────────────────────────────────────────────
+  function handleReturnToBase() {
+    // Get worker's current position (from GPS tracking or geolocation)
+    const workerLat = currentLocation?.lat;
+    const workerLng = currentLocation?.lng;
+    const homeLat = me?.default_lat;
+    const homeLng = me?.default_lng;
+
+    // If we don't have coordinates, just proceed with the action
+    if (!workerLat || !workerLng || !homeLat || !homeLng) {
+      performAction('/api/worker/shift/end', 'return-base');
+      return;
+    }
+
+    const analysis = analyzeReturnToBase(workerLat, workerLng, homeLat, homeLng, tasks);
+    setReturnAnalysis(analysis);
+
+    // If no next order, just go home
+    if (!analysis.hasNextOrder) {
+      performAction('/api/worker/shift/end', 'return-base');
+      return;
+    }
+
+    // Show the dialog with analysis
+    setReturnDialogOpen(true);
+  }
+
+  function confirmReturnToBase() {
+    setReturnDialogOpen(false);
+    performAction('/api/worker/shift/end', 'return-base');
   }
 
   if (loading) {
@@ -227,11 +408,59 @@ export default function WorkerTodayPage() {
             )}
           </AnimatePresence>
 
+          {/* Feature 2: First order departure banner */}
+          {firstOrderInfo && me.work_status === 'off_work' && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-3xl p-5 text-white shadow-[0_4px_20px_rgba(37,99,235,0.25)]"
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                  <Car className="w-5 h-5 text-white" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-bold text-blue-100 uppercase tracking-wider mb-1">Pierwsze zlecenie</p>
+                  <p className="text-[22px] font-black leading-tight">
+                    Wyjazd o {firstOrderInfo.departureTime}
+                  </p>
+                  <p className="text-sm text-blue-100 mt-1.5">
+                    Czas dojazdu: ~{firstOrderInfo.travelMins} min do {firstOrderInfo.clientName}
+                  </p>
+                  <div className="flex items-center gap-1.5 mt-1 text-xs text-blue-200">
+                    <MapPin className="w-3 h-3 flex-shrink-0" />
+                    <span className="truncate">{firstOrderInfo.address}</span>
+                  </div>
+                  <div className="mt-2 flex items-center gap-1.5 text-xs text-blue-100 bg-white/10 rounded-xl px-3 py-1.5 w-fit">
+                    <Clock className="w-3 h-3" />
+                    <span>Zlecenie o <strong>{firstOrderInfo.orderTime}</strong></span>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {/* Stats horizontal strip */}
           {stats && <MetricStrip stats={stats} me={me} tasks={tasks} />}
 
           {/* Next / active task */}
-          <NextTaskCard nextTask={nextTask} stats={stats} router={router} />
+          <NextTaskCard
+            nextTask={nextTask}
+            stats={stats}
+            router={router}
+            performAction={performAction}
+            actionLoading={actionLoading}
+            onReturnToBase={handleReturnToBase}
+          />
+
+          {/* Feature 1 & 3: Return-to-base dialog */}
+          <ReturnToBaseDialog
+            open={returnDialogOpen}
+            onOpenChange={setReturnDialogOpen}
+            analysis={returnAnalysis}
+            onConfirm={confirmReturnToBase}
+            actionLoading={actionLoading}
+          />
 
           {/* Recent completions */}
           {completedTasks.length > 0 && (
@@ -287,7 +516,7 @@ function HeroSection({
   stats: TaskStats | null;
   pct: number;
   actionLoading: string | null;
-  performAction: (e: string, l: string) => void;
+  performAction: (e: string, l: string, extra?: Record<string, unknown>) => void;
 }) {
   const firstName = me.full_name.split(' ')[0];
 
@@ -505,12 +734,16 @@ function MetricStrip({ stats, me, tasks }: { stats: TaskStats; me: WorkerMe; tas
 // ── Next Task Card ─────────────────────────────────────────────────────────────
 
 function NextTaskCard({
-  nextTask, stats, router,
+  nextTask, stats, router, performAction, actionLoading, onReturnToBase,
 }: {
   nextTask: Task | null;
   stats: TaskStats | null;
   router: ReturnType<typeof import('next/navigation').useRouter>;
+  performAction: (endpoint: string, label: string, extra?: Record<string, unknown>) => void;
+  actionLoading: string | null;
+  onReturnToBase: () => void;
 }) {
+  // All tasks done — show "Wracam na baze" button
   if (stats && stats.total > 0 && stats.remaining === 0) {
     return (
       <div className="bg-white rounded-3xl shadow-[0_2px_20px_rgba(0,0,0,0.08)] p-6 text-center">
@@ -518,7 +751,19 @@ function NextTaskCard({
           <CheckCircle className="w-8 h-8 text-emerald-500" />
         </div>
         <p className="text-xl font-black text-gray-900">Wszystkie ukończone!</p>
-        <p className="text-sm text-gray-400 mt-1.5">Świetna robota 🎉</p>
+        <p className="text-sm text-gray-400 mt-1.5 mb-5">Świetna robota</p>
+
+        <motion.button
+          whileTap={{ scale: 0.97 }}
+          onClick={e => { e.stopPropagation(); onReturnToBase(); }}
+          disabled={actionLoading === 'return-base'}
+          className="w-full flex items-center justify-center gap-2.5 text-white rounded-2xl font-bold text-[15px] bg-slate-700"
+          style={{ minHeight: 56 }}
+        >
+          {actionLoading === 'return-base'
+            ? <Loader2 className="w-5 h-5 animate-spin" />
+            : <><Home className="w-5 h-5" />Wracam na bazę</>}
+        </motion.button>
       </div>
     );
   }
@@ -535,12 +780,64 @@ function NextTaskCard({
     return null;
   }
 
+  // Determine the current step and what button to show
+  const isAssigned   = nextTask.status === 'assigned';
   const isInTransit  = nextTask.status === 'in_transit';
   const isInProgress = nextTask.status === 'in_progress';
 
-  const btnLabel = isInTransit ? 'Dotarłem na miejsce' : isInProgress ? 'Zakończ zlecenie' : 'Wyjeżdżam';
-  const btnColor = isInTransit ? '#2563eb' : isInProgress ? '#059669' : '#f97316';
-  const statusLabel = isInTransit ? 'W drodze' : isInProgress ? 'W trakcie' : 'Następne';
+  // Button config based on sequential state
+  let btnLabel: string;
+  let btnIcon: React.ReactNode;
+  let btnColor: string;
+  let btnAction: () => void;
+  let btnActionKey: string;
+  let statusLabel: string;
+  let taskIcon: React.ReactNode;
+
+  if (isAssigned) {
+    // Step 1: "Wyjeżdżam na zlecenie"
+    btnLabel = 'Wyjeżdżam na zlecenie';
+    btnIcon = <Car className="w-5 h-5" />;
+    btnColor = '#f97316'; // orange
+    btnActionKey = `depart-${nextTask.id}`;
+    btnAction = () => performAction(`/api/worker/tasks/${nextTask.id}/start-driving`, btnActionKey);
+    statusLabel = 'Następne';
+    taskIcon = <Navigation className="w-5 h-5" style={{ color: btnColor }} />;
+  } else if (isInTransit) {
+    // Step 2: "Rozpoczynam pracę"
+    btnLabel = 'Rozpoczynam pracę';
+    btnIcon = <Wrench className="w-5 h-5" />;
+    btnColor = '#2563eb'; // blue
+    btnActionKey = `arrive-${nextTask.id}`;
+    btnAction = () => performAction(`/api/worker/tasks/${nextTask.id}/arrive`, btnActionKey);
+    statusLabel = 'W drodze';
+    taskIcon = <Car className="w-5 h-5" style={{ color: btnColor }} />;
+  } else if (isInProgress) {
+    // Step 3: "Zakończyłem zlecenie"
+    btnLabel = 'Zakończyłem zlecenie';
+    btnIcon = <Flag className="w-5 h-5" />;
+    btnColor = '#059669'; // green
+    btnActionKey = `complete-${nextTask.id}`;
+    btnAction = () => router.push(`/worker/tasks/${nextTask.id}`);
+    statusLabel = 'W trakcie';
+    taskIcon = <Wrench className="w-5 h-5" style={{ color: btnColor }} />;
+  } else {
+    // Fallback
+    btnLabel = 'Wyjeżdżam na zlecenie';
+    btnIcon = <Car className="w-5 h-5" />;
+    btnColor = '#f97316';
+    btnActionKey = `depart-${nextTask.id}`;
+    btnAction = () => performAction(`/api/worker/tasks/${nextTask.id}/start-driving`, btnActionKey);
+    statusLabel = 'Następne';
+    taskIcon = <Navigation className="w-5 h-5" style={{ color: btnColor }} />;
+  }
+
+  // Step indicators for visual progress
+  const steps = [
+    { label: 'Wyjazd', done: isInTransit || isInProgress, active: isAssigned },
+    { label: 'Praca', done: isInProgress, active: isInTransit },
+    { label: 'Koniec', done: false, active: isInProgress },
+  ];
 
   return (
     <div>
@@ -563,15 +860,36 @@ function NextTaskCard({
         <div className="h-1" style={{ background: btnColor }} />
 
         <div className="p-5">
+          {/* Step indicators */}
+          <div className="flex items-center gap-1 mb-4">
+            {steps.map((step, i) => (
+              <div key={step.label} className="flex items-center gap-1 flex-1">
+                <div className="flex-1">
+                  <div
+                    className="h-1 rounded-full transition-colors duration-300"
+                    style={{
+                      background: step.done ? btnColor : step.active ? btnColor + '60' : '#e5e7eb',
+                    }}
+                  />
+                  <p className={cn(
+                    'text-[10px] font-bold mt-1 text-center uppercase tracking-wide',
+                    step.done ? 'text-gray-800' : step.active ? 'text-gray-600' : 'text-gray-300',
+                  )}>
+                    {step.label}
+                  </p>
+                </div>
+                {i < steps.length - 1 && <div className="w-1" />}
+              </div>
+            ))}
+          </div>
+
           {/* Task meta */}
           <div className="flex items-start gap-3 mb-5">
             <div
               className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0"
               style={{ background: btnColor + '18' }}
             >
-              {isInTransit  ? <Car className="w-5 h-5" style={{ color: btnColor }} /> :
-               isInProgress ? <Wrench className="w-5 h-5" style={{ color: btnColor }} /> :
-                              <span className="text-base font-black" style={{ color: btnColor }}>1</span>}
+              {taskIcon}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline gap-2 mb-0.5">
@@ -586,7 +904,7 @@ function NextTaskCard({
                 <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
                 <span className="truncate">{nextTask.address}</span>
                 {nextTask.distance_km && (
-                  <span className="flex-shrink-0 font-semibold">• {nextTask.distance_km} km</span>
+                  <span className="flex-shrink-0 font-semibold">{nextTask.distance_km} km</span>
                 )}
               </div>
               {nextTask.services.length > 0 && (
@@ -601,18 +919,150 @@ function NextTaskCard({
             </div>
           </div>
 
-          {/* CTA */}
+          {/* Main action button */}
           <motion.button
             whileTap={{ scale: 0.97 }}
-            onClick={e => { e.stopPropagation(); router.push(`/worker/tasks/${nextTask.id}`); }}
+            onClick={e => { e.stopPropagation(); btnAction(); }}
+            disabled={actionLoading === btnActionKey}
             className="w-full flex items-center justify-center gap-2.5 text-white rounded-2xl font-bold text-[15px]"
             style={{ minHeight: 56, background: btnColor }}
           >
-            <Navigation className="w-4 h-4" />
-            {btnLabel}
+            {actionLoading === btnActionKey
+              ? <Loader2 className="w-5 h-5 animate-spin" />
+              : <>{btnIcon}{btnLabel}</>}
           </motion.button>
         </div>
       </motion.div>
     </div>
+  );
+}
+
+// ── Return-to-base Dialog ──────────────────────────────────────────────────
+
+function ReturnToBaseDialog({
+  open, onOpenChange, analysis, onConfirm, actionLoading,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  analysis: ReturnToBaseAnalysis | null;
+  onConfirm: () => void;
+  actionLoading: string | null;
+}) {
+  if (!analysis) return null;
+
+  const { shouldReturn, wontMakeIt, timeAtHomeMins, nextOrderTime, departureFromHome, travelToHomeMins, travelFromHomeToNextMins } = analysis;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="rounded-3xl max-w-[calc(100%-2rem)] p-0 overflow-hidden">
+        {/* Feature 3: Red warning if won't make it */}
+        {wontMakeIt && (
+          <div className="bg-red-500 px-5 py-4 text-white">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-6 h-6 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-black text-base">Uwaga! Nie zdążysz!</p>
+                <p className="text-sm text-red-100 mt-1">
+                  Nie zdążysz na kolejne zlecenie o {nextOrderTime} jeśli wrócisz do bazy.
+                  Dojazd do domu: ~{travelToHomeMins} min + dojazd na zlecenie: ~{travelFromHomeToNextMins} min.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="p-5">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black text-gray-900">
+              {shouldReturn ? 'Wracam na bazę' : 'Nie opłaca się wracać'}
+            </DialogTitle>
+            <DialogDescription className="mt-2">
+              {!shouldReturn ? (
+                <span className="text-base text-amber-700 font-semibold leading-relaxed">
+                  Nie opłaca się wracać. Kolejne zlecenie za {timeAtHomeMins + travelToHomeMins + travelFromHomeToNextMins} minut
+                  {' '}&mdash; lepiej jechać bezpośrednio.
+                </span>
+              ) : (
+                <span className="text-base text-gray-600 leading-relaxed">
+                  Pamiętaj, kolejne zlecenie o <strong className="text-gray-900">{nextOrderTime}</strong>.
+                  Z domu musisz wyjechać o <strong className="text-gray-900">{departureFromHome}</strong>.
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Time breakdown */}
+          <div className="mt-4 bg-gray-50 rounded-2xl p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-500">Dojazd do domu</span>
+              <span className="font-bold text-gray-800 tabular-nums">~{travelToHomeMins} min</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-500">Czas w domu</span>
+              <span className={cn(
+                'font-bold tabular-nums',
+                timeAtHomeMins < 30 ? 'text-amber-600' : 'text-emerald-600',
+              )}>
+                ~{timeAtHomeMins} min
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-500">Dojazd na zlecenie</span>
+              <span className="font-bold text-gray-800 tabular-nums">~{travelFromHomeToNextMins} min</span>
+            </div>
+            <div className="border-t pt-2.5 flex items-center justify-between text-sm">
+              <span className="text-gray-500 font-semibold">Kolejne zlecenie</span>
+              <span className="font-black text-gray-900 tabular-nums">{nextOrderTime}</span>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="mt-5 space-y-2.5">
+            {shouldReturn ? (
+              <motion.button
+                whileTap={{ scale: 0.97 }}
+                onClick={onConfirm}
+                disabled={actionLoading === 'return-base'}
+                className="w-full flex items-center justify-center gap-2 bg-slate-700 text-white rounded-2xl font-bold text-[15px] disabled:opacity-60"
+                style={{ minHeight: 52 }}
+              >
+                {actionLoading === 'return-base'
+                  ? <Loader2 className="w-5 h-5 animate-spin" />
+                  : <><Home className="w-5 h-5" />Tak, wracam na bazę</>}
+              </motion.button>
+            ) : (
+              <>
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => onOpenChange(false)}
+                  className="w-full flex items-center justify-center gap-2 bg-orange-500 text-white rounded-2xl font-bold text-[15px]"
+                  style={{ minHeight: 52 }}
+                >
+                  <Navigation className="w-5 h-5" />
+                  Jadę bezpośrednio na zlecenie
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  onClick={onConfirm}
+                  disabled={actionLoading === 'return-base'}
+                  className="w-full flex items-center justify-center gap-2 bg-gray-100 text-gray-600 rounded-2xl font-bold text-[15px] disabled:opacity-60"
+                  style={{ minHeight: 52 }}
+                >
+                  {actionLoading === 'return-base'
+                    ? <Loader2 className="w-5 h-5 animate-spin" />
+                    : <><Home className="w-5 h-5" />Mimo to wracam na bazę</>}
+                </motion.button>
+              </>
+            )}
+            <button
+              onClick={() => onOpenChange(false)}
+              className="w-full text-center text-sm font-semibold text-gray-400 py-2"
+            >
+              Anuluj
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

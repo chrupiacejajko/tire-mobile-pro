@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 
+export async function GET() {
+  const supabaseAdmin = getAdminClient();
+  const { data, error } = await supabaseAdmin
+    .from('services')
+    .select('id, name, description, price, duration_minutes, category, is_active, required_skill_ids, vehicle_type_id')
+    .eq('is_active', true)
+    .order('category')
+    .order('name');
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ services: data });
+}
+
 export async function DELETE(request: NextRequest) {
   const supabaseAdmin = getAdminClient();
   const { searchParams } = new URL(request.url);

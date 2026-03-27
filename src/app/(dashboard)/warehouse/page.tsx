@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Topbar } from '@/components/layout/topbar';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,7 +20,7 @@ import {
 import {
   Plus, Package, Warehouse as WarehouseIcon, Wrench, Layers,
   ArrowRightLeft, ChevronDown, ChevronRight, MapPin, User,
-  ArrowDownToLine, ArrowUpFromLine, History,
+  ArrowDownToLine, ArrowUpFromLine, History, Pencil, Search,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type {
@@ -29,14 +28,9 @@ import type {
   MaterialType, MaterialStock, MaterialMovement,
 } from '@/lib/types';
 
-const ANIM = {
-  container: { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } },
-  item: { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0, transition: { duration: 0.3 } } },
-};
-
 const STATUS_MAP: Record<EquipmentStatus, { label: string; color: string }> = {
-  available: { label: 'Dostępny', color: 'bg-emerald-100 text-emerald-700' },
-  in_use: { label: 'W użyciu', color: 'bg-blue-100 text-blue-700' },
+  available: { label: 'Dostepny', color: 'bg-emerald-100 text-emerald-700' },
+  in_use: { label: 'W uzyciu', color: 'bg-blue-100 text-blue-700' },
   maintenance: { label: 'Serwis', color: 'bg-orange-100 text-orange-700' },
   retired: { label: 'Wycofany', color: 'bg-gray-100 text-gray-600' },
 };
@@ -44,6 +38,11 @@ const STATUS_MAP: Record<EquipmentStatus, { label: string; color: string }> = {
 interface EmployeeOption {
   id: string;
   name: string;
+}
+
+interface OrderOption {
+  id: string;
+  label: string;
 }
 
 // Aggregated material row for the materials tab
@@ -82,17 +81,27 @@ export default function WarehousePage() {
   const [movements, setMovements] = useState<MaterialMovement[]>([]);
   const [movDateFrom, setMovDateFrom] = useState('');
   const [movDateTo, setMovDateTo] = useState('');
+  const [movPageSize] = useState(50);
+  const [movHasMore, setMovHasMore] = useState(false);
+  const [movLoadingMore, setMovLoadingMore] = useState(false);
+
+  // --- Orders for picker ---
+  const [recentOrders, setRecentOrders] = useState<OrderOption[]>([]);
+  const [orderSearch, setOrderSearch] = useState('');
 
   // --- Dialogs ---
   const [warehouseDialogOpen, setWarehouseDialogOpen] = useState(false);
+  const [warehouseEditDialogOpen, setWarehouseEditDialogOpen] = useState(false);
   const [equipmentDialogOpen, setEquipmentDialogOpen] = useState(false);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [receiveDialogOpen, setReceiveDialogOpen] = useState(false);
   const [consumeDialogOpen, setConsumeDialogOpen] = useState(false);
+  const [materialTransferDialogOpen, setMaterialTransferDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // --- Forms ---
   const [whForm, setWhForm] = useState({ name: '', address: '' });
+  const [whEditForm, setWhEditForm] = useState({ id: '', name: '', address: '', is_active: true });
   const [eqForm, setEqForm] = useState({
     serial_number: '', type_id: '', location_type: 'warehouse' as 'warehouse' | 'employee',
     warehouse_id: '', employee_id: '', notes: '',
@@ -109,6 +118,16 @@ export default function WarehousePage() {
   const [consumeForm, setConsumeForm] = useState({
     material_type_id: '', location_type: 'warehouse' as 'warehouse' | 'employee',
     warehouse_id: '', employee_id: '', quantity: '', order_id: '',
+  });
+  const [matTransferForm, setMatTransferForm] = useState({
+    material_type_id: '',
+    from_warehouse_id: '' as string | null,
+    from_employee_id: '' as string | null,
+    to_location_type: 'warehouse' as 'warehouse' | 'employee',
+    to_warehouse_id: '',
+    to_employee_id: '',
+    quantity: '',
+    notes: '',
   });
 
   // =========== FETCH ===========
@@ -184,20 +203,64 @@ export default function WarehousePage() {
         to_employee:employees!material_movements_to_employee_id_fkey(id, user:profiles(full_name))
       `)
       .order('created_at', { ascending: false })
-      .limit(100);
+      .range(0, movPageSize - 1);
 
     if (movDateFrom) query = query.gte('created_at', movDateFrom);
     if (movDateTo) query = query.lte('created_at', movDateTo + 'T23:59:59');
 
     const { data } = await query;
-    if (data) setMovements(data as MaterialMovement[]);
-  }, [movDateFrom, movDateTo]);
+    if (data) {
+      setMovHasMore(data.length === movPageSize);
+      setMovements(data as MaterialMovement[]);
+    }
+  }, [movDateFrom, movDateTo, movPageSize]);
+
+  const loadMoreMovements = useCallback(async () => {
+    setMovLoadingMore(true);
+    const offset = movements.length;
+    let query = supabase
+      .from('material_movements')
+      .select(`
+        *,
+        material_type:material_types(id, name, unit),
+        from_warehouse:warehouses!material_movements_from_warehouse_id_fkey(id, name),
+        from_employee:employees!material_movements_from_employee_id_fkey(id, user:profiles(full_name)),
+        to_warehouse:warehouses!material_movements_to_warehouse_id_fkey(id, name),
+        to_employee:employees!material_movements_to_employee_id_fkey(id, user:profiles(full_name))
+      `)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + movPageSize - 1);
+
+    if (movDateFrom) query = query.gte('created_at', movDateFrom);
+    if (movDateTo) query = query.lte('created_at', movDateTo + 'T23:59:59');
+
+    const { data } = await query;
+    if (data) {
+      setMovHasMore(data.length === movPageSize);
+      setMovements(prev => [...prev, ...(data as MaterialMovement[])]);
+    }
+    setMovLoadingMore(false);
+  }, [movements.length, movDateFrom, movDateTo, movPageSize]);
+
+  const fetchOrders = useCallback(async () => {
+    const { data } = await supabase
+      .from('orders')
+      .select('id, scheduled_date, status, client:clients(name)')
+      .order('scheduled_date', { ascending: false })
+      .limit(50);
+    if (data) {
+      setRecentOrders(data.map((o: any) => ({
+        id: o.id,
+        label: `${o.scheduled_date} - ${o.client?.name || 'Brak klienta'} (${o.status})`,
+      })));
+    }
+  }, []);
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([fetchBase(), fetchEquipment(), fetchMaterials(), fetchMovements()])
+    Promise.all([fetchBase(), fetchEquipment(), fetchMaterials(), fetchMovements(), fetchOrders()])
       .finally(() => setLoading(false));
-  }, [fetchBase, fetchEquipment, fetchMaterials, fetchMovements]);
+  }, [fetchBase, fetchEquipment, fetchMaterials, fetchMovements, fetchOrders]);
 
   // =========== HANDLERS ===========
 
@@ -211,6 +274,24 @@ export default function WarehousePage() {
     setSaving(false);
     setWarehouseDialogOpen(false);
     setWhForm({ name: '', address: '' });
+    fetchBase();
+  };
+
+  const handleEditWarehouse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    await fetch('/api/warehouses', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: whEditForm.id,
+        name: whEditForm.name,
+        address: whEditForm.address || null,
+        is_active: whEditForm.is_active,
+      }),
+    });
+    setSaving(false);
+    setWarehouseEditDialogOpen(false);
     fetchBase();
   };
 
@@ -245,6 +326,15 @@ export default function WarehousePage() {
     setTransferForm({ location_type: 'warehouse', warehouse_id: '', employee_id: '' });
     fetchEquipment();
     fetchBase();
+  };
+
+  const handleChangeEquipmentStatus = async (eqId: string, newStatus: EquipmentStatus) => {
+    await fetch('/api/equipment', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: eqId, status: newStatus }),
+    });
+    fetchEquipment();
   };
 
   const handleReceiveMaterial = async (e: React.FormEvent) => {
@@ -292,6 +382,35 @@ export default function WarehousePage() {
     fetchBase();
   };
 
+  const handleTransferMaterial = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    await fetch('/api/materials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'transfer',
+        material_type_id: matTransferForm.material_type_id,
+        from_warehouse_id: matTransferForm.from_warehouse_id || null,
+        from_employee_id: matTransferForm.from_employee_id || null,
+        to_warehouse_id: matTransferForm.to_location_type === 'warehouse' ? matTransferForm.to_warehouse_id || null : null,
+        to_employee_id: matTransferForm.to_location_type === 'employee' ? matTransferForm.to_employee_id || null : null,
+        quantity: Number(matTransferForm.quantity),
+        notes: matTransferForm.notes || null,
+      }),
+    });
+    setSaving(false);
+    setMaterialTransferDialogOpen(false);
+    setMatTransferForm({
+      material_type_id: '', from_warehouse_id: '', from_employee_id: '',
+      to_location_type: 'warehouse', to_warehouse_id: '', to_employee_id: '',
+      quantity: '', notes: '',
+    });
+    fetchMaterials();
+    fetchMovements();
+    fetchBase();
+  };
+
   // =========== DERIVED DATA ===========
 
   const filteredEquipment = equipment.filter(eq => {
@@ -321,7 +440,16 @@ export default function WarehousePage() {
       total: warehouseTotal + employeeTotal,
       breakdown: stocks,
     };
-  }).filter(m => m.total > 0);
+  });
+
+  const nonZeroMaterials = materialSummaries.filter(m => m.total > 0);
+  const allMaterialsZero = materialSummaries.length > 0 && nonZeroMaterials.length === 0;
+
+  const filteredOrders = useMemo(() => {
+    if (!orderSearch) return recentOrders;
+    const lower = orderSearch.toLowerCase();
+    return recentOrders.filter(o => o.label.toLowerCase().includes(lower) || o.id.toLowerCase().includes(lower));
+  }, [recentOrders, orderSearch]);
 
   const getLocationName = (eq: Equipment) => {
     if (eq.warehouse) return eq.warehouse.name;
@@ -344,12 +472,27 @@ export default function WarehousePage() {
     return '-';
   };
 
+  // Helper to open material transfer dialog with source pre-filled from a stock row
+  const openMaterialTransferDialog = (stock: MaterialStock) => {
+    setMatTransferForm({
+      material_type_id: stock.material_type_id,
+      from_warehouse_id: stock.warehouse_id,
+      from_employee_id: stock.employee_id,
+      to_location_type: 'warehouse',
+      to_warehouse_id: '',
+      to_employee_id: '',
+      quantity: '',
+      notes: '',
+    });
+    setMaterialTransferDialogOpen(true);
+  };
+
   // =========== RENDER ===========
   return (
     <div className="min-h-screen bg-gray-50/50">
       <Topbar
         title="Magazyn"
-        subtitle="Zarządzaj magazynami, sprzętem i materiałami"
+        subtitle="Zarzadzaj magazynami, sprzetem i materialami"
         icon={<Package className="h-5 w-5" />}
       />
 
@@ -360,10 +503,10 @@ export default function WarehousePage() {
               <WarehouseIcon className="h-4 w-4" /> Magazyny
             </TabsTrigger>
             <TabsTrigger value="equipment" className="gap-2">
-              <Wrench className="h-4 w-4" /> Sprzęty
+              <Wrench className="h-4 w-4" /> Sprzety
             </TabsTrigger>
             <TabsTrigger value="materials" className="gap-2">
-              <Layers className="h-4 w-4" /> Materiały
+              <Layers className="h-4 w-4" /> Materialy
             </TabsTrigger>
             <TabsTrigger value="movements" className="gap-2">
               <History className="h-4 w-4" /> Ruchy
@@ -385,7 +528,7 @@ export default function WarehousePage() {
               {loading ? (
                 <LoadingSpinner />
               ) : warehouses.length === 0 ? (
-                <EmptyState icon={WarehouseIcon} text="Brak magazynów" subtext="Dodaj pierwszy magazyn" />
+                <EmptyState icon={WarehouseIcon} text="Brak magazynow" subtext="Dodaj pierwszy magazyn" />
               ) : (
                 <Card className="rounded-2xl border-gray-100 shadow-sm">
                   <CardContent className="p-0">
@@ -394,9 +537,10 @@ export default function WarehousePage() {
                         <TableRow>
                           <TableHead>Nazwa</TableHead>
                           <TableHead>Adres</TableHead>
-                          <TableHead className="text-center">Sprzęty</TableHead>
-                          <TableHead className="text-center">Materiały (szt.)</TableHead>
+                          <TableHead className="text-center">Sprzety</TableHead>
+                          <TableHead className="text-center">Materialy (szt.)</TableHead>
                           <TableHead className="text-center">Aktywny</TableHead>
+                          <TableHead className="text-right">Akcje</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -410,6 +554,23 @@ export default function WarehousePage() {
                               <Badge className={wh.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}>
                                 {wh.is_active ? 'Tak' : 'Nie'}
                               </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="outline" size="sm"
+                                className="h-7 rounded-lg text-xs gap-1"
+                                onClick={() => {
+                                  setWhEditForm({
+                                    id: wh.id,
+                                    name: wh.name,
+                                    address: wh.address || '',
+                                    is_active: wh.is_active,
+                                  });
+                                  setWarehouseEditDialogOpen(true);
+                                }}
+                              >
+                                <Pencil className="h-3 w-3" /> Edytuj
+                              </Button>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -466,14 +627,14 @@ export default function WarehousePage() {
                     setEquipmentDialogOpen(true);
                   }}
                 >
-                  <Plus className="h-4 w-4" /> Dodaj sprzęt
+                  <Plus className="h-4 w-4" /> Dodaj sprzet
                 </Button>
               </div>
 
               {loading ? (
                 <LoadingSpinner />
               ) : filteredEquipment.length === 0 ? (
-                <EmptyState icon={Wrench} text="Brak sprzętu" subtext="Dodaj pierwszy sprzęt" />
+                <EmptyState icon={Wrench} text="Brak sprzetu" subtext="Dodaj pierwszy sprzet" />
               ) : (
                 <Card className="rounded-2xl border-gray-100 shadow-sm">
                   <CardContent className="p-0">
@@ -502,7 +663,21 @@ export default function WarehousePage() {
                                 </span>
                               </TableCell>
                               <TableCell>
-                                <Badge className={`text-[11px] rounded-lg ${st.color}`}>{st.label}</Badge>
+                                <Select
+                                  value={eq.status}
+                                  onValueChange={(v) => handleChangeEquipmentStatus(eq.id, v as EquipmentStatus)}
+                                >
+                                  <SelectTrigger className={`h-7 w-32 rounded-lg text-[11px] border-0 ${st.color}`}>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {(Object.entries(STATUS_MAP) as [EquipmentStatus, { label: string; color: string }][]).map(([k, v]) => (
+                                      <SelectItem key={k} value={k}>
+                                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${v.color}`}>{v.label}</span>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
                               </TableCell>
                               <TableCell className="text-gray-500 max-w-[200px] truncate">{eq.notes || '-'}</TableCell>
                               <TableCell className="text-right">
@@ -515,7 +690,7 @@ export default function WarehousePage() {
                                     setTransferDialogOpen(true);
                                   }}
                                 >
-                                  <ArrowRightLeft className="h-3 w-3" /> Przenieś
+                                  <ArrowRightLeft className="h-3 w-3" /> Przenies
                                 </Button>
                               </TableCell>
                             </TableRow>
@@ -538,10 +713,11 @@ export default function WarehousePage() {
                   className="h-9 rounded-xl text-sm gap-2"
                   onClick={() => {
                     setConsumeForm({ material_type_id: '', location_type: 'warehouse', warehouse_id: '', employee_id: '', quantity: '', order_id: '' });
+                    setOrderSearch('');
                     setConsumeDialogOpen(true);
                   }}
                 >
-                  <ArrowUpFromLine className="h-4 w-4" /> Wydaj materiał
+                  <ArrowUpFromLine className="h-4 w-4" /> Wydaj material
                 </Button>
                 <Button
                   className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
@@ -550,14 +726,18 @@ export default function WarehousePage() {
                     setReceiveDialogOpen(true);
                   }}
                 >
-                  <ArrowDownToLine className="h-4 w-4" /> Przyjmij materiał
+                  <ArrowDownToLine className="h-4 w-4" /> Przyjmij material
                 </Button>
               </div>
 
               {loading ? (
                 <LoadingSpinner />
               ) : materialSummaries.length === 0 ? (
-                <EmptyState icon={Layers} text="Brak materiałów" subtext="Przyjmij materiał aby rozpocząć" />
+                <EmptyState icon={Layers} text="Brak materialow" subtext="Przyjmij material aby rozpoczac" />
+              ) : allMaterialsZero ? (
+                <EmptyState icon={Layers} text="Wszystkie stany zerowe" subtext="Brak materialow na stanie - przyjmij material aby rozpoczac" />
+              ) : nonZeroMaterials.length === 0 ? (
+                <EmptyState icon={Layers} text="Brak materialow" subtext="Przyjmij material aby rozpoczac" />
               ) : (
                 <Card className="rounded-2xl border-gray-100 shadow-sm">
                   <CardContent className="p-0">
@@ -565,15 +745,15 @@ export default function WarehousePage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead className="w-8" />
-                          <TableHead>Materiał</TableHead>
+                          <TableHead>Material</TableHead>
                           <TableHead>Jednostka</TableHead>
                           <TableHead className="text-right">W magazynach</TableHead>
-                          <TableHead className="text-right">U pracowników</TableHead>
-                          <TableHead className="text-right">Łącznie</TableHead>
+                          <TableHead className="text-right">U pracownikow</TableHead>
+                          <TableHead className="text-right">Lacznie</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {materialSummaries.map(ms => (
+                        {nonZeroMaterials.map(ms => (
                           <>
                             <TableRow
                               key={ms.material_type_id}
@@ -613,7 +793,21 @@ export default function WarehousePage() {
                                 <TableCell className="text-right text-sm">
                                   {stock.employee_id ? stock.quantity : ''}
                                 </TableCell>
-                                <TableCell className="text-right text-sm font-medium">{stock.quantity}</TableCell>
+                                <TableCell className="text-right text-sm">
+                                  <span className="flex items-center justify-end gap-2">
+                                    <span className="font-medium">{stock.quantity}</span>
+                                    <Button
+                                      variant="outline" size="sm"
+                                      className="h-6 rounded-md text-[10px] gap-1 px-2"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openMaterialTransferDialog(stock);
+                                      }}
+                                    >
+                                      <ArrowRightLeft className="h-2.5 w-2.5" /> Przenies
+                                    </Button>
+                                  </span>
+                                </TableCell>
                               </TableRow>
                             ))}
                           </>
@@ -657,19 +851,20 @@ export default function WarehousePage() {
               {loading ? (
                 <LoadingSpinner />
               ) : movements.length === 0 ? (
-                <EmptyState icon={History} text="Brak ruchów" subtext="Historia ruchów materiałów pojawi się tutaj" />
+                <EmptyState icon={History} text="Brak ruchow" subtext="Historia ruchow materialow pojawi sie tutaj" />
               ) : (
+                <>
                 <Card className="rounded-2xl border-gray-100 shadow-sm">
                   <CardContent className="p-0">
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>Data</TableHead>
-                          <TableHead>Materiał</TableHead>
+                          <TableHead>Material</TableHead>
                           <TableHead>Typ</TableHead>
                           <TableHead>Z</TableHead>
                           <TableHead>Do</TableHead>
-                          <TableHead className="text-right">Ilość</TableHead>
+                          <TableHead className="text-right">Ilosc</TableHead>
                           <TableHead>Zlecenie</TableHead>
                           <TableHead>Notatki</TableHead>
                         </TableRow>
@@ -692,7 +887,7 @@ export default function WarehousePage() {
                                 mov.movement_type === 'consume' ? 'bg-red-100 text-red-700' :
                                 'bg-blue-100 text-blue-700'
                               }>
-                                {mov.movement_type === 'receive' ? 'Przyjęcie' :
+                                {mov.movement_type === 'receive' ? 'Przyjecie' :
                                  mov.movement_type === 'consume' ? 'Wydanie' : 'Transfer'}
                               </Badge>
                             </TableCell>
@@ -715,6 +910,19 @@ export default function WarehousePage() {
                     </Table>
                   </CardContent>
                 </Card>
+                {movHasMore && (
+                  <div className="flex justify-center pt-4">
+                    <Button
+                      variant="outline"
+                      className="rounded-xl text-sm"
+                      onClick={loadMoreMovements}
+                      disabled={movLoadingMore}
+                    >
+                      {movLoadingMore ? 'Ładowanie...' : 'Załaduj więcej'}
+                    </Button>
+                  </div>
+                )}
+                </>
               )}
             </div>
           </TabsContent>
@@ -728,11 +936,11 @@ export default function WarehousePage() {
           <form onSubmit={handleAddWarehouse} className="space-y-4">
             <div className="space-y-2">
               <Label>Nazwa</Label>
-              <Input required value={whForm.name} onChange={e => setWhForm({ ...whForm, name: e.target.value })} placeholder="Magazyn główny" />
+              <Input required value={whForm.name} onChange={e => setWhForm({ ...whForm, name: e.target.value })} placeholder="Magazyn glowny" />
             </div>
             <div className="space-y-2">
               <Label>Adres</Label>
-              <Input value={whForm.address} onChange={e => setWhForm({ ...whForm, address: e.target.value })} placeholder="ul. Przykładowa 1, Warszawa" />
+              <Input value={whForm.address} onChange={e => setWhForm({ ...whForm, address: e.target.value })} placeholder="ul. Przykladowa 1, Warszawa" />
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={() => setWarehouseDialogOpen(false)}>Anuluj</Button>
@@ -744,17 +952,61 @@ export default function WarehousePage() {
         </DialogContent>
       </Dialog>
 
+      {/* ========== DIALOG: EDIT WAREHOUSE ========== */}
+      <Dialog open={warehouseEditDialogOpen} onOpenChange={setWarehouseEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edytuj magazyn</DialogTitle></DialogHeader>
+          <form onSubmit={handleEditWarehouse} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Nazwa</Label>
+              <Input required value={whEditForm.name} onChange={e => setWhEditForm({ ...whEditForm, name: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Adres</Label>
+              <Input value={whEditForm.address} onChange={e => setWhEditForm({ ...whEditForm, address: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio" name="wh_active" value="true"
+                    checked={whEditForm.is_active}
+                    onChange={() => setWhEditForm({ ...whEditForm, is_active: true })}
+                  />
+                  Aktywny
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio" name="wh_active" value="false"
+                    checked={!whEditForm.is_active}
+                    onChange={() => setWhEditForm({ ...whEditForm, is_active: false })}
+                  />
+                  Nieaktywny
+                </label>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" type="button" onClick={() => setWarehouseEditDialogOpen(false)}>Anuluj</Button>
+              <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">
+                {saving ? 'Zapisywanie...' : 'Zapisz'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* ========== DIALOG: ADD EQUIPMENT ========== */}
       <Dialog open={equipmentDialogOpen} onOpenChange={setEquipmentDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Nowy sprzęt</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Nowy sprzet</DialogTitle></DialogHeader>
           <form onSubmit={handleAddEquipment} className="space-y-4">
             <div className="space-y-2">
               <Label>Numer seryjny</Label>
               <Input required value={eqForm.serial_number} onChange={e => setEqForm({ ...eqForm, serial_number: e.target.value })} placeholder="SN-001" />
             </div>
             <div className="space-y-2">
-              <Label>Typ sprzętu</Label>
+              <Label>Typ sprzetu</Label>
               <Select value={eqForm.type_id} onValueChange={v => setEqForm({ ...eqForm, type_id: v ?? '' })}>
                 <SelectTrigger><SelectValue placeholder="Wybierz typ" /></SelectTrigger>
                 <SelectContent>
@@ -821,7 +1073,7 @@ export default function WarehousePage() {
       {/* ========== DIALOG: TRANSFER EQUIPMENT ========== */}
       <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Przenieś sprzęt</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Przenies sprzet</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Nowa lokalizacja</Label>
@@ -870,7 +1122,7 @@ export default function WarehousePage() {
                 className="bg-blue-600 hover:bg-blue-700"
                 onClick={handleTransferEquipment}
               >
-                {saving ? 'Przenoszenie...' : 'Przenieś'}
+                {saving ? 'Przenoszenie...' : 'Przenies'}
               </Button>
             </div>
           </div>
@@ -880,12 +1132,12 @@ export default function WarehousePage() {
       {/* ========== DIALOG: RECEIVE MATERIAL ========== */}
       <Dialog open={receiveDialogOpen} onOpenChange={setReceiveDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Przyjmij materiał</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Przyjmij material</DialogTitle></DialogHeader>
           <form onSubmit={handleReceiveMaterial} className="space-y-4">
             <div className="space-y-2">
-              <Label>Typ materiału</Label>
+              <Label>Typ materialu</Label>
               <Select value={receiveForm.material_type_id} onValueChange={v => setReceiveForm({ ...receiveForm, material_type_id: v ?? '' })}>
-                <SelectTrigger><SelectValue placeholder="Wybierz materiał" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Wybierz material" /></SelectTrigger>
                 <SelectContent>
                   {materialTypes.map(mt => (
                     <SelectItem key={mt.id} value={mt.id}>{mt.name} ({mt.unit})</SelectItem>
@@ -934,7 +1186,7 @@ export default function WarehousePage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label>Ilość</Label>
+              <Label>Ilosc</Label>
               <Input type="number" min="1" required value={receiveForm.quantity} onChange={e => setReceiveForm({ ...receiveForm, quantity: e.target.value })} placeholder="0" />
             </div>
             <div className="flex justify-end gap-2">
@@ -950,12 +1202,12 @@ export default function WarehousePage() {
       {/* ========== DIALOG: CONSUME MATERIAL ========== */}
       <Dialog open={consumeDialogOpen} onOpenChange={setConsumeDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Wydaj materiał</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Wydaj material</DialogTitle></DialogHeader>
           <form onSubmit={handleConsumeMaterial} className="space-y-4">
             <div className="space-y-2">
-              <Label>Typ materiału</Label>
+              <Label>Typ materialu</Label>
               <Select value={consumeForm.material_type_id} onValueChange={v => setConsumeForm({ ...consumeForm, material_type_id: v ?? '' })}>
-                <SelectTrigger><SelectValue placeholder="Wybierz materiał" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Wybierz material" /></SelectTrigger>
                 <SelectContent>
                   {materialTypes.map(mt => (
                     <SelectItem key={mt.id} value={mt.id}>{mt.name} ({mt.unit})</SelectItem>
@@ -1004,17 +1256,168 @@ export default function WarehousePage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label>Ilość</Label>
+              <Label>Ilosc</Label>
               <Input type="number" min="1" required value={consumeForm.quantity} onChange={e => setConsumeForm({ ...consumeForm, quantity: e.target.value })} placeholder="0" />
             </div>
             <div className="space-y-2">
-              <Label>Nr zlecenia (opcjonalnie)</Label>
-              <Input value={consumeForm.order_id} onChange={e => setConsumeForm({ ...consumeForm, order_id: e.target.value })} placeholder="ID zlecenia" />
+              <Label>Zlecenie (opcjonalnie)</Label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
+                <Input
+                  className="pl-8"
+                  placeholder="Szukaj zlecenia..."
+                  value={orderSearch}
+                  onChange={e => {
+                    setOrderSearch(e.target.value);
+                    if (consumeForm.order_id) {
+                      setConsumeForm({ ...consumeForm, order_id: '' });
+                    }
+                  }}
+                />
+              </div>
+              {consumeForm.order_id ? (
+                <div className="flex items-center gap-2 text-sm bg-blue-50 rounded-lg px-3 py-2">
+                  <span className="flex-1 truncate">
+                    {recentOrders.find(o => o.id === consumeForm.order_id)?.label || consumeForm.order_id.slice(0, 8) + '...'}
+                  </span>
+                  <Button
+                    type="button" variant="ghost" size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => { setConsumeForm({ ...consumeForm, order_id: '' }); setOrderSearch(''); }}
+                  >
+                    Usun
+                  </Button>
+                </div>
+              ) : (
+                filteredOrders.length > 0 && orderSearch.length > 0 && (
+                  <div className="border rounded-lg max-h-40 overflow-y-auto">
+                    {filteredOrders.slice(0, 10).map(order => (
+                      <button
+                        key={order.id}
+                        type="button"
+                        className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 border-b last:border-b-0"
+                        onClick={() => {
+                          setConsumeForm({ ...consumeForm, order_id: order.id });
+                          setOrderSearch('');
+                        }}
+                      >
+                        {order.label}
+                      </button>
+                    ))}
+                  </div>
+                )
+              )}
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={() => setConsumeDialogOpen(false)}>Anuluj</Button>
               <Button type="submit" disabled={saving || !consumeForm.material_type_id} className="bg-red-600 hover:bg-red-700">
                 {saving ? 'Zapisywanie...' : 'Wydaj'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========== DIALOG: TRANSFER MATERIAL ========== */}
+      <Dialog open={materialTransferDialogOpen} onOpenChange={setMaterialTransferDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Przenies material</DialogTitle></DialogHeader>
+          <form onSubmit={handleTransferMaterial} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Typ materialu</Label>
+              <Select
+                value={matTransferForm.material_type_id}
+                onValueChange={v => setMatTransferForm({ ...matTransferForm, material_type_id: v ?? '' })}
+              >
+                <SelectTrigger><SelectValue placeholder="Wybierz material" /></SelectTrigger>
+                <SelectContent>
+                  {materialTypes.map(mt => (
+                    <SelectItem key={mt.id} value={mt.id}>{mt.name} ({mt.unit})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Zrodlo</Label>
+              <p className="text-sm text-gray-500">
+                {matTransferForm.from_warehouse_id
+                  ? warehouses.find(w => w.id === matTransferForm.from_warehouse_id)?.name || 'Magazyn'
+                  : matTransferForm.from_employee_id
+                    ? employees.find(e => e.id === matTransferForm.from_employee_id)?.name || 'Pracownik'
+                    : 'Nie wybrano'
+                }
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Cel</Label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio" name="mat_transfer_location" value="warehouse"
+                    checked={matTransferForm.to_location_type === 'warehouse'}
+                    onChange={() => setMatTransferForm({ ...matTransferForm, to_location_type: 'warehouse', to_employee_id: '' })}
+                  />
+                  Magazyn
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio" name="mat_transfer_location" value="employee"
+                    checked={matTransferForm.to_location_type === 'employee'}
+                    onChange={() => setMatTransferForm({ ...matTransferForm, to_location_type: 'employee', to_warehouse_id: '' })}
+                  />
+                  Pracownik
+                </label>
+              </div>
+              {matTransferForm.to_location_type === 'warehouse' ? (
+                <Select value={matTransferForm.to_warehouse_id} onValueChange={v => setMatTransferForm({ ...matTransferForm, to_warehouse_id: v ?? '' })}>
+                  <SelectTrigger><SelectValue placeholder="Wybierz magazyn" /></SelectTrigger>
+                  <SelectContent>
+                    {warehouses.map(w => (
+                      <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select value={matTransferForm.to_employee_id} onValueChange={v => setMatTransferForm({ ...matTransferForm, to_employee_id: v ?? '' })}>
+                  <SelectTrigger><SelectValue placeholder="Wybierz pracownika" /></SelectTrigger>
+                  <SelectContent>
+                    {employees.map(emp => (
+                      <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Ilosc</Label>
+              <Input
+                type="number" min="1" required
+                value={matTransferForm.quantity}
+                onChange={e => setMatTransferForm({ ...matTransferForm, quantity: e.target.value })}
+                placeholder="0"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Notatki (opcjonalnie)</Label>
+              <Input
+                value={matTransferForm.notes}
+                onChange={e => setMatTransferForm({ ...matTransferForm, notes: e.target.value })}
+                placeholder="Powod transferu..."
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" type="button" onClick={() => setMaterialTransferDialogOpen(false)}>Anuluj</Button>
+              <Button
+                type="submit"
+                disabled={saving || !matTransferForm.material_type_id || (!matTransferForm.to_warehouse_id && !matTransferForm.to_employee_id)}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {saving ? 'Przenoszenie...' : 'Przenies'}
               </Button>
             </div>
           </form>

@@ -79,6 +79,65 @@ function getDelayToleranceLevel(flexibilityMinutes: number, orderStatus: string)
   return 'flexible';
 }
 
+// ── Block color system based on time buffer status ───────────────────────────
+// 5-color scheme: green (on time), yellow (tight), red (late), blue (flexible), gray (completed)
+
+type BlockColorLevel = 'green' | 'yellow' | 'red' | 'blue' | 'gray';
+
+interface BlockColorStyle {
+  bg: string;
+  border: string;
+  accent: string;
+  textClass: string;
+  label: string;
+}
+
+const BLOCK_COLORS: Record<BlockColorLevel, BlockColorStyle> = {
+  green:  { bg: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.35)', accent: '#10B981', textClass: 'text-emerald-700', label: 'Na czas' },
+  yellow: { bg: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)', accent: '#F59E0B', textClass: 'text-amber-700',   label: 'Ciasno' },
+  red:    { bg: 'rgba(239,68,68,0.15)',  border: '1px solid rgba(239,68,68,0.4)',   accent: '#EF4444', textClass: 'text-red-700',     label: 'Spóźnienie' },
+  blue:   { bg: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.35)', accent: '#3B82F6', textClass: 'text-blue-700',    label: 'Elastyczne' },
+  gray:   { bg: '#1F2937',               border: '1px solid #374151',               accent: '#9CA3AF', textClass: 'text-white',       label: 'Ukończone' },
+};
+
+function getBlockColor(stop: Stop): BlockColorStyle {
+  const status = stop.order_status ?? 'pending';
+
+  // Completed / cancelled orders -> gray
+  if (status === 'completed' || status === 'cancelled') {
+    return BLOCK_COLORS.gray;
+  }
+
+  // In-progress keeps gray with stripe pattern (handled separately in render)
+  if (status === 'in_progress') {
+    return BLOCK_COLORS.gray;
+  }
+
+  // No time window -> flexible (blue)
+  if (stop.time_window_status === 'no_window') {
+    return BLOCK_COLORS.blue;
+  }
+
+  // Compute buffer: flexibility_minutes is the total allowed delay,
+  // delay_minutes is how late we actually are. remaining = flex - delay.
+  const flexibility = stop.flexibility_minutes ?? 0;
+  const delay = stop.delay_minutes ?? 0;
+  const buffer = flexibility - delay;
+
+  // Late — buffer negative or time_window_status says late
+  if (stop.time_window_status === 'late' || buffer < 0) {
+    return BLOCK_COLORS.red;
+  }
+
+  // Tight — buffer between 0 and 30 min, or time_window_status says tight
+  if (stop.time_window_status === 'tight' || (buffer >= 0 && buffer <= 30)) {
+    return BLOCK_COLORS.yellow;
+  }
+
+  // On time — comfortable buffer > 30 min
+  return BLOCK_COLORS.green;
+}
+
 
 export function GanttView({
   routes,
@@ -86,8 +145,8 @@ export function GanttView({
   date,
   onRefresh,
 }: GanttViewProps) {
-  const START_HOUR = 7;
-  const END_HOUR = 20;
+  const START_HOUR = 0;
+  const END_HOUR = 24;
   const TOTAL_MINUTES = (END_HOUR - START_HOUR) * 60;
   const HOUR_WIDTH = 100;
   const TOTAL_WIDTH = (END_HOUR - START_HOUR) * HOUR_WIDTH;
@@ -383,10 +442,14 @@ export function GanttView({
     const offsetX = isDraggingThis ? dragOffset.x : 0;
     const offsetY = isDraggingThis ? dragOffset.y : 0;
 
-    // New delay tolerance color system
+    // Block color system (5-level: green/yellow/red/blue/gray)
+    const blockColor = getBlockColor(stop);
     const level = getDelayToleranceLevel(stop.flexibility_minutes ?? 0, stop.order_status ?? 'pending');
-    const dtStyle = DELAY_TOLERANCE_COLORS[level] || DELAY_TOLERANCE_COLORS.flexible;
     const isCompletedOrInProgress = level === 'completed' || level === 'in_progress';
+    // In-progress gets striped pattern over gray
+    const blockBg = level === 'in_progress'
+      ? 'repeating-linear-gradient(45deg, #1F2937, #1F2937 4px, #4B5563 4px, #4B5563 8px)'
+      : blockColor.bg;
 
     // ── When dragging, show origin ghost (the hole where block was) ──
     const originGhost = isDraggingThis && (
@@ -396,7 +459,7 @@ export function GanttView({
         style={{
           left: serviceStartX,
           width: serviceWidth,
-          height: '36px',
+          height: '42px',
           background: 'rgba(0,0,0,0.025)',
           border: '2px dashed rgba(0,0,0,0.12)',
           borderLeft: `4px solid rgba(0,0,0,0.1)`,
@@ -446,10 +509,10 @@ export function GanttView({
           style={{
             left: blockLeft,
             width: serviceWidth,
-            height: '36px',
-            background: dtStyle.bg,
-            border: dtStyle.border,
-            borderLeft: `4px solid ${dtStyle.accent}`,
+            height: '42px',
+            background: blockBg,
+            border: blockColor.border,
+            borderLeft: `4px solid ${blockColor.accent}`,
             // Smooth transition when server data updates position (not while dragging)
             transition: isDraggingThis ? 'none' : 'left 0.3s ease-out, width 0.3s ease-out',
             ...(isDraggingThis ? {
@@ -464,22 +527,42 @@ export function GanttView({
           onMouseEnter={(e) => { if (!dragging) setTooltip({ x: e.clientX, y: e.clientY - 10, stop, employeeName }); }}
           onMouseLeave={() => setTooltip(null)}
         >
-          <div className="flex items-center h-full px-1.5 gap-1 min-w-0">
-            {isLocked && <span className="text-[9px]">🔒</span>}
-            {stop.time_window_status === 'late' && !isCompletedOrInProgress && <AlertTriangle className="h-2.5 w-2.5 text-red-500 flex-shrink-0" />}
-            <span className={`text-[10px] font-semibold truncate ${dtStyle.textClass}`}>
-              {stop.sequence}. {stop.client_name}
-            </span>
-            {serviceWidth > 80 && (
-              <span className={`text-[8px] ml-auto flex-shrink-0 opacity-60 ${dtStyle.textClass}`}>
-                {stop.service_start}
+          {/* Two-line layout for wider blocks, single-line for narrow */}
+          {serviceWidth >= 100 ? (
+            <div className="flex flex-col justify-center h-full px-1.5 min-w-0">
+              {/* Top line: sequence + client name */}
+              <div className="flex items-center gap-1 min-w-0">
+                {isLocked && <span className="text-[9px]">🔒</span>}
+                {stop.time_window_status === 'late' && !isCompletedOrInProgress && <AlertTriangle className="h-2.5 w-2.5 text-red-500 flex-shrink-0" />}
+                <span className={`text-[10px] font-semibold truncate ${blockColor.textClass}`}>
+                  {stop.sequence}. {stop.client_name}
+                </span>
+              </div>
+              {/* Bottom line: time range + duration */}
+              <div className="flex items-center gap-1 min-w-0 mt-px">
+                <span className={`text-[9px] tabular-nums opacity-70 ${blockColor.textClass}`}>
+                  {stop.service_start}–{stop.departure_time}
+                </span>
+                {serviceWidth > 140 && stop.service_duration_minutes > 0 && (
+                  <span className={`text-[8px] opacity-50 ${blockColor.textClass}`}>
+                    ({stop.service_duration_minutes}min)
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center h-full px-1.5 gap-1 min-w-0">
+              {isLocked && <span className="text-[9px]">🔒</span>}
+              {stop.time_window_status === 'late' && !isCompletedOrInProgress && <AlertTriangle className="h-2.5 w-2.5 text-red-500 flex-shrink-0" />}
+              <span className={`text-[10px] font-semibold truncate ${blockColor.textClass}`}>
+                {stop.sequence}. {stop.client_name}
               </span>
-            )}
-          </div>
+            </div>
+          )}
           {/* Buffer countdown overlay */}
           {(() => {
             const buf = getBufferDisplay(stop);
-            if (!buf || serviceWidth < 50) return null;
+            if (!buf || serviceWidth < 100) return null;
             return (
               <span
                 className={cn(
@@ -497,216 +580,270 @@ export function GanttView({
     );
   }
 
+  // Scroll-to-now on mount (scroll to ~1 hour before current time)
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (isToday && scrollRef.current) {
+      const scrollTarget = Math.max(0, nowX - HOUR_WIDTH);
+      scrollRef.current.scrollLeft = scrollTarget;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <div ref={containerRef} className="rounded-xl bg-white shadow-[0_1px_4px_rgba(0,0,0,0.06)] relative" style={{ overflowX: 'clip', overflowY: 'visible' }}>
-      {/* Header */}
-      <div className="flex" style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
-        <div className="w-48 flex-shrink-0 px-3 py-2 bg-white/98 backdrop-blur-sm">
-          <span className="text-[10px] font-semibold text-gray-300 uppercase tracking-wide">Pracownik</span>
-        </div>
-        <div className="relative overflow-x-auto" style={{ width: TOTAL_WIDTH }}>
-          <div className="flex">
-            {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
+    <div ref={containerRef} className="rounded-xl bg-white shadow-[0_1px_4px_rgba(0,0,0,0.06)] relative">
+      {/* ── Color legend ── */}
+      <div className="flex items-center gap-4 px-4 py-1.5 border-b border-gray-100 text-[10px] text-gray-500">
+        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: BLOCK_COLORS.green.accent }} /> Na czas</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: BLOCK_COLORS.yellow.accent }} /> Ciasno</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: BLOCK_COLORS.red.accent }} /> Spóźnienie</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: BLOCK_COLORS.blue.accent }} /> Elastyczne</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: BLOCK_COLORS.gray.accent }} /> Ukończone</span>
+      </div>
+      {/* Single horizontal scroll container — header + all rows scroll together */}
+      <div ref={scrollRef} className="overflow-x-auto overflow-y-visible" style={{ position: 'relative' }}>
+        <div style={{ width: LEFT_COL_WIDTH + TOTAL_WIDTH, minWidth: '100%' }}>
+
+          {/* ── Header row: sticky employee label + time axis ── */}
+          <div className="flex sticky top-0 z-10 bg-white" style={{ borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+            <div
+              className="flex-shrink-0 px-3 py-2 bg-white z-20 flex items-end"
+              style={{ width: LEFT_COL_WIDTH, position: 'sticky', left: 0, borderRight: '1px solid rgba(0,0,0,0.06)' }}
+            >
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Pracownik</span>
+            </div>
+            <div className="relative flex-shrink-0" style={{ width: TOTAL_WIDTH }}>
+              <div className="flex">
+                {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => {
+                  const hour = START_HOUR + i;
+                  const isWorkHour = hour >= 8 && hour < 17;
+                  return (
+                    <div
+                      key={i}
+                      className="flex-shrink-0 relative"
+                      style={{
+                        width: HOUR_WIDTH,
+                        borderRight: '1px solid rgba(0,0,0,0.06)',
+                        backgroundColor: isWorkHour ? 'rgba(249,115,22,0.02)' : undefined,
+                      }}
+                    >
+                      {/* Hour label */}
+                      <div className="py-1.5 px-1 text-center">
+                        <span className={cn(
+                          'text-xs font-semibold tabular-nums',
+                          isWorkHour ? 'text-gray-700' : 'text-gray-300',
+                        )}>
+                          {String(hour).padStart(2, '0')}:00
+                        </span>
+                      </div>
+                      {/* Half-hour tick */}
+                      <div
+                        className="absolute bottom-0"
+                        style={{ left: HOUR_WIDTH / 2, width: '1px', height: '6px', background: 'rgba(0,0,0,0.08)' }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Employee rows ── */}
+          {(localRoutes ?? []).map((route, rowIdx) => {
+            const isDropTarget = dragTargetRow === route.employee_id && dragging && dragging.origRow !== route.employee_id;
+            const initials = route.employee_name.split(' ').map(w => w[0]).join('').slice(0, 2);
+            const hasLate = route.score.late > 0;
+
+            return (
               <div
-                key={i}
-                className="flex-shrink-0 text-center py-2"
+                key={route.employee_id}
+                ref={(el) => { if (el) rowRefs.current.set(route.employee_id, el); }}
+                className={cn(
+                  'flex transition-colors duration-100',
+                  isDropTarget ? 'bg-orange-50/50 ring-1 ring-inset ring-orange-300' : '',
+                )}
                 style={{
-                  width: HOUR_WIDTH,
-                  borderRight: '1px solid rgba(0,0,0,0.03)',
-                  backgroundColor: i % 2 === 0 ? 'rgba(0,0,0,0.008)' : undefined,
+                  borderBottom: '1px solid rgba(0,0,0,0.035)',
+                  backgroundColor: isDropTarget ? undefined : rowIdx % 2 === 1 ? 'rgba(0,0,0,0.008)' : undefined,
                 }}
               >
-                <span className="text-[11px] font-medium text-gray-300">{String(START_HOUR + i).padStart(2, '0')}:00</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Employee rows */}
-      {(localRoutes ?? []).map((route, rowIdx) => {
-        const isDropTarget = dragTargetRow === route.employee_id && dragging && dragging.origRow !== route.employee_id;
-        const initials = route.employee_name.split(' ').map(w => w[0]).join('').slice(0, 2);
-        const hasLate = route.score.late > 0;
-
-        return (
-          <div
-            key={route.employee_id}
-            ref={(el) => { if (el) rowRefs.current.set(route.employee_id, el); }}
-            className={cn(
-              'flex transition-colors duration-100',
-              isDropTarget ? 'bg-orange-50/50 ring-1 ring-inset ring-orange-300' : '',
-            )}
-            style={{
-              borderBottom: '1px solid rgba(0,0,0,0.035)',
-              backgroundColor: isDropTarget ? undefined : rowIdx % 2 === 1 ? 'rgba(0,0,0,0.008)' : undefined,
-            }}
-          >
-            {/* Employee info — wider with score */}
-            <div className="w-48 flex-shrink-0 px-3 py-2 flex items-center gap-2" style={{ borderRight: '1px solid rgba(0,0,0,0.04)' }}>
-              <div className="w-7 h-7 rounded-lg bg-orange-100 flex items-center justify-center text-orange-600 text-[9px] font-bold flex-shrink-0">
-                {initials}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1">
-                  <p className="text-[11px] font-bold text-gray-800 truncate">{route.employee_name}</p>
-                  <WorkerStatusDot pos={route.current_position} orders={route.total_orders} />
-                </div>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <ScoreBadge score={route.score.score} />
-                  <span className="text-[9px] text-gray-400">{route.total_km}km</span>
-                  {hasLate && (
-                    <span className="inline-flex items-center gap-0.5 text-[8px] font-bold text-red-600">
-                      <AlertTriangle className="h-2.5 w-2.5" />{route.score.late}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Timeline area */}
-            <div
-              className={cn('relative overflow-x-auto', !isDropTarget && 'hover:bg-orange-50/10')}
-              style={{ width: TOTAL_WIDTH, height: ROW_HEIGHT }}
-            >
-              {/* Grid lines */}
-              {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
-                <div key={i} className="absolute top-0 bottom-0" style={{ left: i * HOUR_WIDTH, borderRight: '1px solid rgba(0,0,0,0.02)' }} />
-              ))}
-
-              {/* Service blocks */}
-              {route.schedule.map((stop, i) => {
-                const prevDeparture = i > 0 ? timeToX(route.schedule[i - 1].departure_time) : null;
-                if (stop.order_id === 'return_to_base') {
-                  return renderReturnBlock(stop, prevDeparture);
-                }
-                return renderServiceBlock(stop, route.employee_id, route.employee_name, prevDeparture, lockedOrders.has(stop.order_id));
-              })}
-
-              {/* Drop target ghost — shows where block will land in THIS row */}
-              {dragging && dragTargetRow === route.employee_id && (
+                {/* Employee info — sticky left column */}
                 <div
-                  className="absolute top-1/2 -translate-y-1/2 rounded-lg pointer-events-none z-30"
-                  style={{
-                    left: Math.max(0, dragSnapX),
-                    width: Math.max(dragging.blockWidth ?? 80, 60),
-                    height: '38px',
-                    background: dragging.origRow !== route.employee_id
-                      ? 'rgba(251,146,60,0.15)'
-                      : 'rgba(59,130,246,0.10)',
-                    border: `2px dashed ${dragging.origRow !== route.employee_id ? 'rgba(251,146,60,0.85)' : 'rgba(59,130,246,0.6)'}`,
-                    borderLeft: `4px solid ${dragging.origRow !== route.employee_id ? '#f97316' : '#3b82f6'}`,
-                    boxShadow: `0 0 0 1px ${dragging.origRow !== route.employee_id ? 'rgba(251,146,60,0.2)' : 'rgba(59,130,246,0.15)'}`,
-                  }}
+                  className="flex-shrink-0 px-3 py-2 flex items-center gap-2 bg-white z-10"
+                  style={{ width: LEFT_COL_WIDTH, position: 'sticky', left: 0, borderRight: '1px solid rgba(0,0,0,0.06)' }}
                 >
-                  <div className="flex items-center justify-center h-full gap-1 px-2">
-                    <span
-                      className="text-[10px] font-bold whitespace-nowrap"
-                      style={{ color: dragging.origRow !== route.employee_id ? '#ea580c' : '#2563eb' }}
-                    >
-                      {xToTime(Math.max(0, dragSnapX))}
-                    </span>
+                  <div className="w-7 h-7 rounded-lg bg-orange-100 flex items-center justify-center text-orange-600 text-[9px] font-bold flex-shrink-0">
+                    {initials}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1">
+                      <p className="text-[11px] font-bold text-gray-800 truncate">{route.employee_name}</p>
+                      <WorkerStatusDot pos={route.current_position} orders={route.total_orders} />
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <ScoreBadge score={route.score.score} />
+                      <span className="text-[9px] text-gray-400">{route.total_km}km</span>
+                      {hasLate && (
+                        <span className="inline-flex items-center gap-0.5 text-[8px] font-bold text-red-600">
+                          <AlertTriangle className="h-2.5 w-2.5" />{route.score.late}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
-              )}
 
-              {/* Current time */}
-              {isToday && nowX > 0 && nowX < TOTAL_WIDTH && (
-                <div className="absolute top-0 bottom-0 z-20 pointer-events-none" style={{ left: nowX }}>
-                  <div className="w-[2px] h-full bg-gradient-to-b from-red-500 via-red-400/60 to-red-300/20" />
-                  <div className="w-2.5 h-2.5 rounded-full bg-red-500 absolute top-0 -translate-x-[4px] -translate-y-0.5 shadow-sm shadow-red-500/30" />
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Unassigned row */}
-      {localUnassigned.length > 0 && (
-        <div
-          ref={(el) => { if (el) rowRefs.current.set('__unassigned__', el); }}
-          className="flex bg-gray-50/30"
-          style={{ borderTop: '2px dashed rgba(0,0,0,0.08)' }}
-        >
-          <div className="w-48 flex-shrink-0 px-3 py-2 flex items-center gap-2" style={{ borderRight: '1px solid rgba(0,0,0,0.04)' }}>
-            <div className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center">
-              <AlertTriangle className="h-3.5 w-3.5 text-gray-400" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold text-gray-500">Nieprzypisane</p>
-              <p className="text-[9px] text-red-500 font-bold">{localUnassigned.length} zlec.</p>
-            </div>
-          </div>
-          <div className="relative overflow-x-auto flex items-center gap-1.5 px-2 py-1" style={{ width: TOTAL_WIDTH, minHeight: ROW_HEIGHT }}>
-            {localUnassigned.map((order, idx) => {
-              const blockWidth = 120;
-              const left = idx * (blockWidth + 6);
-              const isDraggingThis = dragging?.orderId === order.id;
-              const offsetX = isDraggingThis ? dragOffset.x : 0;
-              const offsetY = isDraggingThis ? dragOffset.y : 0;
-              const isUrgent = order.priority === 'urgent';
-              const isHigh = order.priority === 'high';
-
-              return (
+                {/* Timeline area */}
                 <div
-                  key={order.id}
-                  className={cn(
-                    'absolute top-1/2 -translate-y-1/2 h-9 rounded-lg cursor-grab select-none overflow-hidden transition-shadow',
-                    isDraggingThis && 'z-50 shadow-lg opacity-75 cursor-grabbing',
-                    !isDraggingThis && 'hover:shadow-sm',
-                    isUrgent ? 'ring-1 ring-red-400/50' : isHigh ? 'ring-1 ring-amber-300/50' : '',
-                  )}
-                  style={{
-                    left: left + offsetX,
-                    width: blockWidth,
-                    background: isUrgent
-                      ? 'linear-gradient(to right, rgba(254,226,226,0.9), rgba(255,241,242,0.6))'
-                      : isHigh
-                        ? 'linear-gradient(to right, rgba(254,243,199,0.9), rgba(255,251,235,0.6))'
-                        : 'linear-gradient(to right, rgba(243,244,246,0.9), rgba(249,250,251,0.6))',
-                    border: isUrgent ? '1px solid rgba(239,68,68,0.3)' : isHigh ? '1px solid rgba(245,158,11,0.3)' : '1px dashed rgba(156,163,175,0.3)',
-                    borderLeft: `4px solid ${isUrgent ? '#dc2626' : isHigh ? '#d97706' : '#9ca3af'}`,
-                    ...(isDraggingThis ? { transform: `translate(0, calc(-50% + ${offsetY}px))`, zIndex: 50 } : {}),
-                  }}
-                  onMouseDown={(e) => handleBlockMouseDown(e, order.id, '', left, true, blockWidth)}
-                  onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, orderId: order.id, employeeId: '' }); }}
-                  onMouseEnter={(e) => {
-                    if (!dragging) {
-                      const fakeStop: Stop = {
-                        order_id: order.id, sequence: 0, client_name: order.client_name, address: order.address,
-                        lat: order.lat ?? 0, lng: order.lng ?? 0, services: order.services,
-                        time_window: order.time_window,
-                        time_window_label: order.time_window ? (order.time_window === 'morning' ? '08:00-12:00' : order.time_window === 'afternoon' ? '12:00-16:00' : '16:00-20:00') : null,
-                        time_window_color: null, time_window_status: 'no_window', travel_minutes: 0,
-                        arrival_time: order.scheduled_time_start ?? '--:--', wait_minutes: 0,
-                        service_start: order.scheduled_time_start ?? '--:--', service_duration_minutes: 0,
-                        departure_time: '--:--', delay_minutes: 0,
-                        flexibility_minutes: 0, order_status: order.status ?? 'pending',
-                      };
-                      setTooltip({ x: e.clientX, y: e.clientY - 10, stop: fakeStop, employeeName: 'Nieprzypisane' });
+                  className={cn('relative flex-shrink-0', !isDropTarget && 'hover:bg-orange-50/10')}
+                  style={{ width: TOTAL_WIDTH, height: ROW_HEIGHT }}
+                >
+                  {/* Hour grid lines + half-hour dashed lines */}
+                  {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
+                    <Fragment key={i}>
+                      <div className="absolute top-0 bottom-0" style={{ left: i * HOUR_WIDTH, borderRight: '1px solid rgba(0,0,0,0.04)' }} />
+                      <div className="absolute top-0 bottom-0" style={{ left: i * HOUR_WIDTH + HOUR_WIDTH / 2, borderRight: '1px dashed rgba(0,0,0,0.02)' }} />
+                    </Fragment>
+                  ))}
+
+                  {/* Service blocks */}
+                  {route.schedule.map((stop, i) => {
+                    const prevDeparture = i > 0 ? timeToX(route.schedule[i - 1].departure_time) : null;
+                    if (stop.order_id === 'return_to_base') {
+                      return renderReturnBlock(stop, prevDeparture);
                     }
-                  }}
-                  onMouseLeave={() => setTooltip(null)}
-                >
-                  <div className="flex items-center h-full px-2 gap-1 min-w-0">
-                    {isUrgent && <Zap className="h-3 w-3 text-red-500 flex-shrink-0" />}
-                    <span className={`text-[10px] font-semibold truncate ${isUrgent ? 'text-red-700' : isHigh ? 'text-amber-700' : 'text-gray-600'}`}>
-                      {order.client_name}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                    return renderServiceBlock(stop, route.employee_id, route.employee_name, prevDeparture, lockedOrders.has(stop.order_id));
+                  })}
 
-      {/* Snap guide line — vertical line across all rows while dragging */}
+                  {/* Drop target ghost — shows where block will land in THIS row */}
+                  {dragging && dragTargetRow === route.employee_id && (
+                    <div
+                      className="absolute top-1/2 -translate-y-1/2 rounded-lg pointer-events-none z-30"
+                      style={{
+                        left: Math.max(0, dragSnapX),
+                        width: Math.max(dragging.blockWidth ?? 80, 60),
+                        height: '38px',
+                        background: dragging.origRow !== route.employee_id
+                          ? 'rgba(251,146,60,0.15)'
+                          : 'rgba(59,130,246,0.10)',
+                        border: `2px dashed ${dragging.origRow !== route.employee_id ? 'rgba(251,146,60,0.85)' : 'rgba(59,130,246,0.6)'}`,
+                        borderLeft: `4px solid ${dragging.origRow !== route.employee_id ? '#f97316' : '#3b82f6'}`,
+                        boxShadow: `0 0 0 1px ${dragging.origRow !== route.employee_id ? 'rgba(251,146,60,0.2)' : 'rgba(59,130,246,0.15)'}`,
+                      }}
+                    >
+                      <div className="flex items-center justify-center h-full gap-1 px-2">
+                        <span
+                          className="text-[10px] font-bold whitespace-nowrap"
+                          style={{ color: dragging.origRow !== route.employee_id ? '#ea580c' : '#2563eb' }}
+                        >
+                          {xToTime(Math.max(0, dragSnapX))}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Current time */}
+                  {isToday && nowX > 0 && nowX < TOTAL_WIDTH && (
+                    <div className="absolute top-0 bottom-0 z-20 pointer-events-none" style={{ left: nowX }}>
+                      <div className="w-[2px] h-full bg-gradient-to-b from-red-500 via-red-400/60 to-red-300/20" />
+                      <div className="w-2.5 h-2.5 rounded-full bg-red-500 absolute top-0 -translate-x-[4px] -translate-y-0.5 shadow-sm shadow-red-500/30" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* ── Unassigned row ── */}
+          {localUnassigned.length > 0 && (
+            <div
+              ref={(el) => { if (el) rowRefs.current.set('__unassigned__', el); }}
+              className="flex bg-gray-50/30"
+              style={{ borderTop: '2px dashed rgba(0,0,0,0.08)' }}
+            >
+              <div
+                className="flex-shrink-0 px-3 py-2 flex items-center gap-2 bg-gray-50/30 z-10"
+                style={{ width: LEFT_COL_WIDTH, position: 'sticky', left: 0, borderRight: '1px solid rgba(0,0,0,0.06)' }}
+              >
+                <div className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center">
+                  <AlertTriangle className="h-3.5 w-3.5 text-gray-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-gray-500">Nieprzypisane</p>
+                  <p className="text-[9px] text-red-500 font-bold">{localUnassigned.length} zlec.</p>
+                </div>
+              </div>
+              <div className="relative flex-shrink-0 flex items-center gap-1.5 px-2 py-1" style={{ width: TOTAL_WIDTH, minHeight: ROW_HEIGHT }}>
+                {localUnassigned.map((order, idx) => {
+                  const blockWidth = 120;
+                  const left = idx * (blockWidth + 6);
+                  const isDraggingThis = dragging?.orderId === order.id;
+                  const offsetX = isDraggingThis ? dragOffset.x : 0;
+                  const offsetY = isDraggingThis ? dragOffset.y : 0;
+                  const isUrgent = order.priority === 'urgent';
+                  const isHigh = order.priority === 'high';
+
+                  return (
+                    <div
+                      key={order.id}
+                      className={cn(
+                        'absolute top-1/2 -translate-y-1/2 h-9 rounded-lg cursor-grab select-none overflow-hidden transition-shadow',
+                        isDraggingThis && 'z-50 shadow-lg opacity-75 cursor-grabbing',
+                        !isDraggingThis && 'hover:shadow-sm',
+                        isUrgent ? 'ring-1 ring-red-400/50' : isHigh ? 'ring-1 ring-amber-300/50' : '',
+                      )}
+                      style={{
+                        left: left + offsetX,
+                        width: blockWidth,
+                        background: isUrgent
+                          ? 'linear-gradient(to right, rgba(254,226,226,0.9), rgba(255,241,242,0.6))'
+                          : isHigh
+                            ? 'linear-gradient(to right, rgba(254,243,199,0.9), rgba(255,251,235,0.6))'
+                            : 'linear-gradient(to right, rgba(243,244,246,0.9), rgba(249,250,251,0.6))',
+                        border: isUrgent ? '1px solid rgba(239,68,68,0.3)' : isHigh ? '1px solid rgba(245,158,11,0.3)' : '1px dashed rgba(156,163,175,0.3)',
+                        borderLeft: `4px solid ${isUrgent ? '#dc2626' : isHigh ? '#d97706' : '#9ca3af'}`,
+                        ...(isDraggingThis ? { transform: `translate(0, calc(-50% + ${offsetY}px))`, zIndex: 50 } : {}),
+                      }}
+                      onMouseDown={(e) => handleBlockMouseDown(e, order.id, '', left, true, blockWidth)}
+                      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, orderId: order.id, employeeId: '' }); }}
+                      onMouseEnter={(e) => {
+                        if (!dragging) {
+                          const fakeStop: Stop = {
+                            order_id: order.id, sequence: 0, client_name: order.client_name, address: order.address,
+                            lat: order.lat ?? 0, lng: order.lng ?? 0, services: order.services,
+                            time_window: order.time_window,
+                            time_window_label: order.time_window ? (order.time_window === 'morning' ? '08:00-12:00' : order.time_window === 'afternoon' ? '12:00-16:00' : '16:00-20:00') : null,
+                            time_window_color: null, time_window_status: 'no_window', travel_minutes: 0,
+                            arrival_time: order.scheduled_time_start ?? '--:--', wait_minutes: 0,
+                            service_start: order.scheduled_time_start ?? '--:--', service_duration_minutes: 0,
+                            departure_time: '--:--', delay_minutes: 0,
+                            flexibility_minutes: 0, order_status: order.status ?? 'pending',
+                          };
+                          setTooltip({ x: e.clientX, y: e.clientY - 10, stop: fakeStop, employeeName: 'Nieprzypisane' });
+                        }
+                      }}
+                      onMouseLeave={() => setTooltip(null)}
+                    >
+                      <div className="flex items-center h-full px-2 gap-1 min-w-0">
+                        {isUrgent && <Zap className="h-3 w-3 text-red-500 flex-shrink-0" />}
+                        <span className={`text-[10px] font-semibold truncate ${isUrgent ? 'text-red-700' : isHigh ? 'text-amber-700' : 'text-gray-600'}`}>
+                          {order.client_name}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+        </div>{/* end inner width wrapper */}
+      </div>{/* end scroll container */}
+
+      {/* Snap guide line — vertical line across all rows while dragging (outside scroll container, uses absolute) */}
       {dragging && dragSnapX > 0 && (
         <div
           className="absolute top-0 bottom-0 pointer-events-none z-40"
-          style={{ left: LEFT_COL_WIDTH + dragSnapX }}
+          style={{ left: LEFT_COL_WIDTH + dragSnapX - (scrollRef.current?.scrollLeft ?? 0) }}
         >
           <div className="w-[1.5px] h-full bg-gradient-to-b from-orange-500/80 via-orange-400/50 to-orange-300/20" />
           <div

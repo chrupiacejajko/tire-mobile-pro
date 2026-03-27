@@ -17,7 +17,6 @@ export interface DutyForm {
   employee_groups: Record<string, 'A' | 'B'>;
   from_date: string;
   start_time: string;
-  end_time: string;
   duration_hours: string;
   shift_count: string;
 }
@@ -145,17 +144,11 @@ export function BulkGenerateDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Godzina startu</Label>
-              <Input type="time" value={dutyForm.start_time}
-                onChange={e => setDutyForm(f => ({ ...f, start_time: e.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>Godzina końca</Label>
-              <Input type="time" value={dutyForm.end_time}
-                onChange={e => setDutyForm(f => ({ ...f, end_time: e.target.value }))} />
-            </div>
+          <div className="space-y-2">
+            <Label>Godzina startu dyżuru</Label>
+            <Input type="time" value={dutyForm.start_time}
+              onChange={e => setDutyForm(f => ({ ...f, start_time: e.target.value }))}
+              className="max-w-[160px]" />
           </div>
 
           <div className="space-y-2">
@@ -168,8 +161,8 @@ export function BulkGenerateDialog({
           {/* Summary */}
           {dutyForm.from_date && (
             <div className="p-3 bg-emerald-50 rounded-xl text-xs text-emerald-700">
-              <strong>Podsumowanie:</strong> {Math.ceil(durationH / 24)} dni ON / {Math.ceil(durationH / 24)} dni OFF × {shiftCount} rotacji,
-              start {dutyForm.from_date}, godziny {dutyForm.start_time || '07:00'}–{dutyForm.end_time || '23:00'}
+              <strong>Podsumowanie:</strong> {durationH}h dyżur ({Math.ceil(durationH / 24)} dni ON / {Math.ceil(durationH / 24)} dni OFF) × {shiftCount} rotacji,
+              start {dutyForm.from_date} o {dutyForm.start_time || '07:00'}
             </div>
           )}
 

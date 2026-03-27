@@ -7,10 +7,101 @@ import {
   Copy, Car, MapPin, AlertTriangle, MoreHorizontal, Navigation,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { type EmployeeRoute, copyToClipboard } from './types';
+import { type EmployeeRoute, type Stop, copyToClipboard } from './types';
 import { ScoreBadge, ScoreBreakdown, ScoreBar, WorkerStatusDot } from './ScoreDisplay';
 import { StopCard, DraggableStopCard, StopCardGhost } from './StopCard';
 import { MiniGanttBar } from './MiniGanttBar';
+
+// ── Gap indicator between stops ───────────────────────────────────────────────
+
+function parseTime(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function formatGap(mins: number): string {
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}min` : `${h}h`;
+}
+
+function StopGapIndicator({ prevStop, nextStop }: { prevStop: Stop; nextStop: Stop }) {
+  const prevDepart = parseTime(prevStop.departure_time);
+  const nextArrive = parseTime(nextStop.arrival_time);
+  const gapMinutes = nextArrive - prevDepart;
+
+  // Don't show gap if zero or negative (back-to-back / overlap)
+  if (gapMinutes <= 0) return null;
+
+  // Subtract travel time to get actual free/break time
+  const freeMinutes = gapMinutes - nextStop.travel_minutes;
+  const travelMin = nextStop.travel_minutes;
+
+  // Color coding
+  const isShort = freeMinutes > 0 && freeMinutes < 30;
+  const isLong = freeMinutes >= 60;
+
+  // Bar width proportional to gap (max 100%)
+  const barPercent = Math.min(100, Math.max(8, (gapMinutes / 180) * 100));
+  const travelPercent = gapMinutes > 0 ? (travelMin / gapMinutes) * 100 : 0;
+
+  return (
+    <div className="flex gap-3 my-1">
+      {/* Align with the timeline column */}
+      <div className="flex flex-col items-center w-7">
+        <div className="w-px border-l border-dashed border-gray-300 flex-1" />
+      </div>
+      {/* Gap visualization */}
+      <div className="flex-1 max-w-sm mx-auto">
+        <div className={cn(
+          'rounded-lg px-3 py-2 border',
+          isShort ? 'bg-amber-50/70 border-amber-200/60' :
+          isLong ? 'bg-blue-50/50 border-blue-200/50' :
+          'bg-emerald-50/50 border-emerald-200/50'
+        )}>
+          {/* Time bar */}
+          <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden mb-1.5" style={{ maxWidth: `${barPercent}%` }}>
+            <div className="h-full rounded-full flex">
+              {travelMin > 0 && (
+                <div
+                  className={cn('h-full', isShort ? 'bg-amber-300' : isLong ? 'bg-blue-300' : 'bg-emerald-300')}
+                  style={{ width: `${travelPercent}%` }}
+                />
+              )}
+              <div
+                className={cn('h-full', isShort ? 'bg-amber-100' : isLong ? 'bg-blue-100' : 'bg-emerald-100')}
+                style={{ width: `${100 - travelPercent}%` }}
+              />
+            </div>
+          </div>
+          {/* Labels */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {freeMinutes > 0 && (
+                <span className={cn(
+                  'text-[11px] font-semibold',
+                  isShort ? 'text-amber-600' : isLong ? 'text-blue-600' : 'text-emerald-600'
+                )}>
+                  {formatGap(freeMinutes)} wolnego
+                </span>
+              )}
+              {travelMin > 0 && (
+                <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
+                  <Navigation className="h-2.5 w-2.5" />
+                  {travelMin} min
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] text-gray-400">
+              {prevStop.departure_time} → {nextStop.arrival_time}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface RouteCardProps {
   route: EmployeeRoute;
@@ -139,7 +230,12 @@ export function RouteCard({ route, onOptimize, onReoptimize, reoptimizing }: Rou
             <p className="text-sm text-gray-400 text-center py-4">Brak zleceń na ten dzień</p>
           ) : (
             route.schedule.map((stop, i) => (
-              <DraggableStopCard key={stop.order_id} stop={stop} isLast={i === route.schedule.length - 1} employeeId={route.employee_id} />
+              <div key={stop.order_id}>
+                {i > 0 && (
+                  <StopGapIndicator prevStop={route.schedule[i - 1]} nextStop={stop} />
+                )}
+                <DraggableStopCard stop={stop} isLast={i === route.schedule.length - 1} employeeId={route.employee_id} />
+              </div>
             ))
           )}
         </div>

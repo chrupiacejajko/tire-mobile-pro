@@ -27,7 +27,6 @@ export async function POST(request: NextRequest) {
       .update({
         employee_id: null,
         status: 'new',
-        scheduled_time_start: null,
       })
       .eq('id', order_id);
 

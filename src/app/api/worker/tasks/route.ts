@@ -62,6 +62,8 @@ export async function GET(request: NextRequest) {
     .select(`
       id, status, priority, scheduled_time_start, scheduled_time_end, time_window,
       description, notes, services,
+      actual_departure_time, actual_start_time, actual_end_time,
+      service_duration_minutes,
       client:clients(id, name, phone, lat, lng, address, city)
     `)
     .eq('scheduled_date', date)
@@ -120,6 +122,9 @@ export async function GET(request: NextRequest) {
       distance_km: distKm,
       navigate_url: navUrl,
       photos_taken: photoCount.get(o.id) ?? 0,
+      actual_departure_time: (o as any).actual_departure_time ?? null,
+      actual_start_time: (o as any).actual_start_time ?? null,
+      actual_end_time: (o as any).actual_end_time ?? null,
     };
   });
 

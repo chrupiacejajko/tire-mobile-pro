@@ -43,9 +43,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Update order status
+    const now = new Date().toISOString();
     const updateData: Record<string, any> = {
       status: 'completed',
-      completed_at: new Date().toISOString(),
+      completed_at: now,
+      actual_end_time: now,
     };
     if (notes) updateData.notes = notes;
     if (closure_code_id) updateData.closure_code_id = closure_code_id;

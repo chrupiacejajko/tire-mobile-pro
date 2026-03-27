@@ -17,7 +17,7 @@ import { DraggableUnassignedCard, DragOverlayCard } from './_components/Unassign
 import { DroppableRouteCard } from './_components/RouteCard';
 import { AssignedDragOverlay } from './_components/StopCard';
 import { GanttView } from './_components/GanttView';
-import { PlannerTopBar } from './_components/PlannerTopBar';
+import { PlannerTopBar, type Region } from './_components/PlannerTopBar';
 import { AlertLayer } from './_components/AlertLayer';
 import { OptimizationFeedbackModal } from './_components/OptimizationFeedbackModal';
 import { toastOptimizeAll, toastInsert, toastReoptimize, toastReassign, toastError, toastUndo, toastNoChange } from './_components/FeedbackToast';
@@ -29,7 +29,9 @@ export default function PlannerPage() {
   const router = useRouter();
   const [date, setDate] = useState(() => {
     const urlDate = searchParams.get('date');
-    return urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : new Date().toISOString().split('T')[0];
+    if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) return urlDate;
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
   });
   const [data, setData] = useState<PlannerData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,15 +45,29 @@ export default function PlannerPage() {
   const [optimizeResult, setOptimizeResult] = useState<{ before: EmployeeRoute[]; result: any } | null>(null);
   const [undoToken, setUndoToken] = useState<string | null>(null);
   const [undoing, setUndoing] = useState(false);
+  const [regions, setRegions] = useState<Region[]>([]);
+  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(() => {
+    return searchParams.get('region') || null;
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
 
-  const load = useCallback(async (d: string) => {
+  // Fetch regions once on mount
+  useEffect(() => {
+    fetch('/api/regions')
+      .then(res => res.ok ? res.json() : [])
+      .then((data: Region[]) => setRegions(data.filter(r => r.is_active !== false)))
+      .catch(() => {});
+  }, []);
+
+  const load = useCallback(async (d: string, regionId?: string | null) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/planner?date=${d}`);
+      const params = new URLSearchParams({ date: d });
+      if (regionId) params.set('region_id', regionId);
+      const res = await fetch(`/api/planner?${params}`);
       if (!res.ok) {
         console.error(`Planner API error: ${res.status}`);
         setData(null);
@@ -68,32 +84,40 @@ export default function PlannerPage() {
   }, []);
 
   // Silent load — used by GanttView D&D (no spinner, preserves mounted state)
-  const silentLoad = useCallback(async (d: string) => {
+  const silentLoad = useCallback(async (d: string, regionId?: string | null) => {
     try {
-      const res = await fetch(`/api/planner?date=${d}`);
+      const params = new URLSearchParams({ date: d });
+      if (regionId) params.set('region_id', regionId);
+      const res = await fetch(`/api/planner?${params}`);
       if (res.ok) setData(await res.json());
     } catch {}
   }, []);
 
-  useEffect(() => { load(date); }, [date, load]);
+  useEffect(() => { load(date, selectedRegionId); }, [date, selectedRegionId, load]);
 
   // Auto-refresh when any order changes via Supabase Realtime
   // Uses silentLoad when in gantt view (no loading spinner = no unmount)
   const handleRealtimeChange = useCallback(() => {
-    if (viewMode === 'gantt') silentLoad(date);
-    else load(date);
-  }, [load, silentLoad, date, viewMode]);
+    if (viewMode === 'gantt') silentLoad(date, selectedRegionId);
+    else load(date, selectedRegionId);
+  }, [load, silentLoad, date, viewMode, selectedRegionId]);
   useOrdersRealtime(handleRealtimeChange);
 
-  // Sync date to URL search params
+  // Sync date and region to URL search params
   useEffect(() => {
-    const current = searchParams.get('date');
-    if (current !== date) {
+    const currentDate = searchParams.get('date');
+    const currentRegion = searchParams.get('region') || null;
+    if (currentDate !== date || currentRegion !== selectedRegionId) {
       const params = new URLSearchParams(searchParams.toString());
       params.set('date', date);
+      if (selectedRegionId) {
+        params.set('region', selectedRegionId);
+      } else {
+        params.delete('region');
+      }
       router.replace(`?${params.toString()}`, { scroll: false });
     }
-  }, [date, searchParams, router]);
+  }, [date, selectedRegionId, searchParams, router]);
 
   // ── Undo handler ──────────────────────────────────────────────────────────
 
@@ -111,7 +135,7 @@ export default function PlannerPage() {
         toastUndo(result);
         setUndoToken(null);
         setOptimizeResult(null);
-        await load(date);
+        await load(date, selectedRegionId);
       } else {
         toastUndo(null, result.error ?? 'Nieznany błąd');
       }
@@ -120,7 +144,7 @@ export default function PlannerPage() {
     } finally {
       setUndoing(false);
     }
-  }, [undoToken, date, load]);
+  }, [undoToken, date, selectedRegionId, load]);
 
   // ── API handlers ──────────────────────────────────────────────────────────
 
@@ -136,7 +160,7 @@ export default function PlannerPage() {
         const result = await res.json();
         toastOptimizeAll(result);
         if (result.undo_token) setUndoToken(result.undo_token);
-        load(date);
+        load(date, selectedRegionId);
       } else { toastError('Optymalizacja nie powiodła się'); }
     } finally {
       setOptimizing(null);
@@ -171,7 +195,7 @@ export default function PlannerPage() {
         }
 
         toastOptimizeAll(result);
-        await load(date);
+        await load(date, selectedRegionId);
         setOptimizeResult({ before: beforeRoutes, result });
       } else { toastError('Optymalizacja nie powiodła się'); }
     } finally {
@@ -197,7 +221,7 @@ export default function PlannerPage() {
           ? afterScore - beforeScore
           : undefined;
         toastReoptimize(empName, scoreDelta);
-        load(date);
+        load(date, selectedRegionId);
       } else { toastError('Przeliczenie trasy nie powiodło się'); }
     } finally {
       setReoptimizingId(null);
@@ -255,7 +279,7 @@ export default function PlannerPage() {
         } else {
           toastInsert(result, toName ?? undefined);
         }
-        await load(date);
+        await load(date, selectedRegionId);
       } else { toastError(wasAssigned ? 'Przeniesienie zlecenia nie powiodło się' : 'Wstawianie zlecenia nie powiodło się'); }
     } catch (e) {
       console.error('Insert/reassign failed', e);
@@ -303,11 +327,14 @@ export default function PlannerPage() {
           bufferEnabled={bufferEnabled}
           viewMode={viewMode}
           overallScore={overallScore}
+          regions={regions}
+          selectedRegionId={selectedRegionId}
           onDateChange={setDate}
-          onRefresh={() => load(date)}
+          onRefresh={() => load(date, selectedRegionId)}
           onOptimizeAll={handleOptimizeAll}
           onBufferToggle={setBufferEnabled}
           onViewModeChange={setViewMode}
+          onRegionChange={setSelectedRegionId}
         />
 
         {/* Alert layer — actionable recommendations */}
@@ -387,7 +414,7 @@ export default function PlannerPage() {
                       )}
                     </div>
                   )}
-                  <GanttView routes={liveScoring.routes} unassigned={data?.unassigned ?? []} date={date} onRefresh={() => silentLoad(date)} />
+                  <GanttView routes={liveScoring.routes} unassigned={data?.unassigned ?? []} date={date} onRefresh={() => silentLoad(date, selectedRegionId)} />
                 </div>
                 {/* Overlays for loading / empty states */}
                 {loading && liveScoring.routes.length === 0 && (

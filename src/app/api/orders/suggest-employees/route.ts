@@ -31,10 +31,19 @@ export async function GET(request: NextRequest) {
   // ── Load active employees with name ─────────────────────────────────────
   const { data: employees } = await supabase
     .from('employees')
-    .select('id, skills, vehicle_info, user:profiles(full_name)')
+    .select('id, vehicle_info, user:profiles(full_name), employee_skills(skill:skills(name))')
     .eq('is_active', true);
 
   if (!employees?.length) return NextResponse.json({ suggestions: [] });
+
+  // Build skill name arrays from junction table
+  const empSkillsMap = new Map<string, string[]>();
+  for (const emp of employees) {
+    const names = ((emp as any).employee_skills ?? [])
+      .map((es: any) => es.skill?.name)
+      .filter(Boolean) as string[];
+    empSkillsMap.set(emp.id, names);
+  }
 
   const empIds = employees.map((e) => e.id);
 
@@ -70,9 +79,10 @@ export async function GET(request: NextRequest) {
     const orderCount = myOrders.length;
 
     // Skills match
+    const empSkills = empSkillsMap.get(emp.id) ?? [];
     const skillsMatch =
       requiredSkills.length === 0 ||
-      requiredSkills.every((s) => (emp.skills ?? []).includes(s));
+      requiredSkills.every((s) => empSkills.includes(s));
 
     // Proximity: find nearest existing job OR use GPS
     let distKm: number | null = null;

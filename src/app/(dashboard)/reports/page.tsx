@@ -791,10 +791,10 @@ function FinanseView() {
         </div>
         <div className="flex gap-1.5">
           {[
-            { key: 'week', label: 'Ten tydzien' },
-            { key: 'month', label: 'Ten miesiac' },
+            { key: 'week', label: 'Ten tydzień' },
+            { key: 'month', label: 'Ten miesiąc' },
             { key: '30days', label: 'Ostatnie 30 dni' },
-            { key: 'quarter', label: 'Ten kwartal' },
+            { key: 'quarter', label: 'Ten kwartał' },
           ].map(p => (
             <button key={p.key} onClick={() => applyPreset(p.key)}
               className="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors">
@@ -807,10 +807,10 @@ function FinanseView() {
       {/* KPI cards */}
       <motion.div className="grid grid-cols-2 lg:grid-cols-4 gap-4" variants={ANIM.container} initial="hidden" animate="show">
         {[
-          { label: 'Przychod', value: `${data.revenue.total.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`, icon: DollarSign, color: 'from-emerald-500 to-emerald-600' },
-          { label: 'Zamowienia', value: data.revenue.orders_count.toString(), icon: BarChart3, color: 'from-blue-500 to-blue-600' },
-          { label: 'Sr. per zamowienie', value: `${data.revenue.avg_per_order.toFixed(2)} zl`, icon: TrendingUp, color: 'from-amber-500 to-amber-600' },
-          { label: `Marza ${data.margin.margin_pct}%`, value: `${data.margin.profit.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`, icon: PieChart, color: marginColor },
+          { label: 'Przychód', value: `${data.revenue.total.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł`, icon: DollarSign, color: 'from-emerald-500 to-emerald-600' },
+          { label: 'Zamówienia', value: data.revenue.orders_count.toString(), icon: BarChart3, color: 'from-blue-500 to-blue-600' },
+          { label: 'Śr. per zamówienie', value: `${data.revenue.avg_per_order.toFixed(2)} zł`, icon: TrendingUp, color: 'from-amber-500 to-amber-600' },
+          { label: `Marża ${data.margin.margin_pct}%`, value: `${data.margin.profit.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł`, icon: PieChart, color: marginColor },
         ].map(kpi => (
           <motion.div key={kpi.label} variants={ANIM.item}
             className={`rounded-2xl bg-gradient-to-br ${kpi.color} p-5 text-white shadow-lg relative overflow-hidden`}>
@@ -824,7 +824,7 @@ function FinanseView() {
       {/* Revenue by category */}
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
         <Card className="rounded-2xl border-gray-100 shadow-sm">
-          <CardHeader><CardTitle className="text-base font-bold">Przychod wg kategorii</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base font-bold">Przychód wg kategorii</CardTitle></CardHeader>
           <CardContent>
             {data.revenue.by_category.length === 0 ? (
               <p className="text-center text-gray-400 py-8">Brak danych</p>
@@ -841,7 +841,7 @@ function FinanseView() {
                         transition={{ duration: 0.6 }}
                       />
                     </div>
-                    <span className="text-sm font-bold text-gray-900 w-28 text-right">{cat.revenue.toFixed(0)} zl</span>
+                    <span className="text-sm font-bold text-gray-900 w-28 text-right">{cat.revenue.toFixed(0)} zł</span>
                   </div>
                 ))}
               </div>
@@ -853,7 +853,7 @@ function FinanseView() {
       {/* Revenue by employee */}
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
         <Card className="rounded-2xl border-gray-100 shadow-sm">
-          <CardHeader><CardTitle className="text-base font-bold">Przychod wg pracownika</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base font-bold">Przychód wg pracownika</CardTitle></CardHeader>
           <CardContent>
             {data.revenue.by_employee.length === 0 ? (
               <p className="text-center text-gray-400 py-8">Brak danych</p>
@@ -864,9 +864,9 @@ function FinanseView() {
                     <tr className="border-b border-gray-100">
                       <th className="text-left py-2 font-semibold text-gray-600">Pracownik</th>
                       <th className="text-right py-2 font-semibold text-gray-600">Zlecen</th>
-                      <th className="text-right py-2 font-semibold text-gray-600">Przychod</th>
+                      <th className="text-right py-2 font-semibold text-gray-600">Przychód</th>
                       <th className="text-right py-2 font-semibold text-gray-600">km</th>
-                      <th className="text-right py-2 font-semibold text-gray-600">Przychod/km</th>
+                      <th className="text-right py-2 font-semibold text-gray-600">Przychód/km</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -874,10 +874,10 @@ function FinanseView() {
                       <tr key={emp.employee_id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
                         <td className="py-2.5 font-medium text-gray-800">{emp.employee_name}</td>
                         <td className="py-2.5 text-right text-gray-600">{emp.orders_count}</td>
-                        <td className="py-2.5 text-right font-bold text-gray-900">{emp.revenue.toLocaleString('pl-PL')} zl</td>
+                        <td className="py-2.5 text-right font-bold text-gray-900">{emp.revenue.toLocaleString('pl-PL')} zł</td>
                         <td className="py-2.5 text-right text-gray-600">{emp.km_driven}</td>
                         <td className="py-2.5 text-right text-gray-600">
-                          {emp.km_driven > 0 ? (emp.revenue / emp.km_driven).toFixed(1) : '—'} zl
+                          {emp.km_driven > 0 ? (emp.revenue / emp.km_driven).toFixed(1) : '—'} zł
                         </td>
                       </tr>
                     ))}
@@ -923,15 +923,15 @@ function FinanseView() {
         {[
           {
             label: 'Paliwo',
-            value: `${data.costs.fuel_cost.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`,
-            sub: `${data.costs.total_km} km x 0.50 zl`,
+            value: `${data.costs.fuel_cost.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł`,
+            sub: `${data.costs.total_km} km x 0.50 zł`,
             icon: Fuel,
             color: 'text-amber-600',
             bg: 'bg-amber-50',
           },
           {
             label: 'Robocizna',
-            value: `${data.costs.labor_cost.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`,
+            value: `${data.costs.labor_cost.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł`,
             sub: `${data.costs.labor_hours} h`,
             icon: Briefcase,
             color: 'text-blue-600',
@@ -939,7 +939,7 @@ function FinanseView() {
           },
           {
             label: 'Razem koszty',
-            value: `${data.costs.total.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl`,
+            value: `${data.costs.total.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł`,
             sub: 'paliwo + robocizna',
             icon: Wallet,
             color: 'text-red-600',
@@ -967,19 +967,19 @@ function FinanseView() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
-              <p className="text-xs text-white/60">Przychod</p>
-              <p className="text-xl font-bold">{data.margin.gross_revenue.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl</p>
+              <p className="text-xs text-white/60">Przychód</p>
+              <p className="text-xl font-bold">{data.margin.gross_revenue.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł</p>
             </div>
             <div>
               <p className="text-xs text-white/60">Koszty</p>
-              <p className="text-xl font-bold">-{data.margin.total_costs.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl</p>
+              <p className="text-xl font-bold">-{data.margin.total_costs.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł</p>
             </div>
             <div>
               <p className="text-xs text-white/60">Zysk</p>
-              <p className="text-3xl font-black">{data.margin.profit.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zl</p>
+              <p className="text-3xl font-black">{data.margin.profit.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł</p>
             </div>
             <div>
-              <p className="text-xs text-white/60">Marza</p>
+              <p className="text-xs text-white/60">Marża</p>
               <p className="text-3xl font-black">{data.margin.margin_pct}%</p>
             </div>
           </div>
@@ -1155,17 +1155,17 @@ function WorkTimeView() {
                       <td className="py-2.5 px-3 text-right text-gray-600">{plNum(emp.break_hours)}</td>
                       <td className="py-2.5 px-3 text-right text-gray-600">{emp.completed_orders}</td>
                       <td className="py-2.5 px-3 text-right font-bold text-gray-900">
-                        {plNum(emp.total_earnings)} zl
+                        {plNum(emp.total_earnings)} zł
                       </td>
                       <td className={`py-2.5 px-3 text-right font-medium ${
                         emp.below_minimum ? 'text-red-600 font-bold' : 'text-gray-600'
                       }`}>
-                        {emp.actual_hours > 0 ? `${plNum(emp.effective_rate)} zl` : '\u2014'}
+                        {emp.actual_hours > 0 ? `${plNum(emp.effective_rate)} zł` : '\u2014'}
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         {emp.below_minimum ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">
-                            <AlertTriangle className="h-3 w-3" />&lt; 31,40 zl
+                            <AlertTriangle className="h-3 w-3" />&lt; 31,40 zł
                           </span>
                         ) : emp.actual_hours > 0 ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-600">
@@ -1188,9 +1188,9 @@ function WorkTimeView() {
                       <td className="py-2.5 px-3 text-right">{plNum(summary.totalActualHours)}</td>
                       <td className="py-2.5 px-3 text-right"></td>
                       <td className="py-2.5 px-3 text-right">{summary.totalOrders}</td>
-                      <td className="py-2.5 px-3 text-right font-bold">{plNum(summary.totalEarnings)} zl</td>
+                      <td className="py-2.5 px-3 text-right font-bold">{plNum(summary.totalEarnings)} zł</td>
                       <td className="py-2.5 px-3 text-right">
-                        {summary.totalActualHours > 0 ? `${plNum(summary.avgEffectiveRate)} zl` : '\u2014'}
+                        {summary.totalActualHours > 0 ? `${plNum(summary.avgEffectiveRate)} zł` : '\u2014'}
                       </td>
                       <td className="py-2.5 px-3"></td>
                     </tr>

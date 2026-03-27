@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
 
     // ── Bulk generation: duty pattern ──
     if (body.bulk && body.pattern === '48_48') {
-      const { employees: empList, from_date, start_time, end_time, duration_hours, shift_count } = body;
+      const { employees: empList, from_date, start_time, duration_hours, shift_count } = body;
       const durationH = Number(duration_hours) || 48;
       const count = Number(shift_count) || 4;
 
@@ -86,7 +86,6 @@ export async function POST(request: NextRequest) {
       }
 
       const patternStartTime = start_time || '07:00';
-      const patternEndTime = end_time || '23:00';
       const onDays = Math.ceil(durationH / 24);
 
       // Fetch employee defaults
@@ -109,11 +108,9 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Calculate daily duration in minutes (from start_time to end_time per day)
+      // Duration directly from hours — no end_time calculation needed
       const [sh, sm] = patternStartTime.split(':').map(Number);
-      const [eh, em] = patternEndTime.split(':').map(Number);
-      const dailyMinutes = eh * 60 + (em || 0) - (sh * 60 + (sm || 0));
-      const shiftDurationMinutes = onDays * (dailyMinutes > 0 ? dailyMinutes : 1440 + dailyMinutes);
+      const shiftDurationMinutes = durationH * 60;
 
       const rows: Array<Record<string, unknown>> = [];
 

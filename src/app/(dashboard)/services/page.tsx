@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Topbar } from '@/components/layout/topbar';
@@ -19,10 +20,13 @@ import {
 import { Switch } from '@/components/ui/switch';
 import {
   Plus, Wrench, Pencil, Trash2, Clock, DollarSign,
-  Award, Car, ListChecks, Settings2,
+  Award, Car, Search,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import type { Service, ServiceType, VehicleType, Skill } from '@/lib/types';
+import type { Service, VehicleType, Skill } from '@/lib/types';
+
+// ─── Supabase client (module scope — created once) ──────────────────────────
+const supabase = createClient();
 
 // ─── Animation presets ────────────────────────────────────────────────────────
 const ANIM = {
@@ -32,19 +36,14 @@ const ANIM = {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const categories = [
-  { value: 'wymiana', label: 'Wymiana opon', color: 'bg-blue-100 text-blue-700' },
-  { value: 'serwis', label: 'Serwis', color: 'bg-emerald-100 text-emerald-700' },
-  { value: 'naprawa', label: 'Naprawa', color: 'bg-amber-100 text-amber-700' },
-  { value: 'przechowywanie', label: 'Przechowywanie', color: 'bg-violet-100 text-violet-700' },
-  { value: 'pakiet', label: 'Pakiet', color: 'bg-rose-100 text-rose-700' },
-  { value: 'dojazd', label: 'Dojazd', color: 'bg-gray-100 text-gray-700' },
+  { value: 'main', label: 'Usługa główna', color: 'bg-blue-100 text-blue-700' },
+  { value: 'additional', label: 'Usługa dodatkowa', color: 'bg-amber-100 text-amber-700' },
 ];
 
-type TabKey = 'uslugi' | 'rodzaje-uslug' | 'rodzaje-pojazdow' | 'umiejetnosci';
+type TabKey = 'uslugi' | 'rodzaje-pojazdow' | 'umiejetnosci';
 
 const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'uslugi', label: 'Usługi', icon: <Wrench className="h-3.5 w-3.5" /> },
-  { key: 'rodzaje-uslug', label: 'Rodzaje usług', icon: <ListChecks className="h-3.5 w-3.5" /> },
   { key: 'rodzaje-pojazdow', label: 'Rodzaje pojazdów', icon: <Car className="h-3.5 w-3.5" /> },
   { key: 'umiejetnosci', label: 'Umiejętności', icon: <Award className="h-3.5 w-3.5" /> },
 ];
@@ -106,12 +105,10 @@ function SimpleListRow({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function ServicesPage() {
-  const supabase = createClient();
   const [activeTab, setActiveTab] = useState<TabKey>('uslugi');
 
   // ── Reference data ──
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [serviceTypes, setServiceTypes] = useState<ServiceType[]>([]);
   const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([]);
 
   // ── Services ──
@@ -121,19 +118,17 @@ export default function ServicesPage() {
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [serviceForm, setServiceForm] = useState({
     name: '', description: '', duration_minutes: '60', price: '0',
-    category: 'wymiana', is_active: true,
+    category: 'main', is_active: true,
     vehicle_type_id: '', required_skill_ids: [] as string[],
   });
   const [serviceSaving, setServiceSaving] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingService, setDeletingService] = useState<Service | null>(null);
+  const [serviceSearch, setServiceSearch] = useState('');
 
-  // ── Service types ──
-  const [stLoading, setStLoading] = useState(true);
-  const [stDialogOpen, setStDialogOpen] = useState(false);
-  const [editingSt, setEditingSt] = useState<ServiceType | null>(null);
-  const [stForm, setStForm] = useState({ name: '' });
-  const [stSaving, setStSaving] = useState(false);
+  // ── Vehicle type delete confirmation ──
+  const [vtDeleteDialogOpen, setVtDeleteDialogOpen] = useState(false);
+  const [deletingVt, setDeletingVt] = useState<VehicleType | null>(null);
 
   // ── Vehicle types ──
   const [vtLoading, setVtLoading] = useState(true);
@@ -149,12 +144,16 @@ export default function ServicesPage() {
   const [skillForm, setSkillForm] = useState({ name: '', description: '' });
   const [skillSaving, setSkillSaving] = useState(false);
   const [showActiveSkillsOnly, setShowActiveSkillsOnly] = useState(false);
+  const [skillDeleteDialogOpen, setSkillDeleteDialogOpen] = useState(false);
+  const [deletingSkill, setDeletingSkill] = useState<Skill | null>(null);
+  const [skillSearchQuery, setSkillSearchQuery] = useState('');
 
   // ─── Fetch functions ──────────────────────────────────────────────────────
 
   const fetchServices = useCallback(async () => {
     setServicesLoading(true);
-    const { data } = await supabase.from('services').select('*').order('category, name');
+    const { data, error } = await supabase.from('services').select('*').order('category, name');
+    if (error) { toast.error(error.message); setServicesLoading(false); return; }
     if (data) setServices(data as Service[]);
     setServicesLoading(false);
   }, []);
@@ -164,25 +163,11 @@ export default function ServicesPage() {
     if (res.ok) setSkills(await res.json());
   }, []);
 
-  const fetchServiceTypes = useCallback(async () => {
-    setStLoading(true);
-    try {
-      const { data } = await supabase.from('service_types').select('*').order('name');
-      if (data) setServiceTypes(data as ServiceType[]);
-    } catch {
-      // table may not exist yet
-    }
-    setStLoading(false);
-  }, []);
-
   const fetchVehicleTypes = useCallback(async () => {
     setVtLoading(true);
-    try {
-      const { data } = await supabase.from('vehicle_types').select('*').order('name');
-      if (data) setVehicleTypes(data as VehicleType[]);
-    } catch {
-      // table may not exist yet
-    }
+    const { data, error } = await supabase.from('vehicle_types').select('*').order('name');
+    if (error) { toast.error(error.message); setVtLoading(false); return; }
+    if (data) setVehicleTypes(data as VehicleType[]);
     setVtLoading(false);
   }, []);
 
@@ -198,9 +183,8 @@ export default function ServicesPage() {
   useEffect(() => {
     fetchServices();
     fetchSkillsRef();
-    fetchServiceTypes();
     fetchVehicleTypes();
-  }, [fetchServices, fetchSkillsRef, fetchServiceTypes, fetchVehicleTypes]);
+  }, [fetchServices, fetchSkillsRef, fetchVehicleTypes]);
 
   // Refetch skills when filter or tab changes
   useEffect(() => {
@@ -210,7 +194,7 @@ export default function ServicesPage() {
   // ─── Services tab handlers ────────────────────────────────────────────────
 
   const resetServiceForm = () => {
-    setServiceForm({ name: '', description: '', duration_minutes: '60', price: '0', category: 'wymiana', is_active: true, vehicle_type_id: '', required_skill_ids: [] });
+    setServiceForm({ name: '', description: '', duration_minutes: '60', price: '0', category: 'main', is_active: true, vehicle_type_id: '', required_skill_ids: [] });
     setEditingService(null);
   };
 
@@ -257,11 +241,10 @@ export default function ServicesPage() {
       // keep legacy column in sync with first skill for backwards compat
       required_skill_id: serviceForm.required_skill_ids[0] ?? null,
     };
-    if (editingService) {
-      await supabase.from('services').update(payload).eq('id', editingService.id);
-    } else {
-      await supabase.from('services').insert(payload);
-    }
+    const { error } = editingService
+      ? await supabase.from('services').update(payload).eq('id', editingService.id)
+      : await supabase.from('services').insert(payload);
+    if (error) { toast.error(error.message); setServiceSaving(false); return; }
     setServiceSaving(false);
     setServiceDialogOpen(false);
     resetServiceForm();
@@ -273,7 +256,8 @@ export default function ServicesPage() {
   const handleDeleteService = async () => {
     if (!deletingService) return;
     setServiceSaving(true);
-    await supabase.from('services').update({ is_active: false }).eq('id', deletingService.id);
+    const { error } = await supabase.from('services').update({ is_active: false }).eq('id', deletingService.id);
+    if (error) { toast.error(error.message); setServiceSaving(false); return; }
     setServiceSaving(false);
     setDeleteDialogOpen(false);
     setDeletingService(null);
@@ -281,49 +265,28 @@ export default function ServicesPage() {
   };
 
   const toggleServiceActive = async (id: string, isActive: boolean) => {
-    await supabase.from('services').update({ is_active: !isActive }).eq('id', id);
+    const { error } = await supabase.from('services').update({ is_active: !isActive }).eq('id', id);
+    if (error) { toast.error(error.message); return; }
     fetchServices();
   };
 
   const getCategoryStyle = (cat: string) => categories.find(c => c.value === cat) || categories[0];
 
-  // ─── Service types handlers ───────────────────────────────────────────────
-
-  const handleStSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setStSaving(true);
-    if (editingSt) {
-      await supabase.from('service_types').update({ name: stForm.name }).eq('id', editingSt.id);
-    } else {
-      await supabase.from('service_types').insert({ name: stForm.name, is_active: true });
-    }
-    setStSaving(false);
-    setStDialogOpen(false);
-    setEditingSt(null);
-    setStForm({ name: '' });
-    fetchServiceTypes();
-  };
-
-  const toggleStActive = async (st: ServiceType) => {
-    await supabase.from('service_types').update({ is_active: !st.is_active }).eq('id', st.id);
-    fetchServiceTypes();
-  };
-
-  const deleteServiceType = async (id: string) => {
-    await supabase.from('service_types').delete().eq('id', id);
-    fetchServiceTypes();
-  };
+  const filteredServices = useMemo(() => {
+    if (!serviceSearch.trim()) return services;
+    const q = serviceSearch.trim().toLowerCase();
+    return services.filter(s => s.name.toLowerCase().includes(q));
+  }, [services, serviceSearch]);
 
   // ─── Vehicle types handlers ───────────────────────────────────────────────
 
   const handleVtSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setVtSaving(true);
-    if (editingVt) {
-      await supabase.from('vehicle_types').update({ name: vtForm.name }).eq('id', editingVt.id);
-    } else {
-      await supabase.from('vehicle_types').insert({ name: vtForm.name, is_active: true });
-    }
+    const { error } = editingVt
+      ? await supabase.from('vehicle_types').update({ name: vtForm.name }).eq('id', editingVt.id)
+      : await supabase.from('vehicle_types').insert({ name: vtForm.name, is_active: true });
+    if (error) { toast.error(error.message); setVtSaving(false); return; }
     setVtSaving(false);
     setVtDialogOpen(false);
     setEditingVt(null);
@@ -332,12 +295,19 @@ export default function ServicesPage() {
   };
 
   const toggleVtActive = async (vt: VehicleType) => {
-    await supabase.from('vehicle_types').update({ is_active: !vt.is_active }).eq('id', vt.id);
+    const { error } = await supabase.from('vehicle_types').update({ is_active: !vt.is_active }).eq('id', vt.id);
+    if (error) { toast.error(error.message); return; }
     fetchVehicleTypes();
   };
 
-  const deleteVehicleType = async (id: string) => {
-    await supabase.from('vehicle_types').delete().eq('id', id);
+  const openDeleteVt = (vt: VehicleType) => { setDeletingVt(vt); setVtDeleteDialogOpen(true); };
+
+  const confirmDeleteVt = async () => {
+    if (!deletingVt) return;
+    const { error } = await supabase.from('vehicle_types').delete().eq('id', deletingVt.id);
+    if (error) { toast.error(error.message); return; }
+    setVtDeleteDialogOpen(false);
+    setDeletingVt(null);
     fetchVehicleTypes();
   };
 
@@ -346,19 +316,18 @@ export default function ServicesPage() {
   const handleSkillSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSkillSaving(true);
-    if (editingSkill) {
-      await fetch('/api/skills', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: editingSkill.id, name: skillForm.name, description: skillForm.description || null }),
-      });
-    } else {
-      await fetch('/api/skills', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: skillForm.name, description: skillForm.description || null }),
-      });
-    }
+    const res = editingSkill
+      ? await fetch('/api/skills', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editingSkill.id, name: skillForm.name, description: skillForm.description || null }),
+        })
+      : await fetch('/api/skills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: skillForm.name, description: skillForm.description || null }),
+        });
+    if (!res.ok) { toast.error('Nie udało się zapisać umiejętności'); setSkillSaving(false); return; }
     setSkillSaving(false);
     setSkillDialogOpen(false);
     setEditingSkill(null);
@@ -367,18 +336,41 @@ export default function ServicesPage() {
     fetchSkillsRef(); // keep reference data fresh
   };
 
-  const handleSkillDelete = async (id: string) => {
-    await fetch(`/api/skills?id=${id}`, { method: 'DELETE' });
+  const openSkillDeleteDialog = (skill: Skill) => {
+    setDeletingSkill(skill);
+    setSkillDeleteDialogOpen(true);
+  };
+
+  const handleSkillDelete = async () => {
+    if (!deletingSkill) return;
+    setSkillSaving(true);
+    const res = await fetch(`/api/skills?id=${deletingSkill.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      if (res.status === 409) {
+        const data = await res.json().catch(() => null);
+        toast.error(data?.error || 'Nie można usunąć — umiejętność jest przypisana do usług');
+      } else {
+        toast.error('Nie udało się usunąć umiejętności');
+      }
+      setSkillSaving(false);
+      setSkillDeleteDialogOpen(false);
+      setDeletingSkill(null);
+      return;
+    }
+    setSkillSaving(false);
+    setSkillDeleteDialogOpen(false);
+    setDeletingSkill(null);
     fetchSkillsTab();
     fetchSkillsRef();
   };
 
   const handleToggleSkillActive = async (skill: Skill) => {
-    await fetch('/api/skills', {
+    const res = await fetch('/api/skills', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: skill.id, is_active: !skill.is_active }),
     });
+    if (!res.ok) { toast.error('Nie udało się zmienić statusu umiejętności'); return; }
     fetchSkillsTab();
     fetchSkillsRef();
   };
@@ -392,13 +384,6 @@ export default function ServicesPage() {
           <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
             onClick={() => { resetServiceForm(); setServiceDialogOpen(true); }}>
             <Plus className="h-4 w-4" /> Dodaj usługę
-          </Button>
-        );
-      case 'rodzaje-uslug':
-        return (
-          <Button className="h-9 rounded-xl text-sm gap-2 bg-blue-600 hover:bg-blue-700"
-            onClick={() => { setEditingSt(null); setStForm({ name: '' }); setStDialogOpen(true); }}>
-            <Plus className="h-4 w-4" /> Dodaj rodzaj
           </Button>
         );
       case 'rodzaje-pojazdow':
@@ -458,7 +443,16 @@ export default function ServicesPage() {
               Tab: Usługi
           ════════════════════════════════════════════ */}
           {activeTab === 'uslugi' && (
-            <motion.div key="uslugi" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2 }}>
+            <motion.div key="uslugi" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2 }} className="space-y-4">
+              <div className="relative max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input
+                  placeholder="Szukaj usługi..."
+                  value={serviceSearch}
+                  onChange={e => setServiceSearch(e.target.value)}
+                  className="pl-9 h-9 rounded-xl"
+                />
+              </div>
               {servicesLoading ? (
                 <Spinner />
               ) : services.length === 0 ? (
@@ -468,7 +462,7 @@ export default function ServicesPage() {
                   className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
                   variants={ANIM.container} initial="hidden" animate="show"
                 >
-                  {services.map(service => {
+                  {filteredServices.map(service => {
                     const catStyle = getCategoryStyle(service.category);
                     const vehicleType = vehicleTypes.find(v => v.id === service.vehicle_type_id);
                     // multi-skill: merge legacy + new array, deduplicate
@@ -535,39 +529,6 @@ export default function ServicesPage() {
           )}
 
           {/* ════════════════════════════════════════════
-              Tab: Rodzaje usług
-          ════════════════════════════════════════════ */}
-          {activeTab === 'rodzaje-uslug' && (
-            <motion.div key="rodzaje-uslug" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2 }}>
-              <Card className="rounded-2xl border-gray-100 shadow-sm">
-                <CardContent className="p-0">
-                  {stLoading ? (
-                    <Spinner color="border-blue-500" />
-                  ) : serviceTypes.length === 0 ? (
-                    <Empty icon={<ListChecks className="h-12 w-12" />} text="Brak rodzajów usług" sub="Dodaj pierwszy rodzaj usługi" />
-                  ) : (
-                    <motion.div variants={ANIM.container} initial="hidden" animate="show">
-                      <div className="grid grid-cols-[1fr_100px_100px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                        <span>Nazwa</span><span>Aktywny</span><span>Akcje</span>
-                      </div>
-                      {serviceTypes.map(st => (
-                        <SimpleListRow
-                          key={st.id}
-                          name={st.name}
-                          isActive={st.is_active}
-                          onToggle={() => toggleStActive(st)}
-                          onEdit={() => { setEditingSt(st); setStForm({ name: st.name }); setStDialogOpen(true); }}
-                          onDelete={() => deleteServiceType(st.id)}
-                        />
-                      ))}
-                    </motion.div>
-                  )}
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-
-          {/* ════════════════════════════════════════════
               Tab: Rodzaje pojazdów
           ════════════════════════════════════════════ */}
           {activeTab === 'rodzaje-pojazdow' && (
@@ -590,7 +551,7 @@ export default function ServicesPage() {
                           isActive={vt.is_active}
                           onToggle={() => toggleVtActive(vt)}
                           onEdit={() => { setEditingVt(vt); setVtForm({ name: vt.name }); setVtDialogOpen(true); }}
-                          onDelete={() => deleteVehicleType(vt.id)}
+                          onDelete={() => openDeleteVt(vt)}
                         />
                       ))}
                     </motion.div>
@@ -605,7 +566,16 @@ export default function ServicesPage() {
           ════════════════════════════════════════════ */}
           {activeTab === 'umiejetnosci' && (
             <motion.div key="umiejetnosci" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2 }} className="space-y-4">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Input
+                    placeholder="Szukaj umiejętności..."
+                    value={skillSearchQuery}
+                    onChange={e => setSkillSearchQuery(e.target.value)}
+                    className="pl-9 h-9 w-64 rounded-xl text-sm"
+                  />
+                </div>
                 <Switch checked={showActiveSkillsOnly} onCheckedChange={v => setShowActiveSkillsOnly(!!v)} />
                 <Label className="text-sm text-gray-600">Pokaż tylko aktywne</Label>
               </div>
@@ -616,12 +586,19 @@ export default function ServicesPage() {
                     <Spinner color="border-orange-500" />
                   ) : skills.length === 0 ? (
                     <Empty icon={<Award className="h-12 w-12" />} text="Brak umiejętności" sub="Dodaj pierwszą umiejętność" />
-                  ) : (
+                  ) : (() => {
+                    const filteredSkills = skills.filter(s =>
+                      !skillSearchQuery || s.name.toLowerCase().includes(skillSearchQuery.toLowerCase()) ||
+                      (s.description || '').toLowerCase().includes(skillSearchQuery.toLowerCase())
+                    );
+                    return filteredSkills.length === 0 ? (
+                      <Empty icon={<Search className="h-12 w-12" />} text="Brak wyników" sub="Zmień kryteria wyszukiwania" />
+                    ) : (
                     <motion.div variants={ANIM.container} initial="hidden" animate="show">
                       <div className="grid grid-cols-[1fr_1fr_100px_100px] gap-4 px-5 py-3 border-b bg-gray-50/50 text-xs font-medium text-gray-400 uppercase tracking-wider">
                         <span>Nazwa</span><span>Opis</span><span>Aktywna</span><span>Akcje</span>
                       </div>
-                      {skills.map(skill => (
+                      {filteredSkills.map(skill => (
                         <motion.div
                           key={skill.id}
                           variants={ANIM.item}
@@ -641,14 +618,15 @@ export default function ServicesPage() {
                               <Pencil className="h-4 w-4" />
                             </Button>
                             <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50"
-                              onClick={() => handleSkillDelete(skill.id)}>
+                              onClick={() => openSkillDeleteDialog(skill)}>
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
                         </motion.div>
                       ))}
                     </motion.div>
-                  )}
+                    );
+                  })()}
                 </CardContent>
               </Card>
             </motion.div>
@@ -678,7 +656,7 @@ export default function ServicesPage() {
               </div>
               <div className="space-y-2">
                 <Label>Kategoria</Label>
-                <Select value={serviceForm.category} onValueChange={v => setServiceForm({ ...serviceForm, category: v ?? 'wymiana' })}>
+                <Select value={serviceForm.category} onValueChange={v => setServiceForm({ ...serviceForm, category: v ?? 'main' })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{categories.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
                 </Select>
@@ -776,22 +754,6 @@ export default function ServicesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Add/Edit Service Type */}
-      <Dialog open={stDialogOpen} onOpenChange={o => { setStDialogOpen(o); if (!o) { setEditingSt(null); setStForm({ name: '' }); } }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{editingSt ? 'Edytuj rodzaj usługi' : 'Nowy rodzaj usługi'}</DialogTitle></DialogHeader>
-          <form onSubmit={handleStSave} className="space-y-4">
-            <div className="space-y-2"><Label>Nazwa</Label><Input required value={stForm.name} onChange={e => setStForm({ name: e.target.value })} placeholder="np. Wymiana sezonowa" /></div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" type="button" onClick={() => setStDialogOpen(false)}>Anuluj</Button>
-              <Button type="submit" disabled={stSaving} className={editingSt ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}>
-                {stSaving ? 'Zapisywanie...' : editingSt ? 'Zapisz zmiany' : 'Dodaj'}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
       {/* Add/Edit Vehicle Type */}
       <Dialog open={vtDialogOpen} onOpenChange={o => { setVtDialogOpen(o); if (!o) { setEditingVt(null); setVtForm({ name: '' }); } }}>
         <DialogContent>
@@ -805,6 +767,22 @@ export default function ServicesPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Vehicle Type Confirmation */}
+      <Dialog open={vtDeleteDialogOpen} onOpenChange={o => { setVtDeleteDialogOpen(o); if (!o) setDeletingVt(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Usuń rodzaj pojazdu</DialogTitle></DialogHeader>
+          <p className="text-sm text-gray-600">
+            Czy na pewno chcesz usunąć ten rodzaj pojazdu: <strong>{deletingVt?.name}</strong>? Ta operacja jest nieodwracalna.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setVtDeleteDialogOpen(false)}>Anuluj</Button>
+            <Button className="bg-red-500 hover:bg-red-600" onClick={confirmDeleteVt}>
+              Usuń
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -828,6 +806,22 @@ export default function ServicesPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Skill Confirmation */}
+      <Dialog open={skillDeleteDialogOpen} onOpenChange={o => { setSkillDeleteDialogOpen(o); if (!o) setDeletingSkill(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Usuń umiejętność</DialogTitle></DialogHeader>
+          <p className="text-sm text-gray-600">
+            Czy na pewno chcesz usunąć umiejętność <strong>{deletingSkill?.name}</strong>? Tej operacji nie można cofnąć.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setSkillDeleteDialogOpen(false)}>Anuluj</Button>
+            <Button className="bg-red-500 hover:bg-red-600" onClick={handleSkillDelete} disabled={skillSaving}>
+              {skillSaving ? 'Usuwanie...' : 'Usuń'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       client_name, client_phone, client_email, address, city,
       scheduled_date, scheduled_time, time_window,
       service_ids, service_names, vehicles,
-      notes, priority,
+      notes, priority, required_skills,
       scheduling_type, time_window_start, time_window_end,
       flexibility_minutes, source, auto_assign,
       vehicle_info,
@@ -233,6 +233,7 @@ export async function POST(request: NextRequest) {
       flexibility_minutes: finalFlexibility,
       source: finalSource,
       auto_assigned: auto_assign || false,
+      required_skills: required_skills && required_skills.length > 0 ? required_skills : null,
     }).select().single();
 
     if (orderError) return NextResponse.json({ error: orderError.message }, { status: 400 });
@@ -281,6 +282,7 @@ export async function POST(request: NextRequest) {
           priority: finalPriority,
           service_duration_minutes: totalDuration,
           exclude_order_id: order.id,
+          required_skills: required_skills || [],
         });
 
         if (shouldAutoAssign && suggestions.length > 0) {

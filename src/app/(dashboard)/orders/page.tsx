@@ -24,6 +24,7 @@ import {
   Camera, PenTool, Save, Check, Unlink,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useOrdersRealtime } from '@/hooks/use-orders-realtime';
 import type { OrderStatus, OrderPriority, Client, Service } from '@/lib/types';
 import type { DispatchOrderBase } from '@/lib/types/dispatch-order';
 
@@ -35,6 +36,7 @@ const ANIM = {
 const statusConfig: Record<OrderStatus, { label: string; color: string; bg: string; icon: React.ElementType }> = {
   new: { label: 'Nowe', color: 'text-blue-700', bg: 'bg-blue-50 border-blue-200', icon: ClipboardList },
   assigned: { label: 'Przydzielone', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200', icon: User },
+  in_transit: { label: 'W drodze', color: 'text-sky-700', bg: 'bg-sky-50 border-sky-200', icon: Truck },
   in_progress: { label: 'W trakcie', color: 'text-violet-700', bg: 'bg-violet-50 border-violet-200', icon: Truck },
   completed: { label: 'Ukończone', color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200', icon: CheckCircle2 },
   cancelled: { label: 'Anulowane', color: 'text-red-700', bg: 'bg-red-50 border-red-200', icon: XCircle },
@@ -63,8 +65,19 @@ interface OrderRow extends Omit<DispatchOrderBase, 'client_name' | 'scheduling_t
   internal_task_type?: string | null;
   is_paid_time?: boolean | null;
   created_at: string;
+  planned_start_time?: string | null;
+  actual_departure_time?: string | null;
+  actual_start_time?: string | null;
+  actual_end_time?: string | null;
+  min_arrival_time?: string | null;
+  max_arrival_time?: string | null;
   client?: { name: string; phone: string };
   employee?: { user: { full_name: string } } | null;
+}
+
+interface EmployeeOption {
+  id: string;
+  name: string;
 }
 
 interface WorkLog {
@@ -449,6 +462,62 @@ function FormFieldInput({
   }
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtHHMM(ts: string | null | undefined): string {
+  if (!ts) return '—';
+  // Handle both ISO timestamps and HH:MM:SS time strings
+  if (ts.includes('T') || ts.includes(' ')) {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit' });
+  }
+  return ts.slice(0, 5);
+}
+
+// ── OrderTimeline ────────────────────────────────────────────────────────────
+
+function OrderTimeline({ order }: { order: OrderRow }) {
+  const steps = [
+    { label: 'Planowany', time: order.planned_start_time, icon: Calendar, color: 'text-blue-500', bg: 'bg-blue-50' },
+    { label: 'Wyjazd', time: order.actual_departure_time, icon: Navigation, color: 'text-sky-500', bg: 'bg-sky-50' },
+    { label: 'Rozpoczęcie', time: order.actual_start_time, icon: Play, color: 'text-violet-500', bg: 'bg-violet-50' },
+    { label: 'Zakończenie', time: order.actual_end_time, icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-50' },
+  ];
+
+  const hasAny = steps.some(s => s.time);
+  if (!hasAny) return null;
+
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1">
+        <Clock className="h-3 w-3" /> Oś czasu
+      </p>
+      <div className="relative pl-4 space-y-2">
+        {/* Vertical line */}
+        <div className="absolute left-[7px] top-1 bottom-1 w-px bg-gray-200" />
+        {steps.map((step, i) => {
+          const StepIcon = step.icon;
+          const done = !!step.time;
+          return (
+            <div key={i} className="relative flex items-center gap-2">
+              <div className={`absolute -left-4 h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${done ? `${step.bg} border-current ${step.color}` : 'bg-white border-gray-200'}`}>
+                {done && <StepIcon className="h-2 w-2" />}
+              </div>
+              <span className={`text-xs ${done ? 'font-medium text-gray-800' : 'text-gray-400'}`}>
+                {step.label}
+              </span>
+              <span className={`text-xs ml-auto font-mono ${done ? step.color + ' font-semibold' : 'text-gray-300'}`}>
+                {fmtHHMM(step.time)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -472,6 +541,22 @@ export default function OrdersPage() {
   const [loadingEmpSugg, setLoadingEmpSugg] = useState(false);
   const [assigningEmp, setAssigningEmp] = useState<string | null>(null);
 
+  // Date filter
+  const today = new Date().toISOString().split('T')[0];
+  const [dateFilter, setDateFilter] = useState<'today' | 'week' | 'all'>('today');
+
+  // Employee filter
+  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [employeeFilter, setEmployeeFilter] = useState<string>('all');
+
+  // New client dialog
+  const [newClientOpen, setNewClientOpen] = useState(false);
+  const [newClient, setNewClient] = useState({ name: '', phone: '', address: '', city: '' });
+  const [creatingClient, setCreatingClient] = useState(false);
+
+  // Skill options from DB
+  const [skillOptions, setSkillOptions] = useState<string[]>([]);
+
   // New order form
   const [form, setForm] = useState({
     client_id: '', scheduled_date: '', scheduled_time_start: '08:00',
@@ -483,18 +568,51 @@ export default function OrdersPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [ordersRes, clientsRes, servicesRes] = await Promise.all([
-      supabase.from('orders').select('*, client:clients(name, phone), employee:employees(user:profiles(full_name))').order('scheduled_date', { ascending: false }).order('scheduled_time_start'),
+
+    // Build orders query with date filter
+    let ordersQuery = supabase
+      .from('orders')
+      .select('*, client:clients(name, phone), employee:employees(user:profiles(full_name))')
+      .order('scheduled_date', { ascending: false })
+      .order('scheduled_time_start');
+
+    if (dateFilter === 'today') {
+      ordersQuery = ordersQuery.eq('scheduled_date', today);
+    } else if (dateFilter === 'week') {
+      const weekEnd = new Date();
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const weekEndStr = weekEnd.toISOString().split('T')[0];
+      ordersQuery = ordersQuery.gte('scheduled_date', today).lte('scheduled_date', weekEndStr);
+    }
+
+    const [ordersRes, clientsRes, servicesRes, employeesRes, skillsRes] = await Promise.all([
+      ordersQuery,
       supabase.from('clients').select('id, name, phone, address, city').order('name'),
       supabase.from('services').select('*').eq('is_active', true).order('name'),
+      supabase.from('employees').select('id, user:profiles(full_name)').eq('is_active', true),
+      fetch('/api/skills?active=true').then(r => r.json()).catch(() => []),
     ]);
     if (ordersRes.data) setOrders(ordersRes.data as OrderRow[]);
     if (clientsRes.data) setClients(clientsRes.data as Client[]);
     if (servicesRes.data) setServices(servicesRes.data as Service[]);
+    if (Array.isArray(skillsRes)) {
+      setSkillOptions(skillsRes.map((s: any) => s.name));
+    }
+    if (employeesRes.data) {
+      setEmployees(
+        (employeesRes.data as any[]).map(e => ({
+          id: e.id,
+          name: (e.user as any)?.full_name || 'Bez nazwy',
+        }))
+      );
+    }
     setLoading(false);
-  }, []);
+  }, [dateFilter, today]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Realtime subscription
+  useOrdersRealtime(fetchData);
 
   const fetchWorkLogs = useCallback(async (orderId: string) => {
     const res = await fetch(`/api/work-logs?order_id=${orderId}`);
@@ -597,35 +715,51 @@ export default function OrdersPage() {
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    const selectedServices = services.filter(s => form.service_ids.includes(s.id));
-    const totalPrice = selectedServices.reduce((sum, s) => sum + Number(s.price), 0);
-    const totalDuration = selectedServices.reduce((sum, s) => sum + s.duration_minutes, 0);
-
-    // Calculate end time
-    const [h, m] = form.scheduled_time_start.split(':').map(Number);
-    const endMinutes = h * 60 + m + totalDuration;
-    const endTime = `${Math.floor(endMinutes / 60).toString().padStart(2, '0')}:${(endMinutes % 60).toString().padStart(2, '0')}`;
-
     const client = clients.find(c => c.id === form.client_id);
 
-    await supabase.from('orders').insert({
-      client_id: form.client_id,
-      status: 'new',
-      priority: form.priority,
-      scheduled_date: form.scheduled_date,
-      scheduled_time_start: form.scheduled_time_start,
-      scheduled_time_end: endTime,
-      address: form.address || client?.address || '',
-      services: selectedServices.map(s => ({ service_id: s.id, name: s.name, price: Number(s.price), quantity: 1 })),
-      total_price: totalPrice,
-      notes: form.notes || null,
-      required_skills: form.required_skills.length > 0 ? form.required_skills : null,
-    });
+    try {
+      await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: client?.name || '',
+          client_phone: client?.phone || '',
+          address: form.address || client?.address || '',
+          city: client?.city || '',
+          scheduled_date: form.scheduled_date,
+          scheduled_time: form.scheduled_time_start,
+          service_ids: form.service_ids,
+          notes: form.notes || undefined,
+          priority: form.priority,
+          source: 'dispatcher',
+          auto_assign: true,
+        }),
+      });
+    } catch { /* ignore */ }
 
     setSaving(false);
     setDialogOpen(false);
     setForm({ client_id: '', scheduled_date: '', scheduled_time_start: '08:00', scheduled_time_end: '09:00', address: '', priority: 'normal', notes: '', service_ids: [], required_skills: [] });
     fetchData();
+  };
+
+  const handleCreateClient = async () => {
+    if (!newClient.name || !newClient.phone || !newClient.address || !newClient.city) return;
+    setCreatingClient(true);
+    try {
+      const { data: created } = await supabase
+        .from('clients')
+        .insert({ name: newClient.name, phone: newClient.phone, address: newClient.address, city: newClient.city, vehicles: [] })
+        .select('id')
+        .single();
+      if (created) {
+        setClients(prev => [...prev, { id: created.id, name: newClient.name, phone: newClient.phone, address: newClient.address, city: newClient.city } as Client]);
+        setForm(prev => ({ ...prev, client_id: created.id, address: `${newClient.address}, ${newClient.city}` }));
+      }
+    } catch { /* ignore */ }
+    setCreatingClient(false);
+    setNewClientOpen(false);
+    setNewClient({ name: '', phone: '', address: '', city: '' });
   };
 
   const updateStatus = async (orderId: string, newStatus: OrderStatus, closureCode?: string) => {
@@ -673,7 +807,8 @@ export default function OrdersPage() {
   const filteredOrders = orders.filter(o => {
     const matchSearch = o.client?.name?.toLowerCase().includes(search.toLowerCase()) || o.id.includes(search);
     const matchStatus = statusFilter === 'all' || o.status === statusFilter;
-    return matchSearch && matchStatus;
+    const matchEmployee = employeeFilter === 'all' || o.employee_id === employeeFilter;
+    return matchSearch && matchStatus && matchEmployee;
   });
 
   const statusCounts = (Object.keys(statusConfig) as OrderStatus[]).reduce((acc, s) => {
@@ -718,11 +853,39 @@ export default function OrdersPage() {
         </motion.div>
 
         {/* Filters */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-sm">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 max-w-sm min-w-[200px]">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <Input placeholder="Szukaj zlecenia..." className="pl-9 h-9 rounded-xl" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
+
+          {/* Date filter */}
+          <div className="flex items-center gap-1 bg-white border rounded-xl p-0.5">
+            {([['today', 'Dziś'], ['week', 'Ten tydzień'], ['all', 'Wszystkie']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${dateFilter === key ? 'bg-blue-500 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+                onClick={() => setDateFilter(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Employee filter */}
+          <Select value={employeeFilter} onValueChange={v => setEmployeeFilter(v ?? 'all')}>
+            <SelectTrigger className="h-9 w-[180px] rounded-xl text-xs">
+              <User className="h-3.5 w-3.5 mr-1 text-gray-400" />
+              <SelectValue placeholder="Pracownik" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Wszyscy pracownicy</SelectItem>
+              {employees.map(e => (
+                <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           {statusFilter !== 'all' && (
             <Button variant="ghost" size="sm" className="h-9 text-xs rounded-xl" onClick={() => setStatusFilter('all')}>
               Wyczyść filtr
@@ -845,7 +1008,20 @@ export default function OrdersPage() {
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Termin</p>
                         <p className="text-sm"><Calendar className="h-3.5 w-3.5 inline mr-1 text-gray-400" />{selectedOrder.scheduled_date}</p>
                         <p className="text-sm mt-0.5"><Clock className="h-3.5 w-3.5 inline mr-1 text-gray-400" />{selectedOrder.scheduled_time_start?.slice(0, 5)} - {selectedOrder.scheduled_time_end?.slice(0, 5)}</p>
+                        {(selectedOrder.min_arrival_time || selectedOrder.max_arrival_time) && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Okno przyjazdu: {fmtHHMM(selectedOrder.min_arrival_time)} – {fmtHHMM(selectedOrder.max_arrival_time)}
+                          </p>
+                        )}
+                        {selectedOrder.planned_start_time && (
+                          <p className="text-xs text-blue-600 mt-0.5">
+                            Planowany start: {fmtHHMM(selectedOrder.planned_start_time)}
+                          </p>
+                        )}
                       </div>
+
+                      {/* Timeline */}
+                      <OrderTimeline order={selectedOrder} />
 
                       {/* Address */}
                       <div>
@@ -1132,21 +1308,7 @@ export default function OrdersPage() {
               <div className="flex items-center justify-between">
                 <Label>Klient</Label>
                 <button type="button" className="text-xs text-blue-500 hover:text-blue-600 font-medium"
-                  onClick={() => {
-                    const name = prompt('Imię i nazwisko / Firma:');
-                    const phone = prompt('Telefon:');
-                    const address = prompt('Adres:');
-                    const city = prompt('Miasto:');
-                    if (name && phone && address && city) {
-                      supabase.from('clients').insert({ name, phone, address, city, vehicles: [] }).select('id').single()
-                        .then(({ data: newClient }) => {
-                          if (newClient) {
-                            setClients([...clients, { id: newClient.id, name, phone, address, city } as any]);
-                            setForm({ ...form, client_id: newClient.id, address: `${address}, ${city}` });
-                          }
-                        });
-                    }
-                  }}>
+                  onClick={() => setNewClientOpen(true)}>
                   + Nowy klient
                 </button>
               </div>
@@ -1217,7 +1379,7 @@ export default function OrdersPage() {
             <div className="space-y-2">
               <Label>Wymagane umiejętności / sprzęt</Label>
               <div className="flex flex-wrap gap-2">
-                {['wymiana opon', 'wyważanie', 'naprawa', 'PKW', 'LKW', 'motocykl', 'elektryczny', 'ciężarowy'].map(skill => (
+                {skillOptions.map(skill => (
                   <button
                     key={skill}
                     type="button"
@@ -1253,6 +1415,57 @@ export default function OrdersPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Client Dialog */}
+      <Dialog open={newClientOpen} onOpenChange={setNewClientOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Nowy klient</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Imię i nazwisko / Firma</Label>
+              <Input
+                value={newClient.name}
+                onChange={e => setNewClient({ ...newClient, name: e.target.value })}
+                placeholder="Jan Kowalski"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Telefon</Label>
+              <Input
+                value={newClient.phone}
+                onChange={e => setNewClient({ ...newClient, phone: e.target.value })}
+                placeholder="+48 123 456 789"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Adres</Label>
+              <Input
+                value={newClient.address}
+                onChange={e => setNewClient({ ...newClient, address: e.target.value })}
+                placeholder="ul. Przykładowa 1"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Miasto</Label>
+              <Input
+                value={newClient.city}
+                onChange={e => setNewClient({ ...newClient, city: e.target.value })}
+                placeholder="Warszawa"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setNewClientOpen(false)}>Anuluj</Button>
+              <Button
+                onClick={handleCreateClient}
+                disabled={creatingClient || !newClient.name || !newClient.phone || !newClient.address || !newClient.city}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {creatingClient ? 'Tworzenie...' : 'Dodaj klienta'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

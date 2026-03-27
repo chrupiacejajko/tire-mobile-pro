@@ -57,9 +57,11 @@ export async function POST(
     }
 
     // Update order status
+    const now = new Date().toISOString();
     const updateData: Record<string, unknown> = {
       status: 'in_progress',
-      arrived_at: new Date().toISOString(),
+      arrived_at: now,
+      actual_start_time: now,
     };
 
     if (body.lat != null && body.lng != null) {

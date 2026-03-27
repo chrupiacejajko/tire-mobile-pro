@@ -25,11 +25,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'No unassigned orders', assigned: 0 });
     }
 
-    // Get active employees (with skills for matching)
+    // Get active employees (with skills from junction table)
     const { data: employees } = await supabase
       .from('employees')
-      .select('id, region_id, skills, hourly_rate, working_hours')
+      .select('id, region_id, hourly_rate, working_hours, employee_skills(skill:skills(name))')
       .eq('is_active', true);
+
+    // Build skill name arrays from junction table
+    const empSkillsMap = new Map<string, string[]>();
+    for (const emp of (employees || [])) {
+      const names = ((emp as any).employee_skills ?? [])
+        .map((es: any) => es.skill?.name)
+        .filter(Boolean) as string[];
+      empSkillsMap.set(emp.id, names);
+    }
 
     // Get required skills per order
     const orderIdsForSkills = (unassigned || []).map(o => o.id);
@@ -154,7 +163,7 @@ export async function POST(request: NextRequest) {
         // ── Skills matching ───────────────────────────────────────────
         // +20 pts all skills match, -50 if missing required skill
         const requiredSkills: string[] = orderSkillsMap.get(order.id) ?? [];
-        const empSkills: string[] = (emp as any).skills ?? [];
+        const empSkills: string[] = empSkillsMap.get(emp.id) ?? [];
         if (requiredSkills.length > 0) {
           const hasAll = requiredSkills.every(s => empSkills.includes(s));
           const hasNone = !requiredSkills.some(s => empSkills.includes(s));

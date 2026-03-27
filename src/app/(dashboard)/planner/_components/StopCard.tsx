@@ -20,6 +20,7 @@ export function StopCard({ stop, isLast, employeeId, draggable = false }: StopCa
         <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center text-[11px] font-bold flex-shrink-0 ${st.border} ${st.bg} ${st.text}`}>
           {stop.sequence}
         </div>
+        <span className="text-[10px] text-gray-400 font-medium mt-0.5 leading-none">{stop.arrival_time}</span>
         {!isLast && <div className="w-0.5 bg-gray-200 flex-1 my-1" />}
       </div>
 
@@ -37,13 +38,29 @@ export function StopCard({ stop, isLast, employeeId, draggable = false }: StopCa
               </p>
             </div>
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${st.bg} ${st.border} ${st.text}`}>
-              {st.label}
-            </span>
-            {stop.time_window_label && (
-              <span className="text-[10px] text-gray-400">{stop.time_window_label}</span>
-            )}
+          <div className="flex flex-col items-end gap-1.5">
+            {stop.time_window_status !== 'no_window' ? (
+              <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${st.bg} ${st.border}`}>
+                <Clock className={`h-3 w-3 ${st.text} flex-shrink-0`} />
+                <div className="flex flex-col items-end">
+                  <span className={`text-[11px] font-semibold leading-tight ${st.text}`}>
+                    {st.label}
+                  </span>
+                  {stop.time_window_label && (
+                    <span className="text-[10px] text-gray-500 font-medium leading-tight">
+                      {stop.time_window_label}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ) : stop.service_start && stop.departure_time ? (
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 rounded-lg border border-gray-200">
+                <Clock className="h-3 w-3 text-gray-400" />
+                <span className="text-[10px] text-gray-500 font-medium">
+                  {stop.service_start}–{stop.departure_time}
+                </span>
+              </div>
+            ) : null}
           </div>
         </div>
 

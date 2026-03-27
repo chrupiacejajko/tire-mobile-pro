@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     .from('employees')
     .select(`
       id, first_name, last_name, phone_secondary, region_id, is_active,
-      default_vehicle_id,
+      default_vehicle_id, default_location, default_lat, default_lng,
       user:profiles(full_name, email, phone, role, avatar_url),
       region:regions(name, color)
     `)
@@ -52,6 +52,16 @@ export async function GET(request: NextRequest) {
   if (!employee) {
     return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
   }
+
+  // Skills from junction table
+  const { data: empSkillRows } = await supabase
+    .from('employee_skills')
+    .select('skill:skills(name)')
+    .eq('employee_id', auth.employeeId);
+
+  const skills: string[] = (empSkillRows ?? [])
+    .map((es: any) => es.skill?.name)
+    .filter(Boolean);
 
   // Operational state
   const { data: opState } = await supabase
@@ -139,6 +149,14 @@ export async function GET(request: NextRequest) {
           model: (vehicleAssignment as any).vehicle?.model ?? null,
         }
       : null,
+
+    // Home location
+    default_location: (employee as any).default_location ?? null,
+    default_lat: (employee as any).default_lat ?? null,
+    default_lng: (employee as any).default_lng ?? null,
+
+    // Skills
+    skills,
 
     // GPS
     last_gps_at: opState?.last_gps_at ?? null,

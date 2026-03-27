@@ -4,11 +4,15 @@
 
 export type UserRole = 'admin' | 'dispatcher' | 'worker';
 
-export type OrderStatus = 'new' | 'assigned' | 'in_progress' | 'completed' | 'cancelled';
+export type OrderStatus = 'new' | 'assigned' | 'in_transit' | 'in_progress' | 'completed' | 'cancelled';
 
 export type OrderPriority = 'low' | 'normal' | 'high' | 'urgent';
 
+export type OrderTimeType = 'immediate' | 'fixed' | 'window' | 'flexible';
+
 export type EmployeeStatus = 'online' | 'offline' | 'driving' | 'working';
+
+export type ServiceCategory = 'main' | 'additional';
 
 // ---- Users ----
 export interface User {
@@ -117,7 +121,7 @@ export interface Service {
   description: string | null;
   duration_minutes: number;
   price: number;
-  category: string;
+  category: ServiceCategory;
   is_active: boolean;
   form_template_id?: string | null;
   vehicle_type_id: string | null;
@@ -150,6 +154,16 @@ export interface Order {
   scheduled_date: string;
   scheduled_time_start: string;
   scheduled_time_end: string;
+  // New time fields (from conversation requirements)
+  order_time_type: OrderTimeType;
+  min_arrival_time: string | null;      // immutable after creation
+  max_arrival_time: string | null;      // immutable after creation
+  planned_start_time: string | null;    // mutable — shifts when rescheduled
+  service_duration_minutes: number;     // from service definition
+  planned_end_time: string | null;      // computed: planned_start + duration
+  actual_departure_time: string | null; // driver clicked "wyjeżdżam na zlecenie"
+  actual_start_time: string | null;     // driver clicked "rozpoczynam pracę"
+  actual_end_time: string | null;       // driver clicked "zakończyłem zlecenie"
   address: string;
   lat: number | null;
   lng: number | null;

@@ -72,7 +72,6 @@ export function useScheduleData() {
     employee_groups: {},
     from_date: '',
     start_time: '07:00',
-    end_time: '23:00',
     duration_hours: '48',
     shift_count: '4',
   });
@@ -345,7 +344,6 @@ export function useScheduleData() {
       employee_groups: {},
       from_date: todayStr,
       start_time: '07:00',
-      end_time: '23:00',
       duration_hours: '48',
       shift_count: '4',
     });
@@ -373,7 +371,6 @@ export function useScheduleData() {
         })),
         from_date: dutyForm.from_date,
         start_time: dutyForm.start_time,
-        end_time: dutyForm.end_time,
         duration_hours: durationH,
         shift_count: shiftCount,
       }),

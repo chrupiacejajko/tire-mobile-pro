@@ -361,6 +361,9 @@ export default function TaskDetailPage() {
               onComplete={handleComplete}
               completing={completing}
               error={completeError}
+              orderId={task.id}
+              taskServices={task.services}
+              employeeId={employeeId}
             />
           </>
         )}

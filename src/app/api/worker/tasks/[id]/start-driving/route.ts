@@ -97,12 +97,16 @@ export async function POST(
       : null;
 
     // Update order status
+    const now = new Date().toISOString();
     const updateData: Record<string, unknown> = {
       status: 'in_transit',
-      transit_started_at: new Date().toISOString(),
+      transit_started_at: now,
+      actual_departure_time: now,
     };
     if (estimatedArrival) {
       updateData.estimated_arrival = estimatedArrival;
+      // Recalculate planned_start_time based on departure + travel time
+      updateData.planned_start_time = estimatedArrival;
     }
 
     const { error: updateErr } = await supabase

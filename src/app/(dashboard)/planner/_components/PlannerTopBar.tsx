@@ -3,9 +3,17 @@
 import {
   Route, RefreshCw, Zap, Calendar, AlertTriangle,
   CheckCircle2, Car, TrendingUp, List, BarChart3,
+  MapPin,
 } from 'lucide-react';
 import { type PlannerData } from './types';
 import { ScoreBadge } from './ScoreDisplay';
+
+export interface Region {
+  id: string;
+  name: string;
+  color: string;
+  is_active?: boolean;
+}
 
 interface PlannerTopBarProps {
   date: string;
@@ -15,11 +23,14 @@ interface PlannerTopBarProps {
   bufferEnabled: boolean;
   viewMode: 'list' | 'gantt';
   overallScore: number | null;
+  regions: Region[];
+  selectedRegionId: string | null;
   onDateChange: (date: string) => void;
   onRefresh: () => void;
   onOptimizeAll: () => void;
   onBufferToggle: (enabled: boolean) => void;
   onViewModeChange: (mode: 'list' | 'gantt') => void;
+  onRegionChange: (regionId: string | null) => void;
 }
 
 function getGlobalStatus(data: PlannerData | null): { label: string; color: string; bg: string; borderColor: string } {
@@ -44,11 +55,14 @@ export function PlannerTopBar({
   bufferEnabled,
   viewMode,
   overallScore,
+  regions,
+  selectedRegionId,
   onDateChange,
   onRefresh,
   onOptimizeAll,
   onBufferToggle,
   onViewModeChange,
+  onRegionChange,
 }: PlannerTopBarProps) {
   const summary = data?.summary;
   const totalLate = data?.routes?.reduce((s, r) => s + r.score.late, 0) ?? 0;
@@ -91,6 +105,21 @@ export function PlannerTopBar({
               onChange={e => onDateChange(e.target.value)}
               className="text-sm bg-transparent outline-none text-gray-700 font-medium w-[130px]"
             />
+          </div>
+
+          {/* Region filter */}
+          <div className="flex items-center gap-1.5 bg-gray-50/80 border border-gray-200/80 rounded-lg px-2.5 py-1.5">
+            <MapPin className="h-3.5 w-3.5 text-gray-400" />
+            <select
+              value={selectedRegionId ?? ''}
+              onChange={e => onRegionChange(e.target.value || null)}
+              className="text-sm bg-transparent outline-none text-gray-700 font-medium cursor-pointer appearance-none pr-1"
+            >
+              <option value="">Wszyscy</option>
+              {regions.map(r => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
           </div>
 
           {/* Refresh — ghost icon */}
