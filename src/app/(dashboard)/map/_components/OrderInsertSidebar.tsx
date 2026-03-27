@@ -287,7 +287,9 @@ export function OrderInsertSidebar({
             const originalTravel = firstStop.travel_minutes;
             const extraTravel = travelToNew + travelFromNew - originalTravel;
 
-            const newStartMinutes = earliestMinutes + travelToNew;
+            // For today: use max of earliest available and current time
+            const effectiveEarliest = isSearchingToday ? Math.max(earliestMinutes, realNowMinutes) : earliestMinutes;
+            const newStartMinutes = effectiveEarliest + travelToNew;
             const newEndMinutes = newStartMinutes + serviceDuration + travelFromNew;
             const firstStopStartMinutes = parseTimeToMinutes(firstStop.service_start || firstStop.arrival_time);
 
@@ -327,8 +329,23 @@ export function OrderInsertSidebar({
             const prevDeparture = prevStop.departure_minutes;
             const nextStopStart = parseTimeToMinutes(nextStop.service_start || nextStop.arrival_time);
 
-            // Check: travel from prev → new address + service + travel to next ≤ gap
-            const newStartMinutes = prevDeparture + travelToNew;
+            // For today: if prevStop already departed (in the past), we can still use
+            // this gap starting from NOW. Use GPS position for travel calc in that case.
+            let effectiveTravelToNew = travelToNew;
+            let effectiveDistToNew = haversineKm(prevStop.lat, prevStop.lng, pin.lat, pin.lng);
+            let effectiveStart: number;
+
+            if (isSearchingToday && prevDeparture < realNowMinutes) {
+              // Previous stop is in the past — calc travel from current GPS position
+              const gpsDistToNew = haversineKm(startLat, startLng, pin.lat, pin.lng);
+              effectiveTravelToNew = etaMinutes(gpsDistToNew);
+              effectiveDistToNew = gpsDistToNew;
+              effectiveStart = realNowMinutes + effectiveTravelToNew;
+            } else {
+              effectiveStart = prevDeparture + travelToNew;
+            }
+
+            const newStartMinutes = effectiveStart;
             const newEndMinutes = newStartMinutes + serviceDuration + travelFromNew;
             if (newEndMinutes <= nextStopStart) {
 
@@ -338,11 +355,11 @@ export function OrderInsertSidebar({
                 plate: route.plate,
                 insert_after_index: i,
                 slot_start_time: minutesToTime(newStartMinutes),
-                travel_to_minutes: travelToNew,
+                travel_to_minutes: effectiveTravelToNew,
                 travel_from_minutes: travelFromNew,
-                extra_travel_minutes: Math.max(0, extraTravel),
+                extra_travel_minutes: Math.max(0, travelToNew + travelFromNew - originalTravel),
                 total_orders: route.total_orders,
-                distance_from_prev_km: Math.round(distToNew * 10) / 10,
+                distance_from_prev_km: Math.round(effectiveDistToNew * 10) / 10,
                 prev_stop_name: prevStop.client_name,
                 next_stop_name: nextStop.client_name,
               });
@@ -352,9 +369,18 @@ export function OrderInsertSidebar({
           // Try APPENDING after the last stop
           {
             const lastStop = schedule[schedule.length - 1];
-            const distToNew = haversineKm(lastStop.lat, lastStop.lng, pin.lat, pin.lng);
-            const travelToNew = etaMinutes(distToNew);
-            const newStartMinutes = lastStop.departure_minutes + travelToNew;
+            // For today: if last stop already departed, calc from GPS position
+            let distToNew: number;
+            let travelToNew: number;
+            if (isSearchingToday && lastStop.departure_minutes < realNowMinutes) {
+              distToNew = haversineKm(startLat, startLng, pin.lat, pin.lng);
+              travelToNew = etaMinutes(distToNew);
+            } else {
+              distToNew = haversineKm(lastStop.lat, lastStop.lng, pin.lat, pin.lng);
+              travelToNew = etaMinutes(distToNew);
+            }
+            const effectiveDeparture = isSearchingToday ? Math.max(lastStop.departure_minutes, realNowMinutes) : lastStop.departure_minutes;
+            const newStartMinutes = effectiveDeparture + travelToNew;
 
             if (newStartMinutes + serviceDuration <= latestMinutes) {
               foundSlots.push({
@@ -375,26 +401,18 @@ export function OrderInsertSidebar({
           }
         }
 
-        // Filter out past slots if searching for today
-        const _n = new Date();
-        const todayStr = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`;
-        if (selectedDate === todayStr) {
-          const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
-          // Remove slots that would start in the past (with 15min grace)
-          const filtered = foundSlots.filter(s => parseTimeToMinutes(s.slot_start_time) >= nowMin - 15);
-          foundSlots.length = 0;
-          foundSlots.push(...filtered);
+        // Past slots are already handled at source — each section uses
+        // max(departure, realNowMinutes) for today's searches, so no post-filter needed.
+        {
         }
 
-        // Sort: earliest time first, then by least extra travel
+        // Sort: least extra travel first (best route fit), then earliest time
         foundSlots.sort((a, b) => {
-          const timeA = parseTimeToMinutes(a.slot_start_time);
-          const timeB = parseTimeToMinutes(b.slot_start_time);
-          if (timeA !== timeB) return timeA - timeB;
-          return a.extra_travel_minutes - b.extra_travel_minutes;
+          if (a.extra_travel_minutes !== b.extra_travel_minutes) return a.extra_travel_minutes - b.extra_travel_minutes;
+          return parseTimeToMinutes(a.slot_start_time) - parseTimeToMinutes(b.slot_start_time);
         });
 
-        // Deduplicate: keep only the best slot per worker
+        // Deduplicate: keep only the best slot per worker (least extra travel)
         const bestPerWorker = new Map<string, AvailableSlot>();
         for (const slot of foundSlots) {
           if (!bestPerWorker.has(slot.employee_id)) {
@@ -403,12 +421,10 @@ export function OrderInsertSidebar({
         }
         const deduped = Array.from(bestPerWorker.values());
 
-        // Re-sort deduped: soonest start, then least extra travel
+        // Re-sort deduped: least extra travel first (="Najlepszy"), then earliest
         deduped.sort((a, b) => {
-          const timeA = parseTimeToMinutes(a.slot_start_time);
-          const timeB = parseTimeToMinutes(b.slot_start_time);
-          if (timeA !== timeB) return timeA - timeB;
-          return a.extra_travel_minutes - b.extra_travel_minutes;
+          if (a.extra_travel_minutes !== b.extra_travel_minutes) return a.extra_travel_minutes - b.extra_travel_minutes;
+          return parseTimeToMinutes(a.slot_start_time) - parseTimeToMinutes(b.slot_start_time);
         });
 
         setSlots(deduped);
