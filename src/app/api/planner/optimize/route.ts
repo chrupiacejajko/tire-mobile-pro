@@ -408,6 +408,9 @@ export async function POST(request: NextRequest) {
       employeePositions.set(emp.id, gpsMap.get(emp.id) ?? { lat: 52.2297, lng: 21.0122 });
     }
 
+    // MAX_ASSIGN_RADIUS_KM: don't assign/reassign an order to an employee more than 100km away
+    const MAX_ASSIGN_RADIUS_KM = 100;
+
     // Track original employee assignments for reassignment counting
     const originalEmployeeMap = new Map<string, string | null>();
     for (const order of orders) {
@@ -441,6 +444,8 @@ export async function POST(request: NextRequest) {
           if (!altPos) continue;
 
           const altDist = haversineKm(altPos.lat, altPos.lng, order.lat, order.lng) * 1.35;
+          // Skip employees too far (different city/region)
+          if (altDist > MAX_ASSIGN_RADIUS_KM) continue;
           const altTravel = Math.round(altDist / 50 * 60);
           const altWs = workScheduleMap.get(emp.id);
           const altStart = altWs ? parseTime(altWs.start_time) : parseTime('08:00');
@@ -537,6 +542,8 @@ export async function POST(request: NextRequest) {
         if (!empPos) continue;
 
         const dist = haversineKm(empPos.lat, empPos.lng, order.lat, order.lng);
+        // Skip employees too far from this order (different city/region)
+        if (dist > MAX_ASSIGN_RADIUS_KM) continue;
         if (dist < bestDist) {
           bestDist = dist;
           bestEmpId = emp.id;
