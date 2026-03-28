@@ -56,7 +56,7 @@ export async function getRouteInfo(
     url.searchParams.set('origin', `${originLat},${originLng}`);
     url.searchParams.set('destination', `${destLat},${destLng}`);
     url.searchParams.set('return', 'summary');
-    url.searchParams.set('departureTime', 'now'); // live traffic
+    url.searchParams.set('departureTime', new Date().toISOString()); // HERE v8 requires ISO 8601, not 'now'
     url.searchParams.set('apikey', HERE_API_KEY);
 
     const res = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) });
