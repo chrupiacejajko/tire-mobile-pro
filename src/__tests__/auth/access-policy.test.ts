@@ -75,6 +75,10 @@ describe('isWebhookBypassPath', () => {
     expect(isWebhookBypassPath('/api/satisgps/sync')).toBe(true);
   });
 
+  it('matches /api/satisgps/webhook', () => {
+    expect(isWebhookBypassPath('/api/satisgps/webhook')).toBe(true);
+  });
+
   it('matches /api/integrations/something', () => {
     expect(isWebhookBypassPath('/api/integrations/something')).toBe(true);
   });
@@ -89,5 +93,13 @@ describe('isWebhookBypassPath', () => {
 
   it('does not match /api/worker/tasks', () => {
     expect(isWebhookBypassPath('/api/worker/tasks')).toBe(false);
+  });
+
+  it('does not match /api/satisgps/debug', () => {
+    expect(isWebhookBypassPath('/api/satisgps/debug')).toBe(false);
+  });
+
+  it('does not match /api/webhooks/config', () => {
+    expect(isWebhookBypassPath('/api/webhooks/config')).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import { autoAssignWorker } from '@/lib/auto-assign';
 import { notifyWorker } from '@/lib/notifications';
 import { pointInPolygon } from '@/lib/geo';
 import { checkAuth } from '@/lib/api/auth-guard';
+import { checkRateLimit, getClientIp } from '@/lib/security/rate-limit';
 
 // GET /api/orders - List orders with optional filters
 export async function GET(request: NextRequest) {
@@ -47,6 +48,15 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const supabase = getAdminClient();
   try {
+    const ip = getClientIp(request);
+    const rate = checkRateLimit(`public-orders:${ip}`, 10, 60 * 1000);
+    if (!rate.ok) {
+      return NextResponse.json(
+        { error: 'Too many requests', code: 'RATE_LIMIT' },
+        { status: 429, headers: { 'Retry-After': String(rate.retryAfter) } },
+      );
+    }
+
     const body = await request.json();
     const {
       client_name, client_phone, client_email, address, city,

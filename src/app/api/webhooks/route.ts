@@ -1,9 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { matchesSharedSecret } from '@/lib/security/webhook-auth';
 
 // POST /api/webhooks - Receive webhook events from external systems (Smifybot, Satis GPS)
 export async function POST(request: NextRequest) {
   const supabase = getAdminClient();
+  const expectedSecret = process.env.WEBHOOK_SHARED_SECRET;
+  if (!expectedSecret) {
+    console.error('[webhooks] WEBHOOK_SHARED_SECRET env var not set');
+    return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
+  }
+
+  const providedSecret = request.headers.get('x-webhook-secret');
+  if (!matchesSharedSecret(providedSecret, expectedSecret)) {
+    return NextResponse.json(
+      { error: 'Forbidden', code: 'INVALID_WEBHOOK_SECRET' },
+      { status: 403 },
+    );
+  }
+
   try {
     const body = await request.json();
     const { type, data } = body;

@@ -20,7 +20,7 @@ Audit date: 2026-03-28
 | `/api/here-autocomplete` | GET | Public | HERE address autocomplete for booking form. |
 | `/api/here-lookup` | GET | Public | HERE place lookup for booking form. |
 | `/api/here-discover` | GET | Public | HERE nearby search for booking form. |
-| `/api/orders` | POST | Public | Booking portal order creation. **No rate limiting** (only 5-min duplicate guard). |
+| `/api/orders` | POST | Public | Booking portal order creation. Rate-limited per IP (`10 req / min`) + 5-min duplicate guard. |
 | `/api/orders` | GET, PUT | Admin | List/update orders. In-handler checkAuth for admin/dispatcher. |
 | `/api/orders/assign-worker` | POST | Admin | Assign worker to order. |
 | `/api/orders/cancel` | POST | Admin | Cancel order (dispatcher action). |
@@ -51,11 +51,11 @@ Audit date: 2026-03-28
 | `/api/worker/shift/end` | POST | Worker | End shift. |
 | `/api/worker/shift/break/start` | POST | Worker | Start break. |
 | `/api/worker/shift/break/end` | POST | Worker | End break. |
-| `/api/satisgps/webhook` | POST | Webhook | SatisGPS push endpoint. **No shared secret or HMAC.** |
+| `/api/satisgps/webhook` | POST | Webhook | SatisGPS push endpoint. Requires HMAC-SHA256 signature header + `SATISGPS_WEBHOOK_SECRET`. |
 | `/api/satisgps/sync` | GET, POST | Webhook | Manual/cron GPS sync. Cron mode checks `SATISGPS_WEBHOOK_SECRET`. |
 | `/api/satisgps/cron` | GET | Webhook | Railway cron GPS poll. Checks `SATISGPS_WEBHOOK_SECRET` via query param. |
-| `/api/satisgps/debug` | GET | Webhook | GPS debug/diagnostics. **Exposes all vehicle positions without auth.** |
-| `/api/webhooks` | POST | Webhook | Generic inbound webhook (Smifybot). **No shared secret.** |
+| `/api/satisgps/debug` | GET | Admin | GPS diagnostics. Admin-only, excluded from webhook bypass. |
+| `/api/webhooks` | POST | Webhook | Generic inbound webhook (Smifybot). Requires `X-Webhook-Secret` + `WEBHOOK_SHARED_SECRET`. |
 | `/api/webhooks/config` | GET, POST, DELETE | Admin | Webhook CRUD management. **Fixed: was accidentally in webhook bypass.** |
 | `/api/employees` | GET, POST, PUT, DELETE | Admin | Employee CRUD. |
 | `/api/vehicles` | GET, POST, PUT, DELETE | Admin | Vehicle fleet CRUD. |
@@ -133,25 +133,22 @@ Audit date: 2026-03-28
 
 ### High
 
-2. **`POST /api/orders` has no rate limiting**
-   - Public endpoint for creating orders. Only protection is a 5-min duplicate guard (same phone + date + services).
-   - An attacker could spam order creation with varied parameters.
-   - Recommendation: Add IP-based rate limiting (e.g., 10 orders/min per IP).
+2. **`POST /api/orders` is public**
+   - Public endpoint for creating orders. It now has IP rate limiting (`10 req / min`) plus a 5-min duplicate guard.
+   - Residual risk: in-memory limiter is per-instance, so horizontal scale weakens the guarantee.
+   - Recommendation: keep monitoring abuse and move to distributed limiting only if traffic justifies it.
 
-3. **`POST /api/webhooks` has no shared secret**
-   - Generic inbound webhook accepts `order.status_changed` events that directly update order status in DB.
-   - Anyone who knows the URL can change any order's status.
-   - Recommendation: Add `withWebhookSecret()` or HMAC signature validation.
+3. **`POST /api/webhooks` is middleware-bypassed by design**
+   - Handler now checks `X-Webhook-Secret` against `WEBHOOK_SHARED_SECRET`.
+   - Residual risk exists only if the secret is missing, weak, or leaked.
 
-4. **`POST /api/satisgps/webhook` has no shared secret**
-   - Accepts vehicle position data and writes to `employee_locations` table.
-   - An attacker could inject fake vehicle positions.
-   - Recommendation: Add shared secret header validation.
+4. **`POST /api/satisgps/webhook` is middleware-bypassed by design**
+   - Handler now verifies HMAC-SHA256 signature using `SATISGPS_WEBHOOK_SECRET`.
+   - Residual risk exists only if the secret is missing, weak, or leaked.
 
-5. **`GET /api/satisgps/debug` exposes all vehicle GPS data without auth**
-   - Returns raw SatisGPS data + DB matching results including lat/lng/speed for all vehicles.
-   - Accessible to anyone (webhook bypass, no in-handler auth).
-   - Recommendation: Move to admin tier or add secret check.
+5. **`GET /api/satisgps/debug` remains sensitive**
+   - It no longer bypasses auth and now requires admin session.
+   - Recommendation: keep it diagnostic-only and avoid exposing it outside trusted operators.
 
 ### Medium
 

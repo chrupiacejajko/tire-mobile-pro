@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { verifyHmacSha256HexSignature } from '@/lib/security/webhook-auth';
 
 /**
  * POST /api/satisgps/webhook
@@ -84,9 +85,33 @@ function normalizeVehicle(raw: any): NormalizedPosition | null {
 }
 
 export async function POST(request: NextRequest) {
+  const expectedSecret = process.env.SATISGPS_WEBHOOK_SECRET;
+  if (!expectedSecret) {
+    console.error('[satisgps/webhook] SATISGPS_WEBHOOK_SECRET env var not set');
+    return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
+  }
+
+  const rawBody = await request.text();
+  const providedSignature =
+    request.headers.get('x-satisgps-signature') ??
+    request.headers.get('x-webhook-signature');
+
+  const validSignature = await verifyHmacSha256HexSignature(
+    rawBody,
+    providedSignature,
+    expectedSecret,
+  );
+
+  if (!validSignature) {
+    return NextResponse.json(
+      { error: 'Forbidden', code: 'INVALID_SATISGPS_SIGNATURE' },
+      { status: 403 },
+    );
+  }
+
   let body: any;
   try {
-    body = await request.json();
+    body = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }

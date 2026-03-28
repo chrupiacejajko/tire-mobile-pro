@@ -109,16 +109,16 @@ export function withWorkerAuth<P = unknown>(
 }
 
 /**
- * Validates HMAC/shared-secret for webhook endpoints that don't use sessions.
- * Checks X-Webhook-Secret header against WEBHOOK_SECRET env var.
+ * Validates shared secret for webhook endpoints that don't use sessions.
+ * Checks X-Webhook-Secret header against WEBHOOK_SHARED_SECRET env var.
  */
 type WebhookHandler = (req: NextRequest) => Promise<NextResponse | Response>;
 
 export function withWebhookSecret(handler: WebhookHandler) {
   return async (req: NextRequest): Promise<NextResponse | Response> => {
-    const secret = process.env.WEBHOOK_SECRET;
+    const secret = process.env.WEBHOOK_SHARED_SECRET;
     if (!secret) {
-      console.error('[withWebhookSecret] WEBHOOK_SECRET env var not set');
+      console.error('[withWebhookSecret] WEBHOOK_SHARED_SECRET env var not set');
       return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
     }
 

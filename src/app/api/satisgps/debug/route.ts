@@ -3,11 +3,15 @@
  * Shows raw data from Satis GPS + DB matching result.
  * Use to diagnose missing/offline vehicles.
  */
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { pollSatisGPS } from '@/lib/satisgps/poller';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { checkAuth } from '@/lib/api/auth-guard';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin']);
+  if (!auth.ok) return auth.response;
+
   const result = await pollSatisGPS();
   const supabase = getAdminClient();
 

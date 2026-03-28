@@ -34,8 +34,8 @@
  * SECURITY NOTES
  * ============================================================================
  *
- * - POST /api/orders: Public for booking portal / Smifybot. Has duplicate
- *   guard (5-min window) but NO rate limiting. TODO: add rate limiting.
+ * - POST /api/orders: Public for booking portal / Smifybot. Protected by
+ *   duplicate guard (5-min window) and IP rate limit (10 req / min).
  *
  * - GET /api/tracking/[id]: Exposes worker GPS lat/lng/speed to clients for
  *   live ETA tracking. Rate-limited (60 req / 15 min per IP+order). This is
@@ -44,10 +44,14 @@
  * - POST /api/tracking/actions: Public but token-gated (verifyTrackingActionToken)
  *   and rate-limited. Allows clients to cancel/reschedule their own orders.
  *
- * - /api/satisgps/*: Webhook bypass. /cron and /sync (cron mode) check
- *   SATISGPS_WEBHOOK_SECRET in-handler. /webhook has NO shared secret —
- *   relies on SatisGPS server only knowing the URL. TODO: add HMAC or
- *   shared-secret validation to /api/satisgps/webhook.
+ * - /api/satisgps/webhook: Webhook bypass, but the handler now verifies
+ *   HMAC-SHA256 signature using SATISGPS_WEBHOOK_SECRET.
+ *
+ * - /api/satisgps/debug: Explicitly excluded from webhook bypass and protected
+ *   by admin auth. It is no longer public.
+ *
+ * - /api/webhooks: Webhook bypass, but the handler now validates
+ *   X-Webhook-Secret against WEBHOOK_SHARED_SECRET.
  *
  * - /api/webhooks/config: ADMIN-ONLY. Removed from webhook bypass to prevent
  *   unauthenticated access to webhook configuration management.
@@ -82,7 +86,7 @@ const PUBLIC_API_EXACT = new Set([
   /**
    * POST only — create a new order from the public booking portal or Smifybot.
    * GET and PUT require admin/dispatcher auth (handled in-handler via checkAuth).
-   * WARNING: POST has no rate limiting — only a 5-min duplicate guard.
+   * Protected by 10 req / min IP rate limit + 5-min duplicate guard.
    */
   '/api/orders',
 
@@ -127,10 +131,9 @@ const PUBLIC_API_PREFIXES = [
 const WEBHOOK_ALLOWLIST = [
   /**
    * /api/satisgps/* — SatisGPS vehicle tracking integration.
-   *   - /webhook: receives push data from SatisGPS (NO shared secret — TODO)
+   *   - /webhook: receives push data from SatisGPS (HMAC-SHA256 signature required)
    *   - /sync: manual/cron sync (cron mode checks SATISGPS_WEBHOOK_SECRET)
    *   - /cron: Railway cron job (checks SATISGPS_WEBHOOK_SECRET via query param)
-   *   - /debug: diagnostic endpoint showing raw GPS + DB matching (no secret)
    */
   '/api/satisgps/',
 
@@ -142,12 +145,10 @@ const WEBHOOK_ALLOWLIST = [
 
   /**
    * /api/webhooks — generic inbound webhook receiver (Smifybot, etc.).
-   * WARNING: The handler at /api/webhooks (POST) has NO shared secret
-   * validation — anyone who knows the URL can push order.status_changed events.
-   * TODO: add withWebhookSecret() or HMAC validation.
-   *
-   * NOTE: /api/webhooks/config is explicitly EXCLUDED (see isWebhookBypassPath).
-   * It manages webhook CRUD and requires admin/dispatcher auth via the default tier.
+   * Handler validates X-Webhook-Secret against WEBHOOK_SHARED_SECRET.
+ *
+  * NOTE: /api/webhooks/config is explicitly EXCLUDED (see isWebhookBypassPath).
+  * It manages webhook CRUD and requires admin/dispatcher auth via the default tier.
    */
   '/api/webhooks',
 ];
@@ -157,6 +158,8 @@ const WEBHOOK_ALLOWLIST = [
  * Route handlers on these paths MUST perform their own authentication.
  */
 export function isWebhookBypassPath(pathname: string): boolean {
+  if (pathname.startsWith('/api/satisgps/debug')) return false;
+
   // /api/webhooks/config is admin-only — do NOT bypass auth for it
   if (pathname.startsWith('/api/webhooks/config')) return false;
 
