@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminClient } from '@/lib/supabase/admin';
-import { notifyWorker } from '@/lib/notifications';
-import {
-  buildNotificationContext,
-  fireNotification,
-} from '@/lib/notification-dispatcher';
 import { checkAuth } from '@/lib/api/auth-guard';
+import { cancelOrderByClient } from '@/lib/orders/self-care';
 
 export async function POST(request: NextRequest) {
   const auth = await checkAuth(request, ['admin', 'dispatcher']);
   if (!auth.ok) return auth.response;
-  const supabase = getAdminClient();
 
   try {
     const body = await request.json();
@@ -23,69 +17,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch order
-    const { data: order, error: fetchErr } = await supabase
-      .from('orders')
-      .select('id, status, employee_id')
-      .eq('id', order_id)
-      .single();
-
-    if (fetchErr || !order) {
-      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    const result = await cancelOrderByClient({ orderId: order_id, reason });
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: result.status });
     }
-
-    if (order.status === 'completed' || order.status === 'cancelled') {
-      return NextResponse.json(
-        {
-          error:
-            'Nie można anulować zlecenia, które jest już zakończone lub anulowane.',
-        },
-        { status: 400 },
-      );
-    }
-
-    const wasAssigned = !!order.employee_id;
-    const previousEmployeeId = order.employee_id;
-
-    const updatePayload: Record<string, unknown> = {
-      status: 'cancelled',
-    };
-
-    if (reason) {
-      updatePayload.notes = reason;
-    }
-
-    const { error: updateErr } = await supabase
-      .from('orders')
-      .update(updatePayload)
-      .eq('id', order_id);
-
-    if (updateErr) {
-      return NextResponse.json(
-        { error: updateErr.message },
-        { status: 500 },
-      );
-    }
-
-    // Notify worker if was assigned
-    if (wasAssigned && previousEmployeeId) {
-      notifyWorker({
-        employee_id: previousEmployeeId,
-        order_id,
-        type: 'order_cancelled',
-        title: 'Anulacja wizyty',
-        body: `Klient anulował wizytę${reason ? `. Powód: ${reason}` : ''}`,
-      }).catch(() => {});
-    }
-
-    // Fire client notification (fire-and-forget)
-    buildNotificationContext(order_id)
-      .then((ctx) => fireNotification('order_cancelled', ctx))
-      .catch(() => {});
 
     return NextResponse.json({
       success: true,
-      message: 'Wizyta została anulowana.',
+      message: result.message,
     });
   } catch (err) {
     console.error('[orders/cancel]', err);

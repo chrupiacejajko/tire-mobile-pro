@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useSyncStatus } from '@/hooks/use-sync-status';
 import { createClient } from '@/lib/supabase/client';
 import { subscribeToPush } from '@/lib/worker/push-notifications';
+import { isUuid } from '@/lib/uuid';
 
 type WorkStatus = 'off_work' | 'on_work' | 'break';
 
@@ -32,6 +33,18 @@ const NAV_ITEMS = [
 ];
 
 export default function WorkerShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+
+  /* ── Skip shell for login page ─────────────────────────────────────────── */
+  const isLoginPage = pathname === '/worker/login';
+  if (isLoginPage) {
+    return <>{children}</>;
+  }
+
+  return <WorkerShellInner>{children}</WorkerShellInner>;
+}
+
+function WorkerShellInner({ children }: { children: React.ReactNode }) {
   const router   = useRouter();
   const pathname = usePathname();
   const [checking, setChecking]         = useState(true);
@@ -47,7 +60,7 @@ export default function WorkerShell({ children }: { children: React.ReactNode })
     fetch('/api/worker/me')
       .then(res => {
         if (res.status === 401 || res.status === 403) {
-          router.replace('/login');
+          router.replace('/worker/login');
         } else {
           return res.json().then(data => {
             setShellData({ work_status: data.work_status, current_shift: data.current_shift });
@@ -61,12 +74,20 @@ export default function WorkerShell({ children }: { children: React.ReactNode })
 
   /* ── Unread badge ───────────────────────────────────────────────────────── */
   const fetchUnread = useCallback(async () => {
+    if (!isUuid(employeeId)) {
+      setUnreadCount(0);
+      return;
+    }
     try {
-      const r = await fetch('/api/worker-notifications?unread_only=true');
+      const r = await fetch(`/api/worker-notifications?employee_id=${employeeId}&unread=true`);
+      if (!r.ok) {
+        setUnreadCount(0);
+        return;
+      }
       const d = await r.json();
-      setUnreadCount(d.total ?? 0);
+      setUnreadCount(d.unread_count ?? d.total ?? 0);
     } catch { /* offline */ }
-  }, []);
+  }, [employeeId]);
 
   useEffect(() => {
     if (checking) return;
@@ -92,7 +113,7 @@ export default function WorkerShell({ children }: { children: React.ReactNode })
 
   /* ── Realtime badge ─────────────────────────────────────────────────────── */
   useEffect(() => {
-    if (checking || !employeeId) return;
+    if (checking || !isUuid(employeeId)) return;
     const supabase = createClient();
     const channel = supabase
       .channel('worker-notifications-badge')

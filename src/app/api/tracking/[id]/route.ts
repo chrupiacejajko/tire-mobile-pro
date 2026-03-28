@@ -1,12 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { checkRateLimit, getClientIp } from '@/lib/security/rate-limit';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
   const supabase = getAdminClient();
+
+  const ip = getClientIp(request);
+  const rate = checkRateLimit(`tracking-read:${ip}:${id}`, 60, 15 * 60 * 1000);
+  if (!rate.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests', code: 'RATE_LIMIT' },
+      { status: 429, headers: { 'Retry-After': String(rate.retryAfter) } },
+    );
+  }
 
   try {
     // Fetch order with employee info and client coords

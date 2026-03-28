@@ -1,12 +1,12 @@
+import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { isPublicApiPath, isWebhookBypassPath, isWorkerApiPath } from '@/lib/api/access-policy';
+import {
+  getWorkerAccessTokenFromRequest,
+  verifyWorkerAccessToken,
+} from '@/lib/security/worker-token';
 
 // ── Webhook / integration paths that bypass JWT (signature-based auth instead) ──
-const WEBHOOK_ALLOWLIST = [
-  '/api/satisgps/',
-  '/api/integrations/',
-];
-
-// ── Fully public paths — no session needed ──
 const PUBLIC_PATHS = [
   '/login',
   '/register',
@@ -14,6 +14,46 @@ const PUBLIC_PATHS = [
   '/tracking',   // intentionally public (client order tracking)
   '/invite',     // invite activation — public by design, token-gated server-side
 ];
+
+type SessionContext = {
+  response: NextResponse;
+  userId: string | null;
+  role: string | null;
+};
+
+async function getSessionContext(request: NextRequest): Promise<SessionContext> {
+  let response = NextResponse.next({ request });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+          response = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+        },
+      },
+    },
+  );
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return { response, userId: null, role: null };
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  return { response, userId: user.id, role: profile?.role ?? null };
+}
 
 export async function proxy(request: NextRequest) {
   const hostname = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? '';
@@ -51,7 +91,7 @@ export async function proxy(request: NextRequest) {
   }
 
   // Webhook allowlist — no JWT, handled by withWebhookSecret in route handlers
-  if (WEBHOOK_ALLOWLIST.some(p => pathname.startsWith(p))) {
+  if (isWebhookBypassPath(pathname)) {
     return NextResponse.next();
   }
 
@@ -69,19 +109,56 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // All API routes — JWT validation happens inside route handlers via checkAuth()
-  // Proxy only refreshes the session cookie here (no role check at this layer)
   if (pathname.startsWith('/api/')) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    if (supabaseUrl && supabaseUrl !== 'your-supabase-url') {
-      try {
-        const { updateSession } = await import('@/lib/supabase/middleware');
-        return await updateSession(request);
-      } catch {
-        return NextResponse.next();
-      }
+    if (isPublicApiPath(pathname, request.method)) {
+      return NextResponse.next();
     }
-    return NextResponse.next();
+
+    if (isWorkerApiPath(pathname)) {
+      const workerToken = getWorkerAccessTokenFromRequest(request);
+      if (workerToken) {
+        const payload = await verifyWorkerAccessToken(workerToken);
+        if (payload) return NextResponse.next();
+      }
+
+      try {
+        const session = await getSessionContext(request);
+        if (session.userId && session.role && ['admin', 'dispatcher', 'worker'].includes(session.role)) {
+          return session.response;
+        }
+      } catch {
+        // fall through to 401
+      }
+
+      return NextResponse.json(
+        { error: 'Unauthorized', code: 'WORKER_AUTH_REQUIRED' },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const session = await getSessionContext(request);
+      if (!session.userId) {
+        return NextResponse.json(
+          { error: 'Unauthorized', code: 'NO_SESSION' },
+          { status: 401 },
+        );
+      }
+
+      if (!session.role || !['admin', 'dispatcher'].includes(session.role)) {
+        return NextResponse.json(
+          { error: 'Forbidden', code: 'INSUFFICIENT_ROLE', required: ['admin', 'dispatcher'], got: session.role },
+          { status: 403 },
+        );
+      }
+
+      return session.response;
+    } catch {
+      return NextResponse.json(
+        { error: 'Internal server error', code: 'API_PROXY_AUTH_FAILED' },
+        { status: 500 },
+      );
+    }
   }
 
   // /worker/* — requires authenticated session (role check done client-side + per API call)

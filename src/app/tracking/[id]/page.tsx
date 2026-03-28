@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { TrackingRefresher } from './tracking-refresher';
 import { SelfCareActions } from './self-care-actions';
 import { TrackingMap } from './tracking-map';
+import { createTrackingActionToken } from '@/lib/security/tracking-token';
 
 const STATUS_STEPS = [
   { key: 'new', label: 'Nowe' },
@@ -103,6 +104,7 @@ export default async function TrackingPage({
     afternoon: 'Po południu (12:00-16:00)',
     evening: 'Wieczorem (16:00-20:00)',
   };
+  const trackingActionToken = await createTrackingActionToken(order.id);
 
   // ── For in_transit / in_progress: show the premium map view ──────────
   const showMapView = status === 'in_transit' || status === 'in_progress';
@@ -430,7 +432,11 @@ export default async function TrackingPage({
 
         {/* Self-care actions (reschedule / cancel) */}
         {order.status !== 'completed' && order.status !== 'cancelled' && (
-          <SelfCareActions orderId={order.id} orderStatus={order.status} />
+          <SelfCareActions
+            orderId={order.id}
+            orderStatus={order.status}
+            trackingToken={trackingActionToken}
+          />
         )}
       </main>
 

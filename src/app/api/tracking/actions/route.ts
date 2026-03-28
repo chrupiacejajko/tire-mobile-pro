@@ -1,13 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminClient } from '@/lib/supabase/admin';
-import { fireNotification, buildNotificationContext } from '@/lib/notification-dispatcher';
+import { verifyTrackingActionToken } from '@/lib/security/tracking-token';
+import { checkRateLimit, getClientIp } from '@/lib/security/rate-limit';
+import {
+  cancelOrderByClient,
+  rescheduleOrderByClient,
+} from '@/lib/orders/self-care';
 
 export async function POST(request: NextRequest) {
-  const supabase = getAdminClient();
-
   try {
+    const ip = getClientIp(request);
+    const rate = checkRateLimit(`tracking-actions:${ip}`, 10, 15 * 60 * 1000);
+    if (!rate.ok) {
+      return NextResponse.json(
+        { error: 'Too many requests', code: 'RATE_LIMIT' },
+        { status: 429, headers: { 'Retry-After': String(rate.retryAfter) } },
+      );
+    }
+
     const body = await request.json();
-    const { order_id, action, new_date, new_time_window } = body;
+    const { order_id, action, new_date, new_time_window, tracking_token, reason } = body;
 
     if (!order_id || !action) {
       return NextResponse.json(
@@ -16,15 +27,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch the current order
-    const { data: order, error: fetchErr } = await supabase
-      .from('orders')
-      .select('id, status')
-      .eq('id', order_id)
-      .single();
-
-    if (fetchErr || !order) {
-      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    if (!tracking_token || !(await verifyTrackingActionToken(tracking_token, order_id))) {
+      return NextResponse.json(
+        { error: 'Invalid tracking token', code: 'INVALID_TRACKING_TOKEN' },
+        { status: 401 },
+      );
     }
 
     if (action === 'reschedule') {
@@ -35,66 +42,28 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (order.status !== 'new' && order.status !== 'assigned') {
-        return NextResponse.json(
-          {
-            error:
-              'Zmiana terminu jest mozliwa tylko dla zlecen o statusie "nowe" lub "przypisane".',
-          },
-          { status: 400 },
-        );
+      const result = await rescheduleOrderByClient({
+        orderId: order_id,
+        newDate: new_date,
+        newTimeWindow: new_time_window,
+      });
+      if (!result.success) {
+        return NextResponse.json({ error: result.error }, { status: result.status });
       }
 
-      const { error: updateErr } = await supabase
-        .from('orders')
-        .update({
-          scheduled_date: new_date,
-          time_window: new_time_window || null,
-          employee_id: null,
-          status: 'new',
-        })
-        .eq('id', order_id);
-
-      if (updateErr) {
-        return NextResponse.json(
-          { error: updateErr.message },
-          { status: 500 },
-        );
-      }
-
-      // Fire reschedule notification (fire-and-forget)
-      buildNotificationContext(order_id).then(ctx => fireNotification('reschedule', ctx)).catch(() => {});
-
-      return NextResponse.json({ success: true, message: 'Termin został zmieniony.' });
+      return NextResponse.json({ success: true, message: result.message });
     }
 
     if (action === 'cancel') {
-      if (order.status === 'completed' || order.status === 'cancelled') {
-        return NextResponse.json(
-          {
-            error:
-              'Nie mozna anulowac zlecenia, ktore jest juz zakonczone lub anulowane.',
-          },
-          { status: 400 },
-        );
+      const result = await cancelOrderByClient({
+        orderId: order_id,
+        reason: reason || null,
+      });
+      if (!result.success) {
+        return NextResponse.json({ error: result.error }, { status: result.status });
       }
 
-      const { error: updateErr } = await supabase
-        .from('orders')
-        .update({ status: 'cancelled' })
-        .eq('id', order_id);
-
-      if (updateErr) {
-        return NextResponse.json(
-          { error: updateErr.message },
-          { status: 500 },
-        );
-      }
-
-      // Fire cancellation notification (fire-and-forget)
-      buildNotificationContext(order_id).then(ctx => fireNotification('order_cancelled', ctx)).catch(() => {});
-
-      return NextResponse.json({ success: true, message: 'Wizyta została anulowana.' });
+      return NextResponse.json({ success: true, message: result.message });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

@@ -55,6 +55,7 @@ export default function WorkerProfilePage() {
   async function handleLogout() {
     setLoggingOut(true);
     try {
+      await fetch('/api/auth/worker-logout', { method: 'POST' }).catch(() => {});
       const supabase = createClient();
       await supabase.auth.signOut();
       router.replace('/login');

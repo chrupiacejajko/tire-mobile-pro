@@ -1,8 +1,12 @@
 // Production seed script for Wulkanizacja Mobilna
 // Run: node scripts/seed-production.js
 
-const SUPABASE_URL = 'https://ntudayqouqqoytjaxzpn.supabase.co';
-const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50dWRheXFvdXFxb3l0amF4enBuIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDI2NzE0NiwiZXhwIjoyMDg5ODQzMTQ2fQ.sF37gu61AmrhZDMEcFxm3zlcLkjFKdwC3ye4Tiei9xE';
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+  throw new Error('Missing SUPABASE env vars. Set NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+}
 
 const HEADERS = {
   'Content-Type': 'application/json',
@@ -42,6 +46,7 @@ async function del(table, filter) {
 
 const TODAY = '2026-03-25';
 const TOMORROW = '2026-03-26';
+const DAY_AFTER_TOMORROW = '2026-03-27';
 
 const EMPLOYEES = [
   { id: '386bf467-484d-43d6-8df0-ab368cabd19d', profileId: '2ecc8df8-a637-4955-b4c3-1a02407f0872', fullName: 'Bartosz Kowalski', firstName: 'Bartosz', lastName: 'Kowalski', plate: 'WY 1234A' },
@@ -128,10 +133,10 @@ async function main() {
 
   // 2. Work schedules
   console.log('📅 Creating work schedules...');
-  await del('work_schedules', `date=in.(${TODAY},${TOMORROW})`);
+  await del('work_schedules', `start_at=gte.${TODAY}T00:00:00&start_at=lt.${DAY_AFTER_TOMORROW}T00:00:00`);
   const schedules = EMPLOYEES.flatMap(e => [
-    { employee_id: e.id, date: TODAY,     start_time: '08:00', end_time: '16:00' },
-    { employee_id: e.id, date: TOMORROW,  start_time: '08:00', end_time: '16:00' },
+    { employee_id: e.id, start_at: `${TODAY}T08:00:00+01:00`, duration_minutes: 480 },
+    { employee_id: e.id, start_at: `${TOMORROW}T08:00:00+01:00`, duration_minutes: 480 },
   ]);
   await post('work_schedules', schedules);
   console.log(`   ✓ Created ${schedules.length} schedules\n`);

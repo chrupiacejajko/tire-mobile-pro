@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 interface SelfCareActionsProps {
   orderId: string;
   orderStatus: string;
+  trackingToken: string;
 }
 
 const TIME_WINDOWS = [
@@ -53,7 +54,7 @@ function formatDatePL(dateStr: string): string {
   }
 }
 
-export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) {
+export function SelfCareActions({ orderId, orderStatus, trackingToken }: SelfCareActionsProps) {
   const router = useRouter();
   const [showReschedule, setShowReschedule] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
@@ -78,11 +79,13 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
     setSubmitting(true);
     setMessage(null);
     try {
-      const res = await fetch('/api/orders/reschedule', {
+      const res = await fetch('/api/tracking/actions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           order_id: orderId,
+          tracking_token: trackingToken,
+          action: 'reschedule',
           new_date: selectedDate,
           new_time_window: selectedWindow,
         }),
@@ -113,11 +116,13 @@ export function SelfCareActions({ orderId, orderStatus }: SelfCareActionsProps) 
     setSubmitting(true);
     setMessage(null);
     try {
-      const res = await fetch('/api/orders/cancel', {
+      const res = await fetch('/api/tracking/actions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           order_id: orderId,
+          tracking_token: trackingToken,
+          action: 'cancel',
           reason: cancelReason || undefined,
         }),
       });

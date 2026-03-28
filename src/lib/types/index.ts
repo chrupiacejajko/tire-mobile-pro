@@ -154,6 +154,7 @@ export interface Order {
   scheduled_date: string;
   scheduled_time_start: string;
   scheduled_time_end: string;
+  is_locked: boolean;
   // New time fields (from conversation requirements)
   order_time_type: OrderTimeType;
   min_arrival_time: string | null;      // immutable after creation

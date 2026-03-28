@@ -11,6 +11,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import type { UserRole } from '@/lib/types';
+import {
+  getWorkerAccessTokenFromRequest,
+  verifyWorkerAccessToken,
+} from '@/lib/security/worker-token';
 
 export interface AuthContext {
   userId: string;         // auth.uid() — profiles.id
@@ -155,6 +159,29 @@ export async function checkAuth(
   allowedRoles: UserRole[]
 ): Promise<CheckAuthResult> {
   try {
+    if (allowedRoles.includes('worker')) {
+      const workerToken = getWorkerAccessTokenFromRequest(req);
+      if (workerToken) {
+        const workerPayload = await verifyWorkerAccessToken(workerToken);
+        if (!workerPayload) {
+          return {
+            ok: false,
+            response: NextResponse.json(
+              { error: 'Unauthorized', code: 'INVALID_WORKER_TOKEN' },
+              { status: 401 }
+            ),
+          };
+        }
+
+        return {
+          ok: true,
+          userId: workerPayload.sub,
+          role: 'worker',
+          employeeId: workerPayload.employee_id,
+        };
+      }
+    }
+
     const supabase = await createServerSupabaseClient();
     const { data: { user }, error } = await supabase.auth.getUser();
 

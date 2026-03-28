@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
 import { showLocalNotification } from '@/lib/worker/push-notifications';
+import { isUuid } from '@/lib/uuid';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -82,7 +83,11 @@ export default function NotificationsPage() {
       const meRes = await fetch('/api/worker/me');
       if (!meRes.ok) return;
       const me = await meRes.json();
-      employeeIdRef.current = me.employee_id;
+      employeeIdRef.current = isUuid(me.employee_id) ? me.employee_id : null;
+      if (!isUuid(me.employee_id)) {
+        setNotifications([]);
+        return;
+      }
       const res = await fetch(`/api/worker-notifications?employee_id=${me.employee_id}`);
       if (!res.ok) return;
       const data = await res.json();
@@ -102,6 +107,7 @@ export default function NotificationsPage() {
         const meRes = await fetch('/api/worker/me');
         if (!meRes.ok) return;
         const me = await meRes.json();
+        if (!isUuid(me.employee_id)) return;
         const supabase = createClient();
         channel = supabase
           .channel('worker-notifications-page')
@@ -130,6 +136,7 @@ export default function NotificationsPage() {
       const meRes = await fetch('/api/worker/me');
       if (!meRes.ok) return;
       const me = await meRes.json();
+      if (!isUuid(me.employee_id)) return;
       await fetch('/api/worker-notifications', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

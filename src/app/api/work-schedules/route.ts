@@ -7,8 +7,12 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 export async function GET(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
+
   const supabase = getAdminClient();
   const { searchParams } = new URL(request.url);
   const from = searchParams.get('from');
@@ -70,6 +74,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
+
   const supabase = getAdminClient();
 
   try {
@@ -192,6 +199,9 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
+
   const supabase = getAdminClient();
 
   try {

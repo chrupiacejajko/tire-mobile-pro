@@ -5,9 +5,13 @@ import { fireNotification, buildNotificationContext } from '@/lib/notification-d
 import { autoAssignWorker } from '@/lib/auto-assign';
 import { notifyWorker } from '@/lib/notifications';
 import { pointInPolygon } from '@/lib/geo';
+import { checkAuth } from '@/lib/api/auth-guard';
 
 // GET /api/orders - List orders with optional filters
 export async function GET(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
+
   const supabase = getAdminClient();
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status');
@@ -345,6 +349,46 @@ export async function POST(request: NextRequest) {
       message: `Zlecenie utworzone na ${finalDate} (${time_window || startTime}). Kwota: ${totalPrice} zł.`,
     }, { status: 201 });
   } catch (err) {
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+// PUT /api/orders - Minimal admin update surface for P0 operational fields
+export async function PUT(request: NextRequest) {
+  const auth = await checkAuth(request, ['admin', 'dispatcher']);
+  if (!auth.ok) return auth.response;
+
+  const supabase = getAdminClient();
+
+  try {
+    const body = await request.json();
+    const orderId = body.id || body.order_id;
+
+    if (!orderId) {
+      return NextResponse.json({ error: 'id/order_id is required' }, { status: 400 });
+    }
+
+    const update: Record<string, unknown> = {};
+    if (body.is_locked !== undefined) update.is_locked = !!body.is_locked;
+
+    if (Object.keys(update).length === 0) {
+      return NextResponse.json({ error: 'No supported fields to update' }, { status: 400 });
+    }
+
+    const { data, error } = await supabase
+      .from('orders')
+      .update(update)
+      .eq('id', orderId)
+      .select('id, is_locked')
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, order: data });
+  } catch (err) {
+    console.error('[orders PUT]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
