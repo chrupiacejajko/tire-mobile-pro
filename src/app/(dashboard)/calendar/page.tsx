@@ -30,6 +30,24 @@ import { OrderDetailPanel } from './_components/OrderDetailPanel';
 import { OrderCreationDialog } from './_components/OrderCreationDialog';
 import { UnassignedOrdersDrawer } from './_components/UnassignedOrdersDrawer';
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Map order_time_type (DB) to scheduling_type (UI). Falls back to legacy scheduling_type. */
+const ORDER_TIME_TYPE_MAP: Record<string, SchedulingType> = {
+  immediate: 'asap',
+  fixed: 'fixed_time',
+  window: 'time_window',
+  flexible: 'flexible',
+};
+
+function mapOrderTimeType(orderTimeType: string | null | undefined, legacySchedulingType: string | null | undefined): SchedulingType {
+  if (orderTimeType && ORDER_TIME_TYPE_MAP[orderTimeType]) {
+    return ORDER_TIME_TYPE_MAP[orderTimeType];
+  }
+  // Fall back to legacy scheduling_type if order_time_type is not set
+  return (legacySchedulingType as SchedulingType) || 'fixed_time';
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CalendarPage() {
@@ -130,7 +148,7 @@ export default function CalendarPage() {
       supabase
         .from('orders')
         .select(
-          'id, scheduled_date, scheduled_time_start, scheduled_time_end, status, priority, services, employee_id, address, total_price, scheduling_type, time_window_start, time_window_end, flexibility_minutes, auto_assigned, estimated_arrival, source, internal_task_type, is_paid_time, client:clients(name, phone), employee:employees(user:profiles(full_name), region:regions(color))'
+          'id, scheduled_date, scheduled_time_start, scheduled_time_end, status, priority, services, employee_id, address, total_price, scheduling_type, order_time_type, time_window_start, time_window_end, flexibility_minutes, auto_assigned, estimated_arrival, source, internal_task_type, is_paid_time, client:clients(name, phone), employee:employees(user:profiles(full_name), region:regions(color))'
         )
         .not('status', 'eq', 'cancelled')
         .gte('scheduled_date', rangeStart)
@@ -173,8 +191,8 @@ export default function CalendarPage() {
           employee_id: o.employee_id,
           employee_name: o.employee?.user?.full_name || null,
           employee_color: o.employee?.region?.color || '#94A3B8',
-          // Scheduling fields
-          scheduling_type: (o.scheduling_type as SchedulingType) || 'fixed_time',
+          // Scheduling fields — prefer order_time_type (new column) over legacy scheduling_type
+          scheduling_type: mapOrderTimeType(o.order_time_type, o.scheduling_type),
           time_window_start: o.time_window_start,
           time_window_end: o.time_window_end,
           flexibility_minutes: o.flexibility_minutes || 0,

@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
   // Get today's orders with client coordinates
   const { data: todayOrders } = await supabase
     .from('orders')
-    .select('id, employee_id, status, priority, scheduled_time_start, scheduled_time_end, services, client:clients(id, name, phone, lat, lng, address, city)')
+    .select('id, employee_id, status, priority, scheduled_time_start, scheduled_time_end, services, lat, lng, address, client:clients(id, name, phone, lat, lng, address, city)')
     .eq('scheduled_date', date)
     .not('employee_id', 'is', null)
     .not('status', 'eq', 'cancelled')
@@ -113,18 +113,21 @@ export async function GET(request: NextRequest) {
 
       const mappedOrders = orders.map(o => {
         const c = (o as any).client;
-        const hasCoords = c?.lat && c?.lng;
-        if (hasCoords) waypoints.push({ lat: c.lat, lng: c.lng });
+        // Prefer order coords, fall back to client coords
+        const oLat = (o as any).lat ?? c?.lat;
+        const oLng = (o as any).lng ?? c?.lng;
+        const hasCoords = oLat && oLng;
+        if (hasCoords) waypoints.push({ lat: oLat, lng: oLng });
         return {
           id: o.id,
           status: o.status,
           priority: (o as any).priority,
           time: o.scheduled_time_start,
           time_end: o.scheduled_time_end,
-          lat: c?.lat ?? null,
-          lng: c?.lng ?? null,
+          lat: oLat ?? null,
+          lng: oLng ?? null,
           client_name: c?.name ?? 'Klient',
-          client_address: [c?.address, c?.city].filter(Boolean).join(', '),
+          client_address: [(o as any).address || c?.address, c?.city].filter(Boolean).join(', '),
           services: (o as any).services ?? [],
         };
       });

@@ -554,6 +554,14 @@ export default function OrdersPage() {
   const [newClient, setNewClient] = useState({ name: '', phone: '', address: '', city: '' });
   const [creatingClient, setCreatingClient] = useState(false);
 
+  // ── Edit Order ──
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    address: '', scheduled_date: '', scheduled_time_start: '', scheduled_time_end: '',
+    priority: 'normal' as OrderPriority, notes: '', service_ids: [] as string[],
+  });
+  const [editSaving, setEditSaving] = useState(false);
+
   // Skill options from DB
   const [skillOptions, setSkillOptions] = useState<string[]>([]);
 
@@ -663,6 +671,81 @@ export default function OrdersPage() {
       fetchData();
       setSelectedOrder({ ...selectedOrder, employee_id: null, employee: null, status: 'new' as OrderStatus });
     } catch { /* ignore */ }
+  };
+
+  // ── Edit Order ──────────────────────────────────────────────
+  const openEditOrder = () => {
+    if (!selectedOrder) return;
+    setEditForm({
+      address: selectedOrder.address || '',
+      scheduled_date: selectedOrder.scheduled_date || '',
+      scheduled_time_start: selectedOrder.scheduled_time_start?.slice(0, 5) || '08:00',
+      scheduled_time_end: selectedOrder.scheduled_time_end?.slice(0, 5) || '09:00',
+      priority: selectedOrder.priority || 'normal',
+      notes: selectedOrder.notes || '',
+      service_ids: (selectedOrder.services || []).map(s => {
+        // Try matching by service_id first, then fallback to name match (exact or partial)
+        if (s.service_id && services.some(svc => svc.id === s.service_id)) return s.service_id;
+        const byExact = services.find(svc => svc.name === s.name);
+        if (byExact) return byExact.id;
+        const byPartial = services.find(svc => svc.name.includes(s.name) || s.name.includes(svc.name));
+        return byPartial?.id ?? s.service_id;
+      }).filter(Boolean),
+    });
+    setEditDialogOpen(true);
+  };
+
+  const handleEditOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedOrder) return;
+    setEditSaving(true);
+    try {
+      // Calculate total price from selected services
+      const selectedServices = services.filter(s => editForm.service_ids.includes(s.id));
+      const totalPrice = selectedServices.reduce((sum, s) => sum + (s.price || 0), 0);
+      const totalDuration = selectedServices.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
+      const endTime = (() => {
+        const [h, m] = editForm.scheduled_time_start.split(':').map(Number);
+        const endMin = h * 60 + m + totalDuration;
+        return `${String(Math.floor(endMin / 60) % 24).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+      })();
+
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          address: editForm.address,
+          scheduled_date: editForm.scheduled_date,
+          scheduled_time_start: editForm.scheduled_time_start,
+          scheduled_time_end: endTime,
+          priority: editForm.priority,
+          notes: editForm.notes || null,
+          services: selectedServices.map(s => ({ service_id: s.id, name: s.name, price: s.price, quantity: 1 })),
+          total_price: totalPrice,
+        })
+        .eq('id', selectedOrder.id);
+
+      if (error) {
+        alert('Błąd zapisu: ' + error.message);
+      } else {
+        setEditDialogOpen(false);
+        fetchData();
+        // Update local selectedOrder
+        setSelectedOrder({
+          ...selectedOrder,
+          address: editForm.address,
+          scheduled_date: editForm.scheduled_date,
+          scheduled_time_start: editForm.scheduled_time_start,
+          scheduled_time_end: endTime,
+          priority: editForm.priority,
+          notes: editForm.notes || '',
+          services: selectedServices.map(s => ({ service_id: s.id, name: s.name, price: s.price, quantity: 1 })),
+          total_price: totalPrice,
+        });
+      }
+    } catch (err) {
+      alert('Błąd: ' + (err instanceof Error ? err.message : 'Nieznany błąd'));
+    }
+    setEditSaving(false);
   };
 
   const buildRouteUrl = (emp: EmployeeSuggestion, orderAddress: string) => {
@@ -937,6 +1020,9 @@ export default function OrdersPage() {
                                 </p>
                                 <div className={`h-1.5 w-1.5 rounded-full ${pCfg.dot}`} title={pCfg.label} />
                               </div>
+                              {order.address && (
+                                <p className="text-[11px] text-gray-400 truncate max-w-[260px]">{order.address.length > 40 ? order.address.slice(0, 40) + '…' : order.address}</p>
+                              )}
                               <div className="flex items-center gap-3 mt-0.5">
                                 {order.source === 'internal' && (
                                   <Badge className="text-[9px] rounded-md bg-teal-50 text-teal-700 border-teal-200 border px-1.5 py-0">
@@ -951,6 +1037,9 @@ export default function OrdersPage() {
                                 </span>
                                 {order.source !== 'internal' && (
                                   <span className="text-xs font-medium text-gray-600">{order.total_price} zł</span>
+                                )}
+                                {order.employee?.user?.full_name && (
+                                  <span className="text-[11px] text-blue-500 font-medium">{order.employee.user.full_name}</span>
                                 )}
                               </div>
                             </div>
@@ -982,7 +1071,14 @@ export default function OrdersPage() {
                 >
                   <Card className="rounded-2xl border-gray-100 shadow-sm sticky top-6">
                     <CardHeader className="pb-3">
-                      <CardTitle className="text-base font-bold">Szczegóły zlecenia</CardTitle>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base font-bold">Szczegóły zlecenia</CardTitle>
+                        {selectedOrder.status !== 'completed' && selectedOrder.status !== 'cancelled' && (
+                          <Button size="sm" variant="outline" className="rounded-lg h-7 text-xs gap-1" onClick={openEditOrder}>
+                            <PenTool className="h-3 w-3" /> Edytuj
+                          </Button>
+                        )}
+                      </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {/* Status badge */}
@@ -1075,7 +1171,7 @@ export default function OrdersPage() {
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1">
                           <Timer className="h-3 w-3" /> Czas pracy
                         </p>
-                        <div className={`rounded-xl p-3 flex items-center justify-between ${activeLog ? 'bg-emerald-50 border border-emerald-200' : 'bg-gray-50'}`}>
+                        <div className={`rounded-xl p-3 ${activeLog ? 'bg-emerald-50 border border-emerald-200' : 'bg-gray-50'}`}>
                           <div>
                             <p className={`text-2xl font-mono font-bold tabular-nums ${activeLog ? 'text-emerald-700' : 'text-gray-600'}`}>
                               {activeLog ? fmtTimer(timerSec) : (() => {
@@ -1087,19 +1183,6 @@ export default function OrdersPage() {
                               {activeLog ? 'Timer aktywny' : workLogs.length > 0 ? `${workLogs.filter(l => l.ended_at).length} wpisów` : 'Brak wpisów'}
                             </p>
                           </div>
-                          {activeLog ? (
-                            <Button size="sm" disabled={workLoading}
-                              className="rounded-xl h-9 px-3 bg-red-500 hover:bg-red-600 text-white gap-1.5"
-                              onClick={() => handleWorkTimer('stop')}>
-                              <Square className="h-3.5 w-3.5 fill-current" /> Stop
-                            </Button>
-                          ) : (
-                            <Button size="sm" disabled={workLoading || selectedOrder.status === 'completed' || selectedOrder.status === 'cancelled'}
-                              className="rounded-xl h-9 px-3 bg-emerald-500 hover:bg-emerald-600 text-white gap-1.5"
-                              onClick={() => handleWorkTimer('start')}>
-                              <Play className="h-3.5 w-3.5 fill-current" /> Start
-                            </Button>
-                          )}
                         </div>
 
                         {/* Log history */}
@@ -1466,6 +1549,71 @@ export default function OrdersPage() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Order Dialog ── */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Edytuj zlecenie</DialogTitle></DialogHeader>
+          <form onSubmit={handleEditOrder} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Adres</Label>
+              <Input value={editForm.address} onChange={e => setEditForm({ ...editForm, address: e.target.value })} required />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Data</Label>
+                <Input type="date" required value={editForm.scheduled_date} onChange={e => setEditForm({ ...editForm, scheduled_date: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Godzina rozpoczęcia</Label>
+                <Input type="time" required value={editForm.scheduled_time_start} onChange={e => setEditForm({ ...editForm, scheduled_time_start: e.target.value })} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Priorytet</Label>
+              <Select value={editForm.priority} onValueChange={v => setEditForm({ ...editForm, priority: v as OrderPriority })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Niski</SelectItem>
+                  <SelectItem value="normal">Normalny</SelectItem>
+                  <SelectItem value="high">Wysoki</SelectItem>
+                  <SelectItem value="urgent">Pilny</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Usługi</Label>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {services.map(s => (
+                  <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 rounded-lg p-1.5">
+                    <Checkbox
+                      checked={editForm.service_ids.includes(s.id)}
+                      onCheckedChange={checked => {
+                        setEditForm(prev => ({
+                          ...prev,
+                          service_ids: checked ? [...prev.service_ids, s.id] : prev.service_ids.filter(id => id !== s.id),
+                        }));
+                      }}
+                    />
+                    <span className="flex-1">{s.name}</span>
+                    <span className="text-xs text-gray-500">{s.price} zł · {s.duration_minutes} min</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Notatki</Label>
+              <Textarea value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} rows={3} />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" type="button" onClick={() => setEditDialogOpen(false)}>Anuluj</Button>
+              <Button type="submit" disabled={editSaving} className="bg-orange-500 hover:bg-orange-600">
+                {editSaving ? 'Zapisywanie...' : 'Zapisz zmiany'}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

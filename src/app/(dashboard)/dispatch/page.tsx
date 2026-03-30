@@ -38,6 +38,8 @@ export default function DispatchPage() {
   const [clientEmail, setClientEmail] = useState('');
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
+  const [lat, setLat] = useState<number | null>(null);
+  const [lng, setLng] = useState<number | null>(null);
 
   // ── Services ────────────────────────────────────────────────────────────
   const [services, setServices] = useState<ServiceOption[]>([]);
@@ -171,6 +173,8 @@ export default function DispatchPage() {
       client_email: clientEmail || undefined,
       address,
       city,
+      lat: lat ?? undefined,
+      lng: lng ?? undefined,
       scheduled_date: selectedDate,
       service_ids: Array.from(selectedServiceIds),
       notes: [notes, vehicleInfo ? `Pojazd: ${vehicleInfo}` : ''].filter(Boolean).join('\n') || undefined,
@@ -245,6 +249,8 @@ export default function DispatchPage() {
     setClientEmail('');
     setAddress('');
     setCity('');
+    setLat(null);
+    setLng(null);
     setSelectedServiceIds(new Set());
     setSchedulingType('time_window');
     setSelectedDate(todayStr());
@@ -366,6 +372,7 @@ export default function DispatchPage() {
             setAddress={setAddress}
             city={city}
             setCity={setCity}
+            onCoordsChange={(newLat, newLng) => { setLat(newLat); setLng(newLng); }}
             phoneRef={phoneRef}
           />
 

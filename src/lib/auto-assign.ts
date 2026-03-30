@@ -78,7 +78,7 @@ export async function autoAssignWorker(params: AutoAssignParams): Promise<AutoAs
 
   const { data: employees } = await supabase
     .from('employees')
-    .select('id, user:profiles(full_name), employee_skills(skill:skills(name))')
+    .select('id, default_lat, default_lng, user:profiles(full_name), employee_skills(skill:skills(name))')
     .eq('is_active', true);
 
   if (!employees?.length) return [];
@@ -198,11 +198,22 @@ export async function autoAssignWorker(params: AutoAssignParams): Promise<AutoAs
     return true;
   });
 
-  // Fetch route info in parallel for all employees with GPS
+  // Build default location map from employee records (fallback when no GPS)
+  const defaultLocMap = new Map<string, { lat: number; lng: number }>();
+  for (const emp of employees) {
+    const dlat = (emp as any).default_lat;
+    const dlng = (emp as any).default_lng;
+    if (dlat != null && dlng != null) {
+      defaultLocMap.set(emp.id, { lat: dlat, lng: dlng });
+    }
+  }
+
+  // Fetch route info in parallel for all employees with GPS or default location
   const routeInfoPromises = eligible.map(async emp => {
     const gpsData = gpsMap.get(emp.id);
-    if (!gpsData) return { empId: emp.id, routeInfo: null };
-    const routeInfo = await getRouteInfo(gpsData.lat, gpsData.lng, order_lat, order_lng);
+    const origin = gpsData ?? defaultLocMap.get(emp.id);
+    if (!origin) return { empId: emp.id, routeInfo: null };
+    const routeInfo = await getRouteInfo(origin.lat, origin.lng, order_lat, order_lng);
     return { empId: emp.id, routeInfo };
   });
 
@@ -220,6 +231,8 @@ export async function autoAssignWorker(params: AutoAssignParams): Promise<AutoAs
     let distanceKm: number;
     let gpsDistanceKm: number | null = null;
 
+    const defaultLoc = defaultLocMap.get(emp.id);
+
     if (routeInfo) {
       travelMinutes = routeInfo.duration_minutes;
       distanceKm = routeInfo.distance_km;
@@ -233,8 +246,14 @@ export async function autoAssignWorker(params: AutoAssignParams): Promise<AutoAs
       gpsDistanceKm = Math.round(straight * 10) / 10;
       distanceKm = Math.round(straight * 1.4 * 10) / 10; // road factor
       travelMinutes = Math.round((distanceKm / 50) * 60); // 50 km/h
+    } else if (defaultLoc) {
+      // No GPS but have default location from employee record — haversine estimate
+      const straight = haversineKm(defaultLoc.lat, defaultLoc.lng, order_lat, order_lng);
+      gpsDistanceKm = null;
+      distanceKm = Math.round(straight * 1.4 * 10) / 10; // road factor
+      travelMinutes = Math.round((distanceKm / 50) * 60); // 50 km/h
     } else {
-      // No GPS at all — heavy penalty
+      // No GPS and no default location — heavy penalty
       travelMinutes = 120;
       distanceKm = 999;
       gpsDistanceKm = null;

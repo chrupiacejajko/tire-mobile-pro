@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     .from('orders')
     .select(`
       id, status, priority, scheduled_date, scheduled_time_start, time_window,
-      services, notes, employee_id, address, total_price,
+      services, notes, employee_id, address, lat, lng, total_price,
       client:clients(name, phone, lat, lng, address, city),
       employee:employees(user:profiles(full_name))
     `)
@@ -64,8 +64,8 @@ export async function GET(request: NextRequest) {
     client_phone: o.client?.phone ?? null,
     client_address: o.client?.address ?? null,
     city: o.client?.city ?? null,
-    lat: o.client?.lat ?? null,
-    lng: o.client?.lng ?? null,
+    lat: o.lat ?? o.client?.lat ?? null,
+    lng: o.lng ?? o.client?.lng ?? null,
     total_price: o.total_price ?? 0,
     notes: o.notes ?? null,
   }));

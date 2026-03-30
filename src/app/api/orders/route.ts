@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       client_name, client_phone, client_email, address, city,
+      lat: bodyLat, lng: bodyLng,
       scheduled_date, scheduled_time, time_window,
       service_ids, service_names, vehicles,
       notes, priority, required_skills,
@@ -107,10 +108,10 @@ export async function POST(request: NextRequest) {
       .eq('phone', client_phone)
       .single();
 
-    // Geocode address → lat/lng (fire in background, don't block order creation)
-    let clientLat: number | null = null;
-    let clientLng: number | null = null;
-    if (address) {
+    // Use client-provided coordinates or geocode address
+    let clientLat: number | null = typeof bodyLat === 'number' ? bodyLat : null;
+    let clientLng: number | null = typeof bodyLng === 'number' ? bodyLng : null;
+    if (!clientLat && !clientLng && address) {
       try {
         const hereKey = process.env.HERE_API_KEY || '8AMu0VNMjm8W2p8d8DdULqL5sYywQPbw3aARKJLRY80';
         if (hereKey) {
@@ -237,6 +238,8 @@ export async function POST(request: NextRequest) {
       scheduled_time_start: startTime,
       scheduled_time_end: endTime,
       address: address || 'Do ustalenia',
+      lat: clientLat,
+      lng: clientLng,
       time_window: time_window || null,
       services: resolvedServices,
       total_price: totalPrice,

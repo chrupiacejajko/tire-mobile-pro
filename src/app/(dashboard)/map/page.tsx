@@ -30,6 +30,7 @@ const MapEventsHandler = dynamic(() => import('./_components/MapEventsHandler').
 
 import { WorkerDaySidebar } from './_components/WorkerDaySidebar';
 import { OrderInsertSidebar } from './_components/OrderInsertSidebar';
+import QuickAddCard from './_components/QuickAddCard';
 import 'leaflet/dist/leaflet.css';
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
@@ -130,7 +131,6 @@ const TIME_WINDOW_LABELS: Record<string, string> = {
   morning: '🌅 Rano (8-12)', afternoon: '☀️ Południe (12-16)', evening: '🌇 Wieczór (16-20)',
 };
 
-const HERE_API_KEY = process.env.NEXT_PUBLIC_HERE_API_KEY || '8AMu0VNMjm8W2p8d8DdULqL5sYywQPbw3aARKJLRY80';
 
 /* ─── Address search types ──────────────────────────────────────────── */
 interface HereSuggestion {
@@ -142,6 +142,13 @@ interface AddressPin {
   lat: number;
   lng: number;
   label: string;
+}
+interface DiscoverPOI {
+  title: string;
+  address: string;
+  lat: number;
+  lng: number;
+  category: string;
 }
 interface NearbyWorker {
   employee_id: string;
@@ -1901,6 +1908,7 @@ export default function MapPage() {
   /* Address search state */
   const [addressQuery, setAddressQuery] = useState('');
   const [addressSuggestions, setAddressSuggestions] = useState<HereSuggestion[]>([]);
+  const [poiResults, setPoiResults] = useState<DiscoverPOI[]>([]);
   const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
   const [addressPin, setAddressPin] = useState<AddressPin | null>(null);
   const [nearbyWorkers, setNearbyWorkers] = useState<NearbyWorker[]>([]);
@@ -1914,6 +1922,9 @@ export default function MapPage() {
   /* Context menu state */
   const [contextMenuPos, setContextMenuPos] = useState<{ lat: number; lng: number } | null>(null);
   const [contextRadius, setContextRadius] = useState(5);
+  /* Quick-add card (floating, from context menu) */
+  const [quickAddPin, setQuickAddPin] = useState<{ lat: number; lng: number; label: string } | null>(null);
+  const [quickAddWorkers, setQuickAddWorkers] = useState<NearbyWorker[]>([]);
   /* Worker day sidebar state */
   const [workerSidebarEmployeeId, setWorkerSidebarEmployeeId] = useState<string | null>(null);
   const [workerSidebarEmployeeName, setWorkerSidebarEmployeeName] = useState<string>('');
@@ -2102,16 +2113,24 @@ export default function MapPage() {
 
   /* ── Address autocomplete (HERE) ── */
   const fetchAddressSuggestions = useCallback(async (q: string) => {
-    if (q.length < 3) { setAddressSuggestions([]); setShowAddressSuggestions(false); return; }
+    if (q.length < 3) { setAddressSuggestions([]); setPoiResults([]); setShowAddressSuggestions(false); return; }
     try {
-      const res = await fetch(
-        `https://autocomplete.search.hereapi.com/v1/autocomplete?q=${encodeURIComponent(q)}&apiKey=${HERE_API_KEY}&in=countryCode:POL&limit=5`
-      );
-      if (res.ok) {
-        const data = await res.json();
+      // Get map center for location-biased POI search
+      const center = mapRef.current?.getCenter?.();
+      const atParam = center ? `&at=${center.lat.toFixed(4)},${center.lng.toFixed(4)}` : '&at=52.0,19.5';
+      const [autoRes, discoverRes] = await Promise.all([
+        fetch(`/api/here-autocomplete?q=${encodeURIComponent(q)}`),
+        fetch(`/api/here-discover?q=${encodeURIComponent(q)}${atParam}`),
+      ]);
+      if (autoRes.ok) {
+        const data = await autoRes.json();
         setAddressSuggestions((data.items ?? []) as HereSuggestion[]);
-        setShowAddressSuggestions(true);
       }
+      if (discoverRes.ok) {
+        const data = await discoverRes.json();
+        setPoiResults((data.items ?? []) as DiscoverPOI[]);
+      }
+      setShowAddressSuggestions(true);
     } catch { /* ignore */ }
   }, []);
 
@@ -2125,9 +2144,7 @@ export default function MapPage() {
     setAddressSearching(true);
     setShowAddressSuggestions(false);
     try {
-      const res = await fetch(
-        `https://geocode.search.hereapi.com/v1/geocode?q=${encodeURIComponent(query)}&apiKey=${HERE_API_KEY}`
-      );
+      const res = await fetch(`/api/here-geocode?q=${encodeURIComponent(query)}`);
       if (res.ok) {
         const data = await res.json();
         const item = data.items?.[0];
@@ -2163,6 +2180,7 @@ export default function MapPage() {
     setAddressPin(null);
     setNearbyWorkers([]);
     setAddressSuggestions([]);
+    setPoiResults([]);
     setShowAddressSuggestions(false);
     setInsertAvailableWorkerIds(new Set());
   }, []);
@@ -2518,7 +2536,7 @@ export default function MapPage() {
                   value={addressQuery}
                   onChange={e => handleAddressInputChange(e.target.value)}
                   onKeyDown={handleAddressKeyDown}
-                  onFocus={() => { if (addressSuggestions.length > 0) setShowAddressSuggestions(true); }}
+                  onFocus={() => { if (addressSuggestions.length > 0 || poiResults.length > 0) setShowAddressSuggestions(true); }}
                   className="w-full h-10 pl-10 pr-10 rounded-xl border border-gray-200 bg-white shadow-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400"
                 />
                 {addressSearching && <Loader2 className="absolute right-10 top-1/2 -translate-y-1/2 h-4 w-4 text-orange-500 animate-spin" />}
@@ -2528,8 +2546,8 @@ export default function MapPage() {
                   </button>
                 )}
                 {/* Autocomplete dropdown */}
-                {showAddressSuggestions && addressSuggestions.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10">
+                {showAddressSuggestions && (addressSuggestions.length > 0 || poiResults.length > 0) && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10 max-h-80 overflow-y-auto">
                     {addressSuggestions.map(s => (
                       <button
                         key={s.id}
@@ -2538,6 +2556,28 @@ export default function MapPage() {
                       >
                         <MapPin className="h-3.5 w-3.5 text-orange-400 flex-shrink-0" />
                         <span className="truncate">{s.address?.label ?? s.title}</span>
+                      </button>
+                    ))}
+                    {poiResults.length > 0 && addressSuggestions.length > 0 && (
+                      <div className="px-4 py-1.5 bg-gray-50 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Miejsca</div>
+                    )}
+                    {poiResults.map((p, i) => (
+                      <button
+                        key={`poi-${i}`}
+                        onClick={() => {
+                          const pin: AddressPin = { lat: p.lat, lng: p.lng, label: p.address || p.title };
+                          setAddressPin(pin);
+                          setAddressQuery(p.title);
+                          setShowAddressSuggestions(false);
+                          if (mapRef.current) mapRef.current.flyTo([p.lat, p.lng], 14, { animate: true, duration: 1 });
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-orange-50 transition-colors flex items-center gap-2 border-b border-gray-50 last:border-b-0"
+                      >
+                        <Navigation className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <span className="truncate block font-medium">{p.title}</span>
+                          {p.address && <span className="truncate block text-xs text-gray-400">{p.address}</span>}
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -2768,16 +2808,55 @@ export default function MapPage() {
                       Szukaj zlecen w poblizu
                     </button>
                     <button
-                      onClick={() => {
-                        const lat = contextMenuPos.lat.toFixed(5);
-                        const lng = contextMenuPos.lng.toFixed(5);
+                      onClick={async () => {
+                        const lat = contextMenuPos.lat;
+                        const lng = contextMenuPos.lng;
                         setContextMenuPos(null);
-                        window.location.href = `/calendar?new_order=true&lat=${lat}&lng=${lng}`;
+                        // Reverse geocode via HERE API
+                        let label = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+                        try {
+                          const res = await fetch(
+                            `/api/here-revgeocode?at=${lat},${lng}`
+                          );
+                          if (res.ok) {
+                            const data = await res.json();
+                            const item = data.items?.[0];
+                            if (item?.address?.label) label = item.address.label;
+                          }
+                        } catch { /* use coords as label */ }
+                        // Find nearby workers
+                        const nearby: NearbyWorker[] = [];
+                        for (const route of routes) {
+                          if (!activeShiftEmployeeIds.has(route.employee_id)) continue;
+                          const pos = route.current_position;
+                          if (!pos) continue;
+                          const R = 6371;
+                          const dLat = (lat - pos.lat) * Math.PI / 180;
+                          const dLon = (lng - pos.lng) * Math.PI / 180;
+                          const a = Math.sin(dLat/2)**2 + Math.cos(pos.lat*Math.PI/180)*Math.cos(lat*Math.PI/180)*Math.sin(dLon/2)**2;
+                          const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                          if (dist <= 50) {
+                            nearby.push({
+                              employee_id: route.employee_id,
+                              employee_name: route.employee_name || 'Pracownik',
+                              plate: route.plate || '',
+                              status: pos.status ?? 'offline',
+                              lat: pos.lat,
+                              lng: pos.lng,
+                              distance_km: dist,
+                              travel_minutes: (dist * 1.4) / 50 * 60,
+                              orders_today: route.total_orders ?? 0,
+                            });
+                          }
+                        }
+                        nearby.sort((a, b) => a.distance_km - b.distance_km);
+                        setQuickAddPin({ lat, lng, label });
+                        setQuickAddWorkers(nearby);
                       }}
                       className="flex items-center gap-2 text-sm text-left px-3 py-2 rounded-lg bg-orange-50 text-orange-700 hover:bg-orange-100 transition-colors font-medium"
                     >
                       <Plus className="h-3.5 w-3.5" />
-                      Utworz zlecenie tutaj
+                      Szybkie zlecenie
                     </button>
                   </div>
                 </div>
@@ -2797,6 +2876,31 @@ export default function MapPage() {
           >
             <Plus className="h-6 w-6" />
           </button>
+
+          {/* Floating QuickAddCard (from context menu) */}
+          <AnimatePresence>
+            {quickAddPin && (
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[1001]">
+                <QuickAddCard
+                  pin={quickAddPin}
+                  nearbyWorkers={quickAddWorkers}
+                  onClose={() => { setQuickAddPin(null); setQuickAddWorkers([]); }}
+                  onSuccess={() => {
+                    setQuickAddPin(null);
+                    setQuickAddWorkers([]);
+                    fetchAll();
+                    resetCountdown();
+                  }}
+                  onExpandToFull={() => {
+                    // Switch to full CreateOrderPanel
+                    setAddressPin({ lat: quickAddPin.lat, lng: quickAddPin.lng, label: quickAddPin.label });
+                    setQuickAddPin(null);
+                    setQuickAddWorkers([]);
+                  }}
+                />
+              </div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* ── Detail panels (right side: only address search, quick add, create order) ── */}

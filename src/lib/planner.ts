@@ -266,6 +266,7 @@ export interface RouteScore {
   on_time: number;
   tight: number;
   late: number;
+  conflicts: number;       // overlapping time slots
   total_km: number;
   total_duration_min: number;
   finish_time: string;
@@ -277,7 +278,18 @@ export function scoreRoute(stops: ScheduledStop[], totalKm: number): RouteScore 
   const tight   = stops.filter(s => s.time_window_status === 'tight').length;
   const late    = stops.filter(s => s.time_window_status === 'late').length;
 
-  const score = total === 0 ? 100 : Math.round(((on_time + tight * 0.5) / total) * 100);
+  // Detect time conflicts: consecutive stops where departure overlaps next arrival
+  let conflicts = 0;
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (stops[i].departure_minutes > parseTime(stops[i + 1].arrival_time)) {
+      conflicts++;
+    }
+  }
+
+  let score = total === 0 ? 100 : Math.round(((on_time + tight * 0.5) / total) * 100);
+  // Reduce score for each conflict
+  score = Math.max(0, score - conflicts * 25);
+
   const lastStop = stops[stops.length - 1];
   const totalDuration = lastStop ? lastStop.departure_minutes - (stops[0]?.departure_minutes - stops[0]?.travel_minutes - stops[0]?.service_duration_minutes) : 0;
 
@@ -286,6 +298,7 @@ export function scoreRoute(stops: ScheduledStop[], totalKm: number): RouteScore 
     on_time,
     tight,
     late,
+    conflicts,
     total_km: Math.round(totalKm * 10) / 10,
     total_duration_min: totalDuration,
     finish_time: lastStop?.departure_time ?? '--:--',

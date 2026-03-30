@@ -214,7 +214,7 @@ export function CalendarSidebar({
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-[10px] font-medium text-gray-600 truncate">{emp.name.split(' ')[0]}</span>
+                      <span className="text-[10px] font-medium text-gray-600 truncate">{emp.name.split(' ')[0]}{emp.name.split(' ')[1] ? ' ' + emp.name.split(' ')[1][0] + '.' : ''}</span>
                       <span className="text-[10px] font-bold text-gray-800">{count}</span>
                     </div>
                     <div className="h-1 bg-gray-100 rounded-full overflow-hidden">

@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { getRouteInfo } from '@/lib/here-routing';
+import { haversineKm } from '@/lib/geo';
 import { checkAuth } from '@/lib/api/auth-guard';
 import {
   buildSchedule,
@@ -87,7 +88,7 @@ export async function GET(request: NextRequest) {
   // ── Today's orders ─────────────────────────────────────────────────────────
   const { data: allOrders } = await supabase
     .from('orders')
-    .select('id, employee_id, status, priority, scheduled_time_start, scheduled_time_end, time_window, time_window_start, time_window_end, scheduling_type, services, flexibility_minutes, client:clients(id, name, lat, lng, address, city)')
+    .select('id, employee_id, status, priority, scheduled_time_start, scheduled_time_end, time_window, time_window_start, time_window_end, scheduling_type, services, flexibility_minutes, lat, lng, address, client:clients(id, name, lat, lng, address, city)')
     .eq('scheduled_date', date)
     .not('status', 'eq', 'cancelled')
     .order('scheduled_time_start', { ascending: true });
@@ -102,21 +103,29 @@ export async function GET(request: NextRequest) {
       const orders = assignedOrders.filter(o => o.employee_id === emp.id);
 
       // Always include all active employees so dispatchers can assign orders to them.
-      // (Previously: skipped employees with no orders and no GPS — that hid 3 workers.)
-      const startPos: LatLng = pos ?? { lat: 52.2297, lng: 21.0122 }; // Warsaw default
+      // Use GPS position → employee default location → Warsaw as fallback chain
+      const empDefault: LatLng | null = (emp as any).default_lat && (emp as any).default_lng
+        ? { lat: (emp as any).default_lat, lng: (emp as any).default_lng }
+        : null;
+      const startPos: LatLng = pos ?? empDefault ?? { lat: 52.2297, lng: 21.0122 };
       const startMinutes = parseTime('08:00');
 
       // Build OrderInput list with HERE travel times
       const orderInputs: OrderInput[] = [];
       let prevPos: LatLng = startPos;
       let prevDeparture = startMinutes;
+      let accumulatedKm = 0; // track actual distance from HERE API / haversine
 
       for (const order of orders) {
         const c = (order as any).client;
-        if (!c?.lat || !c?.lng) continue;
-        const dest: LatLng = { lat: c.lat, lng: c.lng };
+        // Use order coords first, fall back to client coords
+        const orderLat = (order as any).lat ?? c?.lat;
+        const orderLng = (order as any).lng ?? c?.lng;
+        if (!orderLat || !orderLng) continue;
+        const dest: LatLng = { lat: orderLat, lng: orderLng };
 
         const routeInfo = await getRouteInfo(prevPos.lat, prevPos.lng, dest.lat, dest.lng);
+        accumulatedKm += routeInfo.distance_km;
 
         // Calculate total service duration from services JSONB
         const rawServices = (order as any).services as { duration_minutes?: number; quantity?: number }[] | null;
@@ -126,10 +135,10 @@ export async function GET(request: NextRequest) {
 
         orderInputs.push({
           order_id: order.id,
-          lat: c.lat,
-          lng: c.lng,
-          client_name: c.name ?? 'Klient',
-          address: [c.address, c.city].filter(Boolean).join(', '),
+          lat: orderLat,
+          lng: orderLng,
+          client_name: c?.name ?? 'Klient',
+          address: [(order as any).address || c?.address, c?.city].filter(Boolean).join(', '),
           time_window: (order as any).time_window ?? null,
           time_window_start: (order as any).time_window_start ?? null,
           time_window_end: (order as any).time_window_end ?? null,
@@ -155,10 +164,15 @@ export async function GET(request: NextRequest) {
         : undefined;
 
       const schedule = buildSchedule(startMinutes, orderInputs, baseLocation);
-      const totalKm = orderInputs.reduce((sum, _, i) => {
-        // We'll do a separate pass for km — for now approximate
-        return sum;
-      }, 0);
+
+      // Add return-to-base distance if applicable
+      let totalKm = accumulatedKm;
+      if (baseLocation && orderInputs.length > 0) {
+        const lastOrder = orderInputs[orderInputs.length - 1];
+        const returnDist = haversineKm(lastOrder.lat, lastOrder.lng, baseLocation.lat, baseLocation.lng) * 1.35;
+        totalKm += returnDist;
+      }
+      totalKm = Math.round(totalKm * 10) / 10;
 
       // Google Maps URL
       const stops: LatLng[] = orderInputs.map(o => ({ lat: o.lat, lng: o.lng }));
@@ -166,11 +180,7 @@ export async function GET(request: NextRequest) {
         ? buildGoogleMapsUrlDriving(startPos, stops)
         : null;
 
-      // Compute total km from schedule travel times (use 50km/h avg for now if no cached km)
-      const totalTravelMin = schedule.reduce((s, st) => s + st.travel_minutes, 0);
-      const estimatedKm = Math.round(totalTravelMin * 50 / 60 * 10) / 10;
-
-      const routeScore = scoreRoute(schedule, estimatedKm);
+      const routeScore = scoreRoute(schedule, totalKm);
 
       return {
         employee_id: emp.id,
@@ -179,7 +189,7 @@ export async function GET(request: NextRequest) {
         current_position: pos ?? null,
         schedule,
         total_orders: orders.length,
-        total_km: estimatedKm,
+        total_km: totalKm,
         score: routeScore,
         google_maps_url: googleMapsUrl,
         start_time: '08:00',

@@ -308,33 +308,42 @@ export default function EmployeesPage() {
       ? `${loginUsername}@routetire.pl`
       : form.email;
 
-    await fetch('/api/employees', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        first_name: form.first_name,
-        last_name: form.last_name,
-        email: effectiveEmail,
-        phone: form.phone,
-        phone_secondary: form.phone_secondary,
-        login_username: form.role === 'worker' ? loginUsername : null,
-        default_location: form.default_location || null,
-        default_lat: form.default_lat,
-        default_lng: form.default_lng,
-        region_id: form.region_id || null,
-        default_vehicle_id: form.default_vehicle_id || null,
-        shift_rate: form.shift_rate || null,
-        role: form.role,
-        skill_ids: form.skill_ids,
-      }),
-    });
-
+    try {
+      const res = await fetch('/api/employees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          first_name: form.first_name,
+          last_name: form.last_name,
+          email: effectiveEmail,
+          phone: form.phone,
+          phone_secondary: form.phone_secondary,
+          login_username: form.role === 'worker' ? loginUsername : null,
+          default_location: form.default_location || null,
+          default_lat: form.default_lat,
+          default_lng: form.default_lng,
+          region_id: form.region_id || null,
+          default_vehicle_id: form.default_vehicle_id || null,
+          shift_rate: form.shift_rate || null,
+          role: form.role,
+          skill_ids: form.skill_ids,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('Błąd tworzenia pracownika: ' + (data.error || `HTTP ${res.status}`));
+        setSaving(false);
+        return;
+      }
+      setDialogOpen(false);
+      setForm({ ...emptyForm });
+      setAddressSuggestions([]);
+      setShowAddressSuggestions(false);
+      fetchData();
+    } catch (err) {
+      alert('Błąd połączenia: ' + (err instanceof Error ? err.message : 'Nieznany błąd'));
+    }
     setSaving(false);
-    setDialogOpen(false);
-    setForm({ ...emptyForm });
-    setAddressSuggestions([]);
-    setShowAddressSuggestions(false);
-    fetchData();
   };
 
   // ── Edit Employee ──────────────────────────────────────
@@ -365,33 +374,42 @@ export default function EmployeesPage() {
     if (!editingEmployee) return;
     setEditSaving(true);
 
-    await fetch('/api/employees', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: editingEmployee.id,
-        first_name: editForm.first_name,
-        last_name: editForm.last_name,
-        phone: editForm.phone,
-        phone_secondary: editForm.phone_secondary,
-        login_username: editForm.login_username || null,
-        default_location: editForm.default_location || null,
-        default_lat: editForm.default_lat,
-        default_lng: editForm.default_lng,
-        role: editForm.role,
-        region_id: editForm.region_id || null,
-        default_vehicle_id: editForm.default_vehicle_id || null,
-        shift_rate: editForm.shift_rate || null,
-        skill_ids: editForm.skill_ids,
-      }),
-    });
-
+    try {
+      const res = await fetch('/api/employees', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingEmployee.id,
+          first_name: editForm.first_name,
+          last_name: editForm.last_name,
+          phone: editForm.phone,
+          phone_secondary: editForm.phone_secondary,
+          login_username: editForm.login_username || null,
+          default_location: editForm.default_location || null,
+          default_lat: editForm.default_lat,
+          default_lng: editForm.default_lng,
+          role: editForm.role,
+          region_id: editForm.region_id || null,
+          default_vehicle_id: editForm.default_vehicle_id || null,
+          shift_rate: editForm.shift_rate || null,
+          skill_ids: editForm.skill_ids,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('Błąd edycji: ' + (data.error || `HTTP ${res.status}`));
+        setEditSaving(false);
+        return;
+      }
+      setEditDialogOpen(false);
+      setEditingEmployee(null);
+      setAddressSuggestions([]);
+      setShowAddressSuggestions(false);
+      fetchData();
+    } catch (err) {
+      alert('Błąd połączenia: ' + (err instanceof Error ? err.message : 'Nieznany błąd'));
+    }
     setEditSaving(false);
-    setEditDialogOpen(false);
-    setEditingEmployee(null);
-    setAddressSuggestions([]);
-    setShowAddressSuggestions(false);
-    fetchData();
   };
 
   // ── Delete Employee ────────────────────────────────────

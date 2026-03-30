@@ -45,6 +45,7 @@ export function ClientSearchSection({
   setAddress,
   city,
   setCity,
+  onCoordsChange,
   phoneRef,
 }: {
   phoneInput: string;
@@ -61,6 +62,7 @@ export function ClientSearchSection({
   setAddress: (v: string) => void;
   city: string;
   setCity: (v: string) => void;
+  onCoordsChange?: (lat: number | null, lng: number | null) => void;
   phoneRef: React.RefObject<HTMLInputElement | null>;
 }) {
   // ── HERE address autocomplete ──
@@ -88,7 +90,16 @@ export function ClientSearchSection({
     const street = [s.address.street, s.address.houseNumber].filter(Boolean).join(' ');
     setAddress(street);
     setCity(s.address.city ?? '');
-  }, [setAddress, setCity]);
+
+    // Geocode to get lat/lng
+    try {
+      const res = await fetch(`/api/here-lookup?id=${encodeURIComponent(s.id)}`);
+      const data = await res.json();
+      if (data.lat != null && data.lng != null) {
+        onCoordsChange?.(data.lat, data.lng);
+      }
+    } catch { /* silent */ }
+  }, [setAddress, setCity, onCoordsChange]);
 
   // Close address suggestions on outside click
   useEffect(() => {
@@ -108,7 +119,8 @@ export function ClientSearchSection({
     setClientEmail(c.email || '');
     setAddress(c.address || '');
     setCity(c.city || '');
-  }, [setSelectedClient, setPhoneInput, setClientName, setClientEmail, setAddress, setCity]);
+    onCoordsChange?.(c.lat ?? null, c.lng ?? null);
+  }, [setSelectedClient, setPhoneInput, setClientName, setClientEmail, setAddress, setCity, onCoordsChange]);
 
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-5">
