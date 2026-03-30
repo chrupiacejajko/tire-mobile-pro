@@ -167,8 +167,8 @@ export function OrderInsertSidebar({
       setLoadingSlots(true);
       setError('');
       try {
-        // Fetch planner routes and work schedules in parallel
-        const [plannerRes, schedulesRes] = await Promise.all([
+        // Fetch planner routes, work schedules, GPS positions, and employee names in parallel
+        const [plannerRes, schedulesRes, gpsPositions, employeeNames] = await Promise.all([
           fetch(`/api/planner?date=${selectedDate}`),
           (async () => {
             const { createClient } = await import('@/lib/supabase/client');
@@ -179,6 +179,38 @@ export function OrderInsertSidebar({
               .lte('start_at', `${selectedDate}T23:59:59`)
               .gte('end_at', `${selectedDate}T00:00:00`);
             return data ?? [];
+          })(),
+          // Fetch live GPS from Satis as fallback when livePositions prop is empty
+          (async (): Promise<Map<string, { lat: number; lng: number }>> => {
+            if (livePositions && livePositions.size > 0) return livePositions;
+            try {
+              const res = await fetch('/api/fleet/live');
+              if (!res.ok) return new Map();
+              const data = await res.json();
+              const positions = new Map<string, { lat: number; lng: number }>();
+              for (const v of (data.fleet || data.vehicles || [])) {
+                if (v.lat && v.lng && v.employee_id) {
+                  positions.set(v.employee_id, { lat: v.lat, lng: v.lng });
+                }
+              }
+              return positions;
+            } catch { return new Map(); }
+          })(),
+          // Fetch employee names for workers without planner routes
+          (async (): Promise<Map<string, string>> => {
+            try {
+              const { createClient } = await import('@/lib/supabase/client');
+              const supabase = createClient();
+              const { data } = await supabase
+                .from('employees')
+                .select('id, user:profiles(full_name)')
+                .eq('is_active', true);
+              const names = new Map<string, string>();
+              for (const emp of (data || [])) {
+                names.set(emp.id, (emp.user as any)?.full_name || 'Pracownik');
+              }
+              return names;
+            } catch { return new Map(); }
           })(),
         ]);
 
@@ -245,7 +277,7 @@ export function OrderInsertSidebar({
           if (earliestMinutes >= latestMinutes) continue;
 
           // Prefer real-time GPS position over planner position
-          const gps = livePositions?.get(route.employee_id);
+          const gps = livePositions?.get(route.employee_id) ?? gpsPositions.get(route.employee_id);
           const startLat = gps?.lat ?? route.current_position?.lat;
           const startLng = gps?.lng ?? route.current_position?.lng;
           if (startLat == null || startLng == null) continue;
@@ -404,6 +436,42 @@ export function OrderInsertSidebar({
         // Past slots are already handled at source — each section uses
         // max(departure, realNowMinutes) for today's searches, so no post-filter needed.
         {
+        }
+
+        // Workers with shifts but NO planner route (no orders yet today)
+        const routeEmployeeIds = new Set(routes.map(r => r.employee_id));
+        for (const [empId, shift] of shiftMap.entries()) {
+          if (routeEmployeeIds.has(empId)) continue; // already handled above
+
+          const gps = livePositions?.get(empId) ?? gpsPositions.get(empId);
+          if (!gps?.lat || !gps?.lng) continue;
+
+          const workerDistKm = haversineKm(gps.lat, gps.lng, pin.lat, pin.lng);
+          if (workerDistKm > SEARCH_RADIUS_KM) continue;
+
+          const searchFrom = (isSearchingToday || timeMode === 'custom') ? Math.max(shift.startMin, nowMinutes) : shift.startMin;
+          if (searchFrom >= shift.endMin) continue;
+
+          const travelMin = etaMinutes(workerDistKm);
+          const startTime = searchFrom + travelMin;
+          if (startTime + serviceDuration > shift.endMin) continue;
+
+          const empName = employeeNames.get(empId) || 'Pracownik';
+
+          foundSlots.push({
+            employee_id: empId,
+            employee_name: empName,
+            plate: null,
+            insert_after_index: -1,
+            slot_start_time: minutesToTime(startTime),
+            travel_to_minutes: travelMin,
+            travel_from_minutes: 0,
+            extra_travel_minutes: travelMin,
+            total_orders: 0,
+            distance_from_prev_km: Math.round(workerDistKm * 10) / 10,
+            prev_stop_name: 'Start (GPS)',
+            next_stop_name: null,
+          });
         }
 
         // Sort: least extra travel first (best route fit), then earliest time
