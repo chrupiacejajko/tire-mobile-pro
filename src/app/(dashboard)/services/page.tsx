@@ -20,7 +20,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import {
   Plus, Wrench, Pencil, Trash2, Clock, DollarSign,
-  Award, Car, Search,
+  Award, Car, Search, ChevronRight,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { Service, VehicleType, Skill } from '@/lib/types';
@@ -272,11 +272,19 @@ export default function ServicesPage() {
 
   const getCategoryStyle = (cat: string) => categories.find(c => c.value === cat) || categories[0];
 
+  const [showInactive, setShowInactive] = useState(false);
+
   const filteredServices = useMemo(() => {
-    if (!serviceSearch.trim()) return services;
-    const q = serviceSearch.trim().toLowerCase();
-    return services.filter(s => s.name.toLowerCase().includes(q));
+    let list = services;
+    if (serviceSearch.trim()) {
+      const q = serviceSearch.trim().toLowerCase();
+      list = list.filter(s => s.name.toLowerCase().includes(q));
+    }
+    return list;
   }, [services, serviceSearch]);
+
+  const activeServices = useMemo(() => filteredServices.filter(s => s.is_active), [filteredServices]);
+  const inactiveServices = useMemo(() => filteredServices.filter(s => !s.is_active), [filteredServices]);
 
   // ─── Vehicle types handlers ───────────────────────────────────────────────
 
@@ -458,14 +466,15 @@ export default function ServicesPage() {
               ) : services.length === 0 ? (
                 <Empty icon={<Wrench className="h-12 w-12" />} text="Brak usług" sub="Dodaj pierwszą usługę" />
               ) : (
+                <>
+                {/* ── Active services ── */}
                 <motion.div
                   className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
                   variants={ANIM.container} initial="hidden" animate="show"
                 >
-                  {filteredServices.map(service => {
+                  {activeServices.map(service => {
                     const catStyle = getCategoryStyle(service.category);
                     const vehicleType = vehicleTypes.find(v => v.id === service.vehicle_type_id);
-                    // multi-skill: merge legacy + new array, deduplicate
                     const allSkillIds = Array.from(new Set([
                       ...(service.required_skill_ids ?? []),
                       ...(service.required_skill_id ? [service.required_skill_id] : []),
@@ -473,7 +482,7 @@ export default function ServicesPage() {
                     const requiredSkills = allSkillIds.map(id => skills.find(s => s.id === id)).filter(Boolean);
                     return (
                       <motion.div key={service.id} variants={ANIM.item} whileHover={{ y: -2 }}>
-                        <Card className={`rounded-2xl border-gray-100 shadow-sm ${!service.is_active ? 'opacity-50' : ''}`}>
+                        <Card className="rounded-2xl border-gray-100 shadow-sm">
                           <CardContent className="p-5">
                             <div className="flex items-start justify-between mb-3">
                               <div>
@@ -507,7 +516,7 @@ export default function ServicesPage() {
                             <div className="flex items-center justify-between pt-3 border-t">
                               <div className="flex items-center gap-2">
                                 <Switch checked={service.is_active} onCheckedChange={() => toggleServiceActive(service.id, service.is_active)} />
-                                <span className="text-xs text-gray-500">{service.is_active ? 'Aktywna' : 'Nieaktywna'}</span>
+                                <span className="text-xs text-gray-500">Aktywna</span>
                               </div>
                               <div className="flex gap-1">
                                 <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-orange-500 hover:text-orange-600 hover:bg-orange-50" onClick={() => openEditService(service)}>
@@ -524,6 +533,72 @@ export default function ServicesPage() {
                     );
                   })}
                 </motion.div>
+
+                {/* ── Inactive services (collapsible) ── */}
+                {inactiveServices.length > 0 && (
+                  <div className="mt-6">
+                    <button
+                      onClick={() => setShowInactive(!showInactive)}
+                      className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors mb-4"
+                    >
+                      <ChevronRight className={`h-4 w-4 transition-transform ${showInactive ? 'rotate-90' : ''}`} />
+                      Nieaktywne usługi ({inactiveServices.length})
+                    </button>
+                    <AnimatePresence>
+                      {showInactive && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                            {inactiveServices.map(service => {
+                              const catStyle = getCategoryStyle(service.category);
+                              return (
+                                <Card key={service.id} className="rounded-2xl border-gray-100 shadow-sm opacity-50">
+                                  <CardContent className="p-5">
+                                    <div className="flex items-start justify-between mb-3">
+                                      <div>
+                                        <h3 className="text-sm font-bold text-gray-900">{service.name}</h3>
+                                        {service.description && <p className="text-xs text-gray-500 mt-0.5">{service.description}</p>}
+                                      </div>
+                                      <Badge className={`text-[10px] rounded-lg ${catStyle.color}`}>{catStyle.label}</Badge>
+                                    </div>
+                                    <div className="flex items-center gap-4 mb-3">
+                                      <span className="flex items-center gap-1 text-sm font-bold text-gray-900">
+                                        <DollarSign className="h-3.5 w-3.5 text-gray-400" />{Number(service.price)} zł
+                                      </span>
+                                      <span className="flex items-center gap-1 text-xs text-gray-500">
+                                        <Clock className="h-3.5 w-3.5" />{service.duration_minutes} min
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between pt-3 border-t">
+                                      <div className="flex items-center gap-2">
+                                        <Switch checked={false} onCheckedChange={() => toggleServiceActive(service.id, service.is_active)} />
+                                        <span className="text-xs text-gray-500">Nieaktywna</span>
+                                      </div>
+                                      <div className="flex gap-1">
+                                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-orange-500 hover:text-orange-600 hover:bg-orange-50" onClick={() => openEditService(service)}>
+                                          <Pencil className="h-3.5 w-3.5" />
+                                        </Button>
+                                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50" onClick={() => openDeleteService(service)}>
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              );
+                            })}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+                </>
               )}
             </motion.div>
           )}
